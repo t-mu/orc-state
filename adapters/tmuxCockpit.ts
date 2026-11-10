@@ -2,18 +2,23 @@
  * adapters/tmuxCockpit.ts
  *
  * The cockpit `orc start-session` opens: one tmux session in a per-user tmux
- * server of its own (never a project's private `orc-<hash>` server), with one
- * window (tab) per project. Each window's primary pane is a native nested
- * attach to that project's master (`attach-session` with input, as
- * `orc attach master --write`), so it keeps working while the coordinator
- * restarts or is down; the pane beside it runs `orc watch`.
+ * server of its own (never a project's private `orc-<hash>` server), shown as
+ * one window, the frame: the sidebar (left, full height, the `orc watch`
+ * dashboard), the tab bar (top right, `orc cockpit bar`) and the slot (bottom
+ * right) showing the active project's active tab. Each tab's process lives in
+ * a pane of its project's hidden holding window and is swapped into the slot
+ * when its tab is shown, so switching is instant and streams stay open. A
+ * project's master tab is a native nested attach to its master
+ * (`attach-session` with input, as `orc attach master --write`), so it keeps
+ * working while the coordinator restarts or is down; an agent tab runs
+ * `orc terminal <agent_id> --write`.
  *
  * The server starts with no config file (`-f /dev/null`). It claims only its
  * keys (`resolveCockpitKeys`: a prefix, F12 by default, and a few direct
  * function keys), all of them layout-safe, and its tab keys run `orc cockpit`
  * (the tab model, lib/cockpitTabs.ts); every other key, Ctrl-b included,
- * reaches the focused pane. Mouse mode is on: a click focuses a pane or
- * selects a tab, and a pane whose program asks for the mouse still gets it.
+ * reaches the focused pane. Mouse mode is on: a click focuses a pane, and a
+ * pane whose program asks for the mouse still gets it.
  */
 import { spawnSync } from 'node:child_process';
 import {
@@ -31,7 +36,7 @@ export const COCKPIT_SESSION = 'cockpit';
 // ── Keys ─────────────────────────────────────────────────────────────────────
 // Defaults are function keys: they need no Option/Alt/AltGr on any keyboard layout.
 
-/** The direct keys' actions: `tab1`..`tab9` select that tab of the active project, `dashboard` focuses the dashboard pane, `attention` shows the next agent needing attention. */
+/** The direct keys' actions: `tab1`..`tab9` select that tab of the active project, `dashboard` focuses the sidebar (the dashboard), `attention` shows the next agent needing attention. */
 export const COCKPIT_ACTIONS = ['tab1', 'tab2', 'tab3', 'tab4', 'tab5', 'tab6', 'tab7', 'tab8', 'tab9', 'dashboard', 'attention'] as const;
 export type CockpitAction = typeof COCKPIT_ACTIONS[number];
 
@@ -139,11 +144,11 @@ export function cockpitRunShell(orc: string[], args: string[]): string[] {
   return ['run-shell', `${command} --client='#{client_name}'`];
 }
 
-/** What a direct key does: `orc cockpit tab N` or `orc cockpit attention`, or focus the dashboard pane (the rightmost). */
+/** What a direct key does: `orc cockpit tab N` or `orc cockpit attention`, or focus the sidebar (the frame's leftmost pane). */
 function directKeyCommand(action: CockpitAction, orc: string[]): string[] {
   if (action.startsWith('tab')) return cockpitRunShell(orc, ['tab', action.slice(3)]);
   if (action === 'attention') return cockpitRunShell(orc, ['attention']);
-  return ['select-pane', '-t', '{right}'];
+  return ['select-pane', '-t', '{left}'];
 }
 
 /** The prefix-table keys `orc cockpit` handles: the active project's tabs (n/p, 1-9, & closes) and the projects (N/P). */
@@ -153,6 +158,9 @@ function prefixTabBindings(orc: string[]): string[][] {
     ...Array.from({ length: 9 }, (_, index) => [String(index + 1), `tab ${index + 1}`]),
   ].map(([key, action]) => ['bind-key', key, ...cockpitRunShell(orc, action.split(' '))]);
 }
+
+/** A window's status-line entry: none for a holding window. */
+const HIDE_HOLDING_FORMAT = '#{?#{@orc_holding},,#I:#W#F }';
 
 /** Server options recording the keys orc bound, so a later reattach can unbind them first. */
 const PREFIX_OPTION = '@orc_cockpit_prefix';
@@ -164,8 +172,8 @@ export interface BoundCockpitKeys { prefix: string; direct: string[] }
 /**
  * The commands that set the cockpit's keys and mouse, unbinding what `bound`
  * says an earlier run bound: the prefix (and its send-prefix binding), the
- * direct keys in the root table, tabs numbered from 1 with no gaps, and the hint
- * in the status line.
+ * direct keys in the root table, windows numbered from 1 with no gaps, holding
+ * windows left out of the status line, and the hint in it.
  */
 export function cockpitKeyOptions(keys: CockpitKeys, bound: BoundCockpitKeys | null, orc: string[]): string[][] {
   const hint = cockpitKeysHint(keys);
@@ -183,12 +191,16 @@ export function cockpitKeyOptions(keys: CockpitKeys, bound: BoundCockpitKeys | n
     ...prefixTabBindings(orc),
     ['set-option', '-g', PREFIX_OPTION, keys.prefix],
     ['set-option', '-g', DIRECT_OPTION, direct.map(({ key }) => key).join(' ')],
-    // A click focuses a pane or selects a tab; the default mouse bindings pass events on to a pane that asks for them.
+    // A click focuses a pane; the default mouse bindings pass events on to a pane that asks for them.
     ['set-option', '-g', 'mouse', 'on'],
-    // Tab N is window N: prefix 1-9 and the direct tab keys agree, and closing a tab closes the gap.
+    // Windows are numbered from 1 with no gaps: the frame, then the holding windows.
     ['set-option', '-g', 'base-index', '1'],
     ['set-option', '-g', 'renumber-windows', 'on'],
     ['set-option', '-g', 'status-left', '[orc] '],
+    // Holding windows are not listed: the frame is the only window shown.
+    ['set-option', '-g', 'window-status-separator', ''],
+    ['set-option', '-g', 'window-status-format', HIDE_HOLDING_FORMAT],
+    ['set-option', '-g', 'window-status-current-format', HIDE_HOLDING_FORMAT],
     ['set-option', '-g', 'status-right', hint],
     ['set-option', '-g', 'status-right-length', String(hint.length + 2)],
   ];
@@ -200,16 +212,42 @@ function boundCockpitKeys(): BoundCockpitKeys {
   const prefix = show(PREFIX_OPTION);
   return { prefix: prefix || LEGACY_PREFIX, direct: show(DIRECT_OPTION).split(' ').filter(Boolean) };
 }
-/** The dashboard pane is a sidebar: a quarter of the window, kept within these columns (it is laid out for 40). */
-const DASHBOARD_MIN_COLUMNS = 40;
-const DASHBOARD_MAX_COLUMNS = 60;
-/** The master stays the primary pane: the dashboard never takes more than this share of a narrow window. */
-const DASHBOARD_MAX_SHARE = 0.4;
+
+// ── Frame ────────────────────────────────────────────────────────────────────
+// The cockpit shows one window, the frame: the sidebar (left, full height), the
+// tab bar (top right) and the slot (bottom right). Every tab is a pane of its
+// project's hidden holding window; showing a tab swaps its pane into the slot,
+// so its process, and its stream, never restarts.
+
+/** The sidebar's width and the tab bar's height; a window-resized hook keeps them. */
+export const SIDEBAR_COLUMNS = 34;
+export const TAB_BAR_ROWS = 3;
 const DEFAULT_SIZE = { columns: 200, rows: 50 };
-/** Window options naming what a window shows. Values never hold spaces, so list-windows output splits on them. */
-const PROJECT_OPTION = '@orc_project_id';
-const MASTER_OPTION = '@orc_master';
-const MASTER_PANE_OPTION = '@orc_master_pane';
+const FRAME_NAME = 'orc';
+
+/** Window options: the frame (`1`), and a holding window's project id. */
+const FRAME_OPTION = '@orc_frame';
+const HOLDING_OPTION = '@orc_holding';
+/** Pane options, which move with a pane when it is swapped: what it is and, on a tab's pane, whose tab. */
+const ROLE_OPTION = '@orc_role';
+const TAB_PROJECT_OPTION = '@orc_tab_project';
+const TAB_AGENT_OPTION = '@orc_tab_agent';
+const MASTER_KEY_OPTION = '@orc_master_key';
+
+/**
+ * What a cockpit pane is. The frame's `sidebar` and `tabbar`; `placeholder`
+ * fills an empty slot; `keeper` keeps a holding window alive while all its
+ * tabs are shown elsewhere; a tab is a project's `master`, its `message` (the
+ * project is not running), or an `agent`'s terminal.
+ */
+export type CockpitPaneRole = 'sidebar' | 'tabbar' | 'placeholder' | 'keeper' | 'master' | 'message' | 'agent';
+
+/** Window options of the layout before the frame: one window per project and per agent tab. */
+const LEGACY_PROJECT_OPTION = '@orc_project_id';
+const LEGACY_MASTER_OPTION = '@orc_master';
+const LEGACY_MASTER_PANE_OPTION = '@orc_master_pane';
+const LEGACY_AGENT_PROJECT_OPTION = '@orc_agent_project';
+const LEGACY_AGENT_ID_OPTION = '@orc_agent_id';
 
 export interface CockpitMaster {
   agentId: string;
@@ -239,9 +277,26 @@ export function terminalHasTrueColor(env: NodeJS.ProcessEnv = process.env): bool
   return /^(truecolor|24bit)$/i.test(env.COLORTERM ?? '');
 }
 
-/** Identifies the master a window attaches to; a different one (a replaced master) respawns the pane. */
+/** Identifies the master a pane attaches to; a different one (a replaced master) respawns the pane. */
 export function masterKey(master: CockpitMaster): string {
   return `${master.socket}/${master.session}`;
+}
+
+/** The command that starts a project, as the cockpit tells it: it never starts one itself. */
+export function startCommand(root: string): string {
+  return `cd ${shellQuote(root)} && orc start-session`;
+}
+
+/** Waits until the pane is closed, ignoring Ctrl-C; a trap (a redraw on resize) runs while it waits. */
+const WAIT_FOREVER = ["trap '' INT", 'while :; do sleep 3600 & wait $!; done'];
+
+/**
+ * A pane script that shows `lines` until the pane is closed, drawn again
+ * whenever the pane is resized: a pane swapped from a small holding window
+ * into the slot would otherwise keep the lines that scrolled away.
+ */
+function textPaneScript(lines: string[]): string {
+  return [`show() { clear; printf '%s\\n' ${lines.map(shellQuote).join(' ')}; }`, 'show', 'trap show WINCH', ...WAIT_FOREVER].join('\n');
 }
 
 /**
@@ -249,17 +304,17 @@ export function masterKey(master: CockpitMaster): string {
  * whenever the client returns. A client detached by the master's own Ctrl-b d
  * (exit 0) while the master runs detaches the cockpit client showing this pane
  * too, as a direct attach would; a failed attach keeps its error on screen and
- * retries after a pause. A master that is not running leaves a note and the
- * pane waits for it to start.
+ * retries after a pause. A master that is not running leaves a note with the
+ * command that starts it, and the pane waits for it to start.
  */
-export function masterPaneScript(master: CockpitMaster, project: Pick<CockpitProject, 'name'>, options: CockpitOptions): string {
+export function masterPaneScript(master: CockpitMaster, project: Pick<CockpitProject, 'name' | 'root'>, options: CockpitOptions): string {
   const tmux = shellQuote(options.tmux);
   const socket = shellQuote(master.socket);
   const session = shellQuote(`=${master.session}`);
   const note = [
     `Master '${master.agentId}' of ${project.name} is not running.`,
-    'Run orc start-session for this project to start it; this pane attaches as soon as it runs.',
-    'The cockpit, the workers and the coordinator keep running.',
+    `Start it: ${startCommand(project.root)}`,
+    'This pane attaches as soon as it runs. The cockpit, the workers and the coordinator keep running.',
   ].map(shellQuote).join(' ');
   return [
     // A nested tmux client refuses to start while TMUX names the cockpit; keep it to reach the cockpit client.
@@ -277,17 +332,50 @@ export function masterPaneScript(master: CockpitMaster, project: Pick<CockpitPro
     '      sleep 5',
     '    fi',
     '  else',
-    '    clear',
-    `    printf '%s\\n' ${note}`,
-    '    while ! has; do sleep 2; done',
+    `    note() { clear; printf '%s\\n' ${note}; }`,
+    '    note',
+    // Drawn again on resize: the pane may have been small in its holding window.
+    '    trap note WINCH',
+    '    while ! has; do sleep 2 & wait $!; done',
+    "    trap - WINCH",
     '  fi',
     'done',
   ].join('\n');
 }
 
+/** The project a message pane stands in for: one in the cockpit's view that is not running there. */
+export interface CockpitStoppedProject { projectId: string; projectName: string; root: string }
+
 /**
- * The dashboard pane's script: `orc watch` for the project, restarted if it
- * exits. TMUX stays set: it is how `orc watch` knows it runs in the cockpit
+ * A stopped project's pane, shown in its master's place: the command that
+ * starts it. Nothing is started; `orc start-session` there replaces the pane
+ * with the master.
+ */
+export function messagePaneScript(project: Pick<CockpitStoppedProject, 'projectName' | 'root'>): string {
+  const lines = [
+    `${project.projectName} is not running in the cockpit.`,
+    '',
+    'Start it from a terminal; the cockpit starts nothing itself:',
+    `  ${startCommand(project.root)}`,
+    '',
+    'Its master then shows here.',
+  ];
+  return textPaneScript(lines);
+}
+
+/** A holding window's first pane: it keeps the window while every tab of the project is shown or closed. */
+export function keeperPaneScript(): string {
+  return WAIT_FOREVER.join('\n');
+}
+
+/** What an empty slot shows until a tab is swapped in. */
+export function placeholderPaneScript(): string {
+  return textPaneScript(['No tab is shown.']);
+}
+
+/**
+ * The sidebar's script: `orc watch` for the project, restarted if it exits.
+ * TMUX stays set: it is how `orc watch` knows it runs in the cockpit
  * (`insideCockpit`), so Enter opens agent tabs.
  */
 export function dashboardPaneScript(project: Pick<CockpitProject, 'env'>, watchCommand: string[]): string {
@@ -297,6 +385,16 @@ export function dashboardPaneScript(project: Pick<CockpitProject, 'env'>, watchC
     `  ${watchCommand.map(shellQuote).join(' ')}`,
     "  printf '\\n%s\\n' 'orc watch exited; restarting in 5 s.'",
     '  sleep 5',
+    'done',
+  ].join('\n');
+}
+
+/** The tab bar's script: `orc cockpit bar`, a text view of the tab state, restarted if it exits. */
+export function tabBarPaneScript(orc: string[]): string {
+  return [
+    'while :; do',
+    `  ${[...orc, 'cockpit', 'bar'].map(shellQuote).join(' ')}`,
+    '  sleep 2',
     'done',
   ].join('\n');
 }
@@ -317,29 +415,15 @@ export function cockpitServerOptions(options: { trueColor: boolean; terminal: st
   ];
 }
 
-/**
- * The dashboard pane's width in a window `columns` wide: a quarter of it,
- * within 40–60 columns, and at most 40% of a narrow window so the master
- * stays the primary pane.
- */
-export function dashboardPaneWidth(columns: number): number {
-  const sidebar = Math.min(DASHBOARD_MAX_COLUMNS, Math.max(DASHBOARD_MIN_COLUMNS, Math.round(columns / 4)));
-  return Math.max(1, Math.min(sidebar, Math.floor(columns * DASHBOARD_MAX_SHARE)));
+/** The commands that give the sidebar its width and the tab bar its height. */
+export function frameSizeCommands(sidebar: string, tabbar: string): string[][] {
+  return [['resize-pane', '-t', sidebar, '-x', String(SIDEBAR_COLUMNS)], ['resize-pane', '-t', tabbar, '-y', String(TAB_BAR_ROWS)]];
 }
 
-/** The pane layout of a window `columns` wide just created with its master pane `paneId`: the dashboard beside it, the window labelled, the master focused. */
-export function windowLayoutCommands(windowId: string, paneId: string, columns: number, project: CockpitProject, master: CockpitMaster, dashboardScript: string): string[][] {
-  return [
-    ['split-window', '-h', '-d', '-l', String(dashboardPaneWidth(columns)), '-t', paneId, '-c', project.root, '/bin/sh', '-c', dashboardScript],
-    ['set-option', '-w', '-t', windowId, PROJECT_OPTION, project.id],
-    ['set-option', '-w', '-t', windowId, MASTER_OPTION, masterKey(master)],
-    ['set-option', '-w', '-t', windowId, MASTER_PANE_OPTION, paneId],
-    ...focusCommands(windowId, paneId),
-  ];
-}
-
-function focusCommands(windowId: string, paneId: string): string[][] {
-  return [['select-window', '-t', windowId], ['select-pane', '-t', paneId]];
+/** The hook that restores those sizes whenever the frame is resized (the terminal resized, a client of another size attached). */
+export function frameResizeHook(windowId: string, sidebar: string, tabbar: string): string[] {
+  const restore = frameSizeCommands(sidebar, tabbar).map((command) => command.join(' ')).join(' ; ');
+  return ['set-hook', '-w', '-t', windowId, 'window-resized', restore];
 }
 
 /** Names one project or one tmux client; the cockpit serves several, so each pane sets its own. */
@@ -373,99 +457,341 @@ function cockpitTerminal(): string {
   return !probe.error && probe.status === 0 ? 'tmux-256color' : 'screen-256color';
 }
 
-interface CockpitWindow { windowId: string; projectId: string; master: string; masterPane: string; columns: number }
+// ── Panes ────────────────────────────────────────────────────────────────────
 
-function cockpitWindows(): CockpitWindow[] {
-  const out = cockpitTmuxOrThrow(['list-windows', '-t', `=${COCKPIT_SESSION}`, '-F',
-    `#{window_id} #{${PROJECT_OPTION}} #{${MASTER_OPTION}} #{${MASTER_PANE_OPTION}} #{window_width}`]);
+/** A pane of the cockpit session, with what its options say about it. */
+export interface CockpitPane {
+  paneId: string;
+  windowId: string;
+  windowName: string;
+  /** The pane's window is the frame. */
+  inFrame: boolean;
+  /** The project whose holding window the pane is in; empty elsewhere. */
+  holding: string;
+  role: string;
+  /** A tab pane's project and agent (empty on a master or message pane). */
+  projectId: string;
+  agentId: string;
+  /** A master pane's `masterKey`. */
+  masterKey: string;
+}
+
+/**
+ * Separates the fields of a format: an unregistered project's id is a path,
+ * which may hold spaces, and tmux prints a tab in a format as `_`.
+ */
+const FIELD_SEPARATOR = '<|>';
+
+const PANE_FORMAT = [
+  '#{pane_id}', '#{window_id}', '#{window_name}', `#{${FRAME_OPTION}}`, `#{${ROLE_OPTION}}`, `#{${TAB_AGENT_OPTION}}`, `#{${MASTER_KEY_OPTION}}`,
+  `#{${TAB_PROJECT_OPTION}}`, `#{${HOLDING_OPTION}}`,
+].join(FIELD_SEPARATOR);
+
+/** `list-panes -s` output in its format: fields joined with `<|>`. */
+export function parseCockpitPanes(out: string): CockpitPane[] {
   return out.split('\n').filter(Boolean).map((line) => {
-    const [windowId = '', projectId = '', master = '', masterPane = '', width = ''] = line.split(' ');
-    return { windowId, projectId, master, masterPane, columns: windowColumns(width) };
+    const [paneId = '', windowId = '', windowName = '', frame = '', role = '', agentId = '', key = '', projectId = '', holding = ''] = line.split(FIELD_SEPARATOR);
+    return { paneId, windowId, windowName, inFrame: frame === '1', holding, role, projectId, agentId, masterKey: key };
   });
 }
 
-function windowPanes(windowId: string): string[] {
-  return cockpitTmuxOrThrow(['list-panes', '-t', windowId, '-F', '#{pane_id}']).split('\n').filter(Boolean);
+function cockpitPanes(): CockpitPane[] {
+  return parseCockpitPanes(cockpitTmuxOrThrow(['list-panes', '-s', '-t', `=${COCKPIT_SESSION}`, '-F', PANE_FORMAT]));
 }
 
-/** A `#{window_width}` value; the default width when tmux printed none. */
-function windowColumns(width: string | undefined): number {
-  const columns = Number(width);
-  return Number.isInteger(columns) && columns > 0 ? columns : DEFAULT_SIZE.columns;
+/** The tab a pane shows; null for a pane that is no tab. */
+export function paneTab(pane: CockpitPane): OpenTab | null {
+  if (!pane.projectId) return null;
+  if (pane.role === 'master' || pane.role === 'message') return { projectId: pane.projectId, agentId: null };
+  if (pane.role === 'agent' && pane.agentId) return { projectId: pane.projectId, agentId: pane.agentId };
+  return null;
 }
 
-function parseCreated(out: string): { windowId: string; paneId: string; columns: number } {
-  const [windowId, paneId, width] = out.trim().split(' ');
-  if (!windowId?.startsWith('@') || !paneId?.startsWith('%')) throw new Error(`unexpected tmux output '${out.trim()}'`);
-  return { windowId, paneId, columns: windowColumns(width) };
+function findTabPane(panes: CockpitPane[], tab: OpenTab): CockpitPane | undefined {
+  return panes.find((pane) => {
+    const shown = paneTab(pane);
+    return shown?.projectId === tab.projectId && shown.agentId === tab.agentId;
+  });
 }
 
-export type CockpitWindowOutcome = 'created-session' | 'created-window' | 'respawned-master' | 'existing';
+export interface CockpitFrame {
+  windowId: string;
+  sidebar: string | null;
+  tabbar: string | null;
+  /** The pane in the slot; null when the slot was closed. */
+  slot: CockpitPane | null;
+}
+
+/** The frame as its panes show it; null when the session has none. */
+export function frameOf(panes: CockpitPane[]): CockpitFrame | null {
+  const own = panes.filter((pane) => pane.inFrame);
+  if (own.length === 0) return null;
+  const windowId = own[0].windowId;
+  const inWindow = own.filter((pane) => pane.windowId === windowId);
+  return {
+    windowId,
+    sidebar: inWindow.find((pane) => pane.role === 'sidebar')?.paneId ?? null,
+    tabbar: inWindow.find((pane) => pane.role === 'tabbar')?.paneId ?? null,
+    slot: inWindow.find((pane) => pane.role !== 'sidebar' && pane.role !== 'tabbar') ?? null,
+  };
+}
 
 /**
- * Creates the cockpit (or reuses it) and makes sure it has a window for
- * `project` whose master pane attaches to `master`, then focuses that pane.
- * Idempotent: an existing window for the project is reused; one whose master
- * changed has its master pane respawned; one whose master pane is gone is rebuilt.
+ * The commands that show `target` (a pane of a holding window) in the slot:
+ * swap it with the slot's pane, which lands in `target`'s place; a tab of
+ * another project then moves on to its own holding window (`holdingWindow`),
+ * and a placeholder is closed. The frame stays current, the shown pane focused.
+ */
+export function slotCommands(frame: CockpitFrame & { slot: CockpitPane }, target: CockpitPane, holdingWindow: (projectId: string) => string | null): string[][] {
+  const focus = [['select-window', '-t', frame.windowId], ['select-pane', '-t', target.paneId]];
+  const { slot } = frame;
+  if (slot.paneId === target.paneId) return focus;
+  const commands = [['swap-pane', '-d', '-s', target.paneId, '-t', slot.paneId]];
+  if (slot.role === 'placeholder') {
+    commands.push(['kill-pane', '-t', slot.paneId]);
+  } else if (paneTab(slot)) {
+    const home = holdingWindow(slot.projectId);
+    if (home && home !== target.windowId) commands.push(['join-pane', '-d', '-s', slot.paneId, '-t', home], ['select-layout', '-t', home, 'tiled']);
+  }
+  return [...commands, ['select-layout', '-t', target.windowId, 'tiled'], ...focus];
+}
+
+function holdingWindows(): Map<string, string> {
+  const out = cockpitTmuxOrThrow(['list-windows', '-t', `=${COCKPIT_SESSION}`, '-F', `#{window_id}${FIELD_SEPARATOR}#{${HOLDING_OPTION}}`]);
+  const windows = new Map<string, string>();
+  for (const line of out.split('\n').filter(Boolean)) {
+    const [windowId, projectId] = line.split(FIELD_SEPARATOR);
+    if (projectId && !windows.has(projectId)) windows.set(projectId, windowId);
+  }
+  return windows;
+}
+
+/** `projectId`'s holding window, created (with its keeper pane) when it has none. */
+function ensureHoldingWindow(projectId: string, name: string): string {
+  const existing = holdingWindows().get(projectId);
+  if (existing) return existing;
+  const [windowId, paneId] = cockpitTmuxOrThrow(['new-window', '-d', '-t', `=${COCKPIT_SESSION}:`, '-n', name || projectId,
+    '-P', '-F', '#{window_id} #{pane_id}', '/bin/sh', '-c', keeperPaneScript()]).trim().split(' ');
+  if (!windowId?.startsWith('@') || !paneId?.startsWith('%')) throw new Error(`unexpected tmux output '${windowId} ${paneId}'`);
+  cockpitTmuxOrThrow(commandList([
+    ['set-option', '-w', '-t', windowId, HOLDING_OPTION, projectId],
+    ['set-option', '-p', '-t', paneId, ROLE_OPTION, 'keeper'],
+  ]));
+  return windowId;
+}
+
+/** A tab's pane, as it is created in its project's holding window. */
+export interface TabPaneSpec {
+  projectId: string;
+  projectName: string;
+  agentId: string | null;
+  role: 'master' | 'message' | 'agent';
+  /** A master pane's `masterKey`. */
+  masterKey?: string;
+  root: string;
+  script: string;
+}
+
+/** The options naming a tab's pane. */
+export function tabPaneOptions(paneId: string, spec: Pick<TabPaneSpec, 'role' | 'projectId' | 'agentId' | 'masterKey'>): string[][] {
+  return [
+    ['set-option', '-p', '-t', paneId, ROLE_OPTION, spec.role],
+    ['set-option', '-p', '-t', paneId, TAB_PROJECT_OPTION, spec.projectId],
+    ['set-option', '-p', '-t', paneId, TAB_AGENT_OPTION, spec.agentId ?? ''],
+    ['set-option', '-p', '-t', paneId, MASTER_KEY_OPTION, spec.masterKey ?? ''],
+  ];
+}
+
+/** Creates a tab's pane in its project's holding window (not shown); returns its pane id. */
+function createTabPane(spec: TabPaneSpec): string {
+  const holding = ensureHoldingWindow(spec.projectId, spec.projectName);
+  const paneId = cockpitTmuxOrThrow(['split-window', '-d', '-t', holding, '-c', spec.root, '-P', '-F', '#{pane_id}', '/bin/sh', '-c', spec.script]).trim();
+  if (!paneId.startsWith('%')) throw new Error(`unexpected tmux output '${paneId}'`);
+  cockpitTmuxOrThrow(commandList([...tabPaneOptions(paneId, spec), ['select-layout', '-t', holding, 'tiled']]));
+  return paneId;
+}
+
+/** Moves `paneId` into `projectId`'s holding window. */
+function holdPane(paneId: string, projectId: string, name: string): void {
+  const holding = ensureHoldingWindow(projectId, name);
+  cockpitTmuxOrThrow(commandList([['join-pane', '-d', '-s', paneId, '-t', holding], ['select-layout', '-t', holding, 'tiled']]));
+}
+
+/** Splits a placeholder into a frame whose slot was closed, and restores the frame's sizes. */
+function ensureSlot(frame: CockpitFrame | null): void {
+  if (!frame || frame.slot || !frame.tabbar || !frame.sidebar) return;
+  const paneId = cockpitTmuxOrThrow(['split-window', '-v', '-d', '-t', frame.tabbar, '-P', '-F', '#{pane_id}', '/bin/sh', '-c', placeholderPaneScript()]).trim();
+  cockpitTmuxOrThrow(commandList([['set-option', '-p', '-t', paneId, ROLE_OPTION, 'placeholder'], ...frameSizeCommands(frame.sidebar, frame.tabbar)]));
+}
+
+/** What builds a frame: the sidebar's command and where its panes start. */
+interface FrameSpec { root: string; sidebarScript: string; tabBarScript: string }
+
+/** Lays out a frame around its sidebar pane: the tab bar beside it, a placeholder slot below that, the sizes kept. */
+function buildFrame(windowId: string, sidebar: string, spec: FrameSpec): void {
+  const split = (direction: '-h' | '-v', target: string, script: string) => {
+    const paneId = cockpitTmuxOrThrow(['split-window', direction, '-d', '-t', target, '-c', spec.root, '-P', '-F', '#{pane_id}', '/bin/sh', '-c', script]).trim();
+    if (!paneId.startsWith('%')) throw new Error(`unexpected tmux output '${paneId}'`);
+    return paneId;
+  };
+  const tabbar = split('-h', sidebar, spec.tabBarScript);
+  const slot = split('-v', tabbar, placeholderPaneScript());
+  cockpitTmuxOrThrow(commandList([
+    ['set-option', '-w', '-t', windowId, FRAME_OPTION, '1'],
+    ['set-option', '-p', '-t', sidebar, ROLE_OPTION, 'sidebar'],
+    ['set-option', '-p', '-t', tabbar, ROLE_OPTION, 'tabbar'],
+    ['set-option', '-p', '-t', slot, ROLE_OPTION, 'placeholder'],
+    ...frameSizeCommands(sidebar, tabbar),
+    frameResizeHook(windowId, sidebar, tabbar),
+    ['select-window', '-t', windowId],
+  ]));
+}
+
+/** The frame, built in a new window (its sidebar running `spec.sidebarScript`). */
+function newFrameWindow(spec: FrameSpec): void {
+  const created = cockpitTmuxOrThrow(['new-window', '-d', '-t', `=${COCKPIT_SESSION}:`, '-n', FRAME_NAME, '-c', spec.root,
+    '-P', '-F', '#{window_id} #{pane_id}', '/bin/sh', '-c', spec.sidebarScript]);
+  const { windowId, paneId } = parseCreated(created);
+  buildFrame(windowId, paneId, spec);
+}
+
+function parseCreated(out: string): { windowId: string; paneId: string } {
+  const [windowId, paneId] = out.trim().split(' ');
+  if (!windowId?.startsWith('@') || !paneId?.startsWith('%')) throw new Error(`unexpected tmux output '${out.trim()}'`);
+  return { windowId, paneId };
+}
+
+/**
+ * Makes sure the session has a whole frame: a slot is added to one that lost
+ * it; one that lost its sidebar or tab bar is rebuilt, its tab panes kept in
+ * their holding windows; a session without one gets one.
+ */
+function ensureFrame(spec: FrameSpec): void {
+  const panes = cockpitPanes();
+  const frame = frameOf(panes);
+  if (frame?.sidebar && frame.tabbar) {
+    ensureSlot(frame);
+    cockpitTmuxOrThrow(commandList([...frameSizeCommands(frame.sidebar, frame.tabbar), frameResizeHook(frame.windowId, frame.sidebar, frame.tabbar)]));
+    return;
+  }
+  if (frame) {
+    for (const pane of panes.filter((entry) => entry.windowId === frame.windowId && paneTab(entry))) holdPane(pane.paneId, pane.projectId, pane.projectId);
+    cockpitTmux(['kill-window', '-t', frame.windowId]);
+  }
+  newFrameWindow(spec);
+}
+
+interface LegacyWindow { windowId: string; name: string; projectId: string; masterPane: string; master: string; agentId: string; agentProjectId: string }
+
+/**
+ * Rebuilds a cockpit from before the frame (a window per project, master pane
+ * beside a dashboard, and a window per agent tab): each master pane and agent
+ * tab pane moves, still running, into its project's holding window, and the
+ * old windows (only their dashboards left) close. No master, worker or
+ * coordinator is stopped, and no stream reconnects. Returns how many windows it rebuilt.
+ */
+function migrateLegacyWindows(): number {
+  const out = cockpitTmuxOrThrow(['list-windows', '-t', `=${COCKPIT_SESSION}`, '-F', [
+    '#{window_id}', '#{window_name}', `#{${LEGACY_MASTER_PANE_OPTION}}`, `#{${LEGACY_MASTER_OPTION}}`, `#{${LEGACY_AGENT_ID_OPTION}}`,
+    `#{${LEGACY_AGENT_PROJECT_OPTION}}`, `#{${LEGACY_PROJECT_OPTION}}`,
+  ].join(FIELD_SEPARATOR)]);
+  const legacy: LegacyWindow[] = out.split('\n').filter(Boolean).map((line) => {
+    const [windowId = '', name = '', masterPane = '', master = '', agentId = '', agentProjectId = '', projectId = ''] = line.split(FIELD_SEPARATOR);
+    return { windowId, name, projectId, masterPane, master, agentId, agentProjectId };
+  }).filter((window) => window.projectId || (window.agentId && window.agentProjectId));
+  // Project windows first: an agent tab's holding window takes its project's name.
+  const ordered = [...legacy.filter((window) => window.projectId), ...legacy.filter((window) => !window.projectId)];
+  for (const window of ordered) {
+    const panes = cockpitTmuxOrThrow(['list-panes', '-t', window.windowId, '-F', '#{pane_id}']).split('\n').filter(Boolean);
+    const spec = window.projectId
+      ? { pane: window.masterPane, projectId: window.projectId, name: window.name, role: 'master' as const, agentId: null, masterKey: window.master }
+      : { pane: panes[0], projectId: window.agentProjectId, name: window.name.split('/')[0], role: 'agent' as const, agentId: window.agentId, masterKey: '' };
+    if (spec.pane && panes.includes(spec.pane)) {
+      holdPane(spec.pane, spec.projectId, spec.name);
+      cockpitTmuxOrThrow(commandList(tabPaneOptions(spec.pane, spec)));
+    }
+    cockpitTmux(['kill-window', '-t', window.windowId]);
+  }
+  return legacy.length;
+}
+
+export type CockpitWindowOutcome = 'created-session' | 'added-project' | 'respawned-master' | 'existing';
+
+/**
+ * Creates the cockpit (or reuses it) and makes sure `project` has a master
+ * tab attaching to `master`, then shows the project with the slot focused.
+ * Idempotent: a project already in the cockpit keeps its tabs and comes back
+ * with the tab it last showed; one whose master changed, or that showed a
+ * message because it was stopped, has its master pane respawned (and shown).
+ * A cockpit with the old layout (a window per project) is rebuilt first.
  */
 export function ensureCockpitWindow(spec: {
   project: CockpitProject;
   master: CockpitMaster;
   watchCommand: string[];
-  /** The command that runs orc (node and its entry point): the cockpit keys run `orc cockpit` with it. */
+  /** The command that runs orc (node and its entry point): the cockpit keys and the tab bar run `orc cockpit` with it. */
   orc: string[];
   options: CockpitOptions;
   keys: CockpitKeys;
   size?: { columns?: number; rows?: number };
 }): CockpitWindowOutcome {
   const { project, master, options } = spec;
-  const masterCommand = ['/bin/sh', '-c', masterPaneScript(master, project, options)];
-  const dashboardScript = dashboardPaneScript(project, spec.watchCommand);
-  const newPane = ['-n', project.name, '-c', project.root, '-P', '-F', '#{window_id} #{pane_id} #{window_width}', ...masterCommand];
+  const frame: FrameSpec = {
+    root: project.root,
+    sidebarScript: dashboardPaneScript(project, spec.watchCommand),
+    tabBarScript: tabBarPaneScript(spec.orc),
+  };
 
   const hasCockpit = () => cockpitTmux(['has-session', '-t', `=${COCKPIT_SESSION}`]).status === 0;
+  let createdSession = false;
   if (!hasCockpit()) {
     const columns = spec.size?.columns || DEFAULT_SIZE.columns;
     const rows = spec.size?.rows || DEFAULT_SIZE.rows;
     const created = cockpitTmux(commandList([
       ...cockpitServerOptions({ trueColor: options.trueColor, terminal: cockpitTerminal(), keys: spec.keys, orc: spec.orc }),
-      ['new-session', '-d', '-s', COCKPIT_SESSION, '-x', String(columns), '-y', String(rows), ...newPane],
+      ['new-session', '-d', '-s', COCKPIT_SESSION, '-x', String(columns), '-y', String(rows), '-n', FRAME_NAME, '-c', project.root,
+        '-P', '-F', '#{window_id} #{pane_id}', '/bin/sh', '-c', frame.sidebarScript],
     ]));
     if (!created.error && created.status === 0) {
-      const { windowId, paneId, columns: width } = parseCreated(created.stdout);
-      cockpitTmuxOrThrow(commandList(windowLayoutCommands(windowId, paneId, width, project, master, dashboardScript)));
-      return 'created-session';
+      const { windowId, paneId } = parseCreated(created.stdout);
+      buildFrame(windowId, paneId, frame);
+      createdSession = true;
+    } else if (!hasCockpit()) {
+      throw created.error ?? new Error(`tmux new-session failed: ${(created.stderr || '').trim() || `exit ${created.status}`}`);
     }
-    // Another start-session created the cockpit first: add this project's tab to it.
-    if (!hasCockpit()) throw created.error ?? new Error(`tmux new-session failed: ${(created.stderr || '').trim() || `exit ${created.status}`}`);
+    // Otherwise another start-session created the cockpit first: add this project to it.
   }
-  // A running cockpit, maybe created with other keys (or before they were configurable): apply these, and number its tabs from 1.
-  cockpitTmuxOrThrow(commandList([...cockpitKeyOptions(spec.keys, boundCockpitKeys(), spec.orc), ['move-window', '-r', '-t', `=${COCKPIT_SESSION}`]]));
+  if (!createdSession) {
+    // A running cockpit, maybe created with other keys or the old layout: apply these keys, then rebuild its layout.
+    cockpitTmuxOrThrow(commandList([...cockpitKeyOptions(spec.keys, boundCockpitKeys(), spec.orc), ['move-window', '-r', '-t', `=${COCKPIT_SESSION}`]]));
+    migrateLegacyWindows();
+    ensureFrame(frame);
+  }
 
-  const existing = cockpitWindows().find((window) => window.projectId === project.id);
-  if (existing) {
-    const panes = windowPanes(existing.windowId);
-    if (panes.includes(existing.masterPane)) {
-      if (panes.length < 2) {
-        // The dashboard pane was closed: rebuild the layout around the master pane.
-        cockpitTmuxOrThrow(commandList(windowLayoutCommands(existing.windowId, existing.masterPane, existing.columns, project, master, dashboardScript)));
-      }
-      if (existing.master === masterKey(master)) {
-        cockpitTmuxOrThrow(commandList(focusCommands(existing.windowId, existing.masterPane)));
-        return 'existing';
-      }
+  return withCockpitLock(() => {
+    const key = masterKey(master);
+    const masterCommand = masterPaneScript(master, project, options);
+    const pane = cockpitPanes().find((entry) => entry.projectId === project.id && (entry.role === 'master' || entry.role === 'message'));
+    let outcome: CockpitWindowOutcome;
+    if (pane?.role === 'master' && pane.masterKey === key) {
+      outcome = 'existing';
+    } else if (pane) {
       cockpitTmuxOrThrow(commandList([
-        ['respawn-pane', '-k', '-t', existing.masterPane, '-c', project.root, ...masterCommand],
-        ['set-option', '-w', '-t', existing.windowId, MASTER_OPTION, masterKey(master)],
-        ...focusCommands(existing.windowId, existing.masterPane),
+        ['respawn-pane', '-k', '-t', pane.paneId, '-c', project.root, '/bin/sh', '-c', masterCommand],
+        ...tabPaneOptions(pane.paneId, { role: 'master', projectId: project.id, agentId: null, masterKey: key }),
       ]));
-      return 'respawned-master';
+      outcome = 'respawned-master';
+    } else {
+      createTabPane({ projectId: project.id, projectName: project.name, agentId: null, role: 'master', masterKey: key, root: project.root, script: masterCommand });
+      outcome = createdSession ? 'created-session' : 'added-project';
     }
-    cockpitTmuxOrThrow(['kill-window', '-t', existing.windowId]);
-  }
-  const { windowId, paneId, columns } = parseCreated(cockpitTmuxOrThrow(['new-window', '-d', '-t', `=${COCKPIT_SESSION}:`, ...newPane]));
-  cockpitTmuxOrThrow(commandList(windowLayoutCommands(windowId, paneId, columns, project, master, dashboardScript)));
-  return 'created-window';
+    const result = applyTransitionLocked((state) => {
+      const selected = selectProject(state, project.id);
+      return selected.ok && outcome !== 'existing' ? selectTab(selected.state, MASTER_TAB) : selected;
+    });
+    if (!result.ok) throw new Error(result.message);
+    return outcome;
+  });
 }
 
 /** The command that attaches this terminal to the cockpit. */
@@ -473,21 +799,17 @@ export function cockpitAttachCommand(): { command: string; args: string[] } {
   return { command: tmuxBinary(), args: ['-L', COCKPIT_SOCKET, '-f', '/dev/null', 'attach-session', '-t', `=${COCKPIT_SESSION}`] };
 }
 
-/** Whether `TMUX` says this process already runs inside the cockpit (a shell in one of its windows). */
+/** Whether `TMUX` says this process already runs inside the cockpit (a shell in one of its panes). */
 export function insideCockpit(env: NodeJS.ProcessEnv = process.env): boolean {
   const socket = env.TMUX?.split(',')[0];
   return !!socket && socket === tmuxSocketPath(COCKPIT_SOCKET);
 }
 
 // ── Agent tabs ───────────────────────────────────────────────────────────────
-// A worker's or scout's live terminal opens in a tab of its own, next to its
-// project's tab: `orc terminal <agent_id> --write`, a control-API stream, so
-// opening it never attaches a tmux client to the agent's server (no resize on
-// attach; only the lease holder sizes the pane, as docs/terminal-streaming.md says).
-
-/** Window options naming the agent a tab streams. */
-const AGENT_PROJECT_OPTION = '@orc_agent_project';
-const AGENT_ID_OPTION = '@orc_agent_id';
+// A worker's or scout's live terminal is a tab of its own in its project:
+// `orc terminal <agent_id> --write`, a control-API stream, so opening it never
+// attaches a tmux client to the agent's server (no resize on attach; only the
+// lease holder sizes the pane, as docs/terminal-streaming.md says).
 
 export interface CockpitAgentTab {
   projectId: string;
@@ -497,6 +819,8 @@ export interface CockpitAgentTab {
   root: string;
   /** What the tab runs: `orc terminal <agent_id> --write` for the agent's project. */
   command: string[];
+  /** What closes the tab: `orc cockpit close <agent_id>`. */
+  close: string[];
   /** The environment that selects the project for orc; ORC_* inherited from elsewhere is unset first. */
   env: Record<string, string>;
 }
@@ -519,24 +843,29 @@ export function cockpitAgentTab(agentId: string, project: CockpitTabProject, orc
     agentId,
     root: project.target_repo_root,
     command: [...orc, 'terminal', agentId, '--write', ...(unregistered ? [] : [`--project=${project.project_id}`])],
+    close: [...orc, 'cockpit', 'close', agentId],
     env: unregistered ? { ORC_STATE_DIR: project.state_dir } : {},
   };
 }
 
-/** An agent tab's window name: `<project>/<agent_id>`. Tabs are found by their window options, never by name. */
-export function agentWindowName(projectName: string, agentId: string): string {
-  return `${projectName}/${agentId}`;
+/** The pane a stopped project shows in its master's place. */
+export function cockpitStoppedProject(project: CockpitTabProject): CockpitStoppedProject {
+  return { projectId: project.project_id, projectName: project.name, root: project.target_repo_root };
 }
 
 /**
  * An agent tab's script: run the stream; when it ends (the agent's session
- * ended, the stream fell behind, or its own Ctrl-] detached it), say so and wait:
- * Enter closes the tab, `r` reconnects. Closing the tab only ends the stream;
- * the agent's session keeps running.
+ * ended, the stream fell behind, or its own Ctrl-] detached it), say so and
+ * wait: Enter closes the tab (`orc cockpit close`, run by the cockpit server
+ * so it outlives this pane), `r` reconnects. Closing the tab only ends the
+ * stream; the agent's session keeps running.
  */
-export function agentTabScript(tab: Pick<CockpitAgentTab, 'agentId' | 'projectName' | 'command' | 'env'>): string {
+export function agentTabScript(tab: Pick<CockpitAgentTab, 'agentId' | 'projectName' | 'command' | 'close' | 'env'>, tmux: string): string {
   const ended = `The terminal of ${tab.agentId} (${tab.projectName}) is closed`;
+  // run-shell expands formats: a `#` must reach its shell as itself.
+  const close = tab.close.map((part) => shellQuote(part).replace(/#/g, '##')).join(' ');
   return [
+    'cockpit_tmux=$TMUX',
     `unset TMUX ${PER_PROJECT_ENV.filter((key) => key.startsWith('ORC_')).join(' ')}`,
     ...Object.entries(tab.env).map(([key, value]) => `export ${key}=${shellQuote(value)}`),
     'while :; do',
@@ -545,65 +874,13 @@ export function agentTabScript(tab: Pick<CockpitAgentTab, 'agentId' | 'projectNa
     '  code=$?',
     `  printf '\\n%s (exit %s).\\n%s\\n' ${shellQuote(ended)} "$code" ${shellQuote('Closing this tab never stops the agent. Enter: close the tab · r Enter: reconnect')}`,
     '  read -r answer || exit 0',
-    '  [ "$answer" = r ] || exit 0',
+    '  [ "$answer" = r ] && continue',
+    // The cockpit swaps the next tab in and closes this pane; exit only if it did not.
+    `  TMUX=$cockpit_tmux ${shellQuote(tmux)} run-shell -b ${shellQuote(close)} 2>/dev/null || exit 0`,
+    '  sleep 5',
+    '  exit 0',
     'done',
   ].join('\n');
-}
-
-export interface CockpitTabWindow {
-  windowId: string;
-  /** The project tab's project (`@orc_project_id`), empty on an agent tab. */
-  projectId: string;
-  /** The agent tab's project and agent, empty on a project tab. */
-  agentProjectId: string;
-  agentId: string;
-}
-
-export type AgentTabPlan =
-  | { action: 'switch'; windowId: string }
-  /** `after`: the window to insert the new tab after (the project's last tab), null to append. */
-  | { action: 'open'; after: string | null };
-
-/** Open-vs-switch: the agent's existing tab, else a new one after its project's last tab (windows in index order). */
-export function planAgentTab(windows: CockpitTabWindow[], projectId: string, agentId: string): AgentTabPlan {
-  const existing = windows.find((window) => window.agentProjectId === projectId && window.agentId === agentId);
-  if (existing) return { action: 'switch', windowId: existing.windowId };
-  const own = windows.filter((window) => window.projectId === projectId || window.agentProjectId === projectId);
-  return { action: 'open', after: own.at(-1)?.windowId ?? null };
-}
-
-interface TabWindow extends CockpitTabWindow {
-  /** The cockpit's current window. */
-  active: boolean;
-  /** A project tab's master pane (`@orc_master_pane`), empty on an agent tab. */
-  masterPane: string;
-}
-
-function tabWindows(): TabWindow[] {
-  // tmux prints a tab in a format as `_`, so fields split on spaces; the project id goes last because an
-  // unregistered one is a path, which may hold spaces. A window has either a project or an agent's project.
-  const out = cockpitTmuxOrThrow(['list-windows', '-t', `=${COCKPIT_SESSION}`, '-F',
-    `#{window_id} #{window_active} [#{${MASTER_PANE_OPTION}}] [#{${AGENT_ID_OPTION}}] #{${PROJECT_OPTION}}#{${AGENT_PROJECT_OPTION}}`]);
-  return out.split('\n').filter(Boolean).map((line) => {
-    const match = /^(\S+) (\d) \[(\S*)\] \[(\S*)\] (.*)$/.exec(line);
-    const [, windowId = '', active = '', masterPane = '', agentId = '', project = ''] = match ?? [];
-    return agentId
-      ? { windowId, active: active === '1', masterPane: '', projectId: '', agentProjectId: project, agentId }
-      : { windowId, active: active === '1', masterPane, projectId: project, agentProjectId: '', agentId: '' };
-  });
-}
-
-/** The tab a window shows; null for a window that is no orc tab. */
-function windowTab(window: CockpitTabWindow): OpenTab | null {
-  if (window.agentId) return window.agentProjectId ? { projectId: window.agentProjectId, agentId: window.agentId } : null;
-  return window.projectId ? { projectId: window.projectId, agentId: null } : null;
-}
-
-function findTabWindow(windows: TabWindow[], tab: OpenTab): TabWindow | undefined {
-  return windows.find((window) => {
-    const shown = windowTab(window);
-    return shown?.projectId === tab.projectId && shown.agentId === tab.agentId;
-  });
 }
 
 // ── Tab state ────────────────────────────────────────────────────────────────
@@ -645,91 +922,116 @@ export function withCockpitLock<T>(fn: () => T, path = cockpitLockPath()): T {
   }
 }
 
-/** The open windows, and the stored state kept in step with them (rebuilt from them when missing or corrupt). */
-function currentTabs(): { windows: TabWindow[]; open: OpenTab[]; state: CockpitTabState } {
-  const windows = tabWindows();
-  const open = windows.map(windowTab).filter((tab): tab is OpenTab => tab !== null);
-  const current = windows.find((window) => window.active);
+/** The cockpit's panes, its frame, the open tabs, and the stored state kept in step with them (rebuilt from them when missing or corrupt). */
+function cockpitView(): { panes: CockpitPane[]; frame: CockpitFrame | null; open: OpenTab[]; state: CockpitTabState } {
+  const panes = cockpitPanes();
+  const frame = frameOf(panes);
+  const open = panes.map(paneTab).filter((tab): tab is OpenTab => tab !== null);
   const stored = parseTabs(cockpitTmux(['show-options', '-gqv', TABS_OPTION]).stdout?.trim()) ?? EMPTY_COCKPIT_STATE;
-  return { windows, open, state: reconcileTabs(stored, open, current ? windowTab(current) : null) };
+  return { panes, frame, open, state: reconcileTabs(stored, open, frame?.slot ? paneTab(frame.slot) : null) };
 }
 
-/** Resolves the agent tab to open when the shown tab has no window yet. */
+/** Resolves the agent tab to open when the shown tab has no pane yet. */
 export type AgentTabResolver = (projectId: string, agentId: string) => CockpitAgentTab;
+/** Resolves a project to show that has no master tab: it is not running, so it shows a message. */
+export type StoppedProjectResolver = (projectId: string) => CockpitStoppedProject;
 
 export type CockpitActionResult = TabTransition & {
-  /** A new agent tab window was opened. */
+  /** A new agent tab pane was opened. */
   opened: boolean;
 };
 
-/** Opens an agent tab's window after its project's last tab, without selecting it. */
-function openAgentWindow(windows: TabWindow[], tab: CockpitAgentTab): string {
-  const plan = planAgentTab(windows, tab.projectId, tab.agentId);
-  const after = plan.action === 'open' ? plan.after : plan.windowId;
-  const where = after ? ['-a', '-t', after] : ['-t', `=${COCKPIT_SESSION}:`];
-  const windowId = cockpitTmuxOrThrow(['new-window', '-d', ...where, '-n', agentWindowName(tab.projectName, tab.agentId),
-    '-c', tab.root, '-P', '-F', '#{window_id}', '/bin/sh', '-c', agentTabScript(tab)]).trim();
-  if (!windowId.startsWith('@')) throw new Error(`unexpected tmux output '${windowId}'`);
-  cockpitTmuxOrThrow(commandList([
-    ['set-option', '-w', '-t', windowId, AGENT_PROJECT_OPTION, tab.projectId],
-    ['set-option', '-w', '-t', windowId, AGENT_ID_OPTION, tab.agentId],
-  ]));
-  return windowId;
+const NO_FRAME = 'the cockpit has no frame window; run orc start-session to rebuild it';
+
+function applyTransitionLocked(
+  transition: (state: CockpitTabState, open: OpenTab[]) => TabTransition,
+  resolveAgentTab?: AgentTabResolver,
+  resolveStoppedProject?: StoppedProjectResolver,
+): CockpitActionResult {
+  const before = cockpitView();
+  ensureSlot(before.frame);
+  const { panes, frame, open, state } = before.frame?.slot ? before : cockpitView();
+  if (!frame?.slot) throw new Error(NO_FRAME);
+  const store = (next: CockpitTabState) => cockpitTmuxOrThrow(['set-option', '-g', TABS_OPTION, serializeTabs(next)]);
+
+  let result: TabTransition = transition(state, open);
+  const shown = result.ok ? shownTab(result.state) : null;
+  if (shown && shown.agentId === null && !findTabPane(panes, shown) && !resolveStoppedProject) {
+    result = { ok: false, state, message: `${shown.projectId} has no master tab in the cockpit; run orc start-session in it.` };
+  }
+  if (!result.ok) {
+    store(state);
+    return { ...result, state, opened: false };
+  }
+  let opened = false;
+  if (shown) {
+    if (!findTabPane(panes, shown)) {
+      if (shown.agentId === null) {
+        const project = resolveStoppedProject!(shown.projectId);
+        createTabPane({ ...project, agentId: null, role: 'message', script: messagePaneScript(project) });
+      } else {
+        const tab = (resolveAgentTab ?? ((projectId, agentId) => {
+          throw new Error(`cannot open a tab for ${agentId} (${projectId}) here`);
+        }))(shown.projectId, shown.agentId);
+        createTabPane({ ...tab, role: 'agent', script: agentTabScript(tab, tmuxBinary()) });
+        opened = true;
+      }
+    }
+    const now = cockpitPanes();
+    const target = findTabPane(now, shown)!;
+    const slot = frameOf(now)!.slot!;
+    const holding = holdingWindows();
+    if (paneTab(slot) && !holding.has(slot.projectId)) holding.set(slot.projectId, ensureHoldingWindow(slot.projectId, slot.projectId));
+    cockpitTmuxOrThrow(commandList(slotCommands({ ...frame, slot }, target, (projectId) => holding.get(projectId) ?? null)));
+  }
+  store(result.state);
+  const closed = closedTabs(state, result.state);
+  if (closed.length > 0) {
+    const now = cockpitPanes();
+    for (const tab of closed) {
+      const pane = findTabPane(now, tab);
+      if (pane) cockpitTmuxOrThrow(commandList([['kill-pane', '-t', pane.paneId], ...(pane.inFrame ? [] : [['select-layout', '-t', pane.windowId, 'tiled']])]));
+    }
+  }
+  return { ...result, opened };
 }
 
 /**
  * Applies one transition to the cockpit, serialized with every other: reads
- * the stored state (rebuilt from the open windows when missing or corrupt, and
- * kept in step with them), applies `transition`, closes the windows of closed
- * tabs and shows the active tab (opening its window through `resolveAgentTab`
- * when it has none), then stores the state. A refused transition changes no
- * window. Closing a tab only ends its window's stream: no master, worker or
- * coordinator is stopped.
+ * the stored state (rebuilt from the open tab panes when missing or corrupt,
+ * and kept in step with them), applies `transition`, swaps the active tab's
+ * pane into the slot (opening it through `resolveAgentTab`, or a stopped
+ * project's message through `resolveStoppedProject`, when it has none),
+ * stores the state and closes the panes of closed tabs. A refused transition
+ * changes no pane. Closing a tab only ends its pane's stream: no master,
+ * worker or coordinator is stopped.
  */
 export function applyCockpitTransition(
   transition: (state: CockpitTabState, open: OpenTab[]) => TabTransition,
-  resolveAgentTab: AgentTabResolver = (projectId, agentId) => {
-    throw new Error(`cannot open a tab for ${agentId} (${projectId}) here`);
-  },
+  resolveAgentTab?: AgentTabResolver,
+  resolveStoppedProject?: StoppedProjectResolver,
 ): CockpitActionResult {
-  return withCockpitLock(() => {
-    const { windows, open, state } = currentTabs();
-    const store = (next: CockpitTabState) => cockpitTmuxOrThrow(['set-option', '-g', TABS_OPTION, serializeTabs(next)]);
-
-    let result: TabTransition = transition(state, open);
-    let opened = false;
-    const shown = result.ok ? shownTab(result.state) : null;
-    if (shown && shown.agentId === null && !findTabWindow(windows, shown)) {
-      result = { ok: false, state, message: `${shown.projectId} has no master tab in the cockpit; run orc start-session in it.` };
-    }
-    if (!result.ok) {
-      store(state);
-      return { ...result, state, opened };
-    }
-    if (shown) {
-      const existing = findTabWindow(windows, shown);
-      if (existing) {
-        cockpitTmuxOrThrow(commandList(existing.masterPane
-          ? focusCommands(existing.windowId, existing.masterPane)
-          : [['select-window', '-t', existing.windowId]]));
-      } else {
-        const windowId = openAgentWindow(windows, resolveAgentTab(shown.projectId, shown.agentId!));
-        cockpitTmuxOrThrow(['select-window', '-t', windowId]);
-        opened = true;
-      }
-    }
-    for (const closed of closedTabs(state, result.state)) {
-      const window = findTabWindow(windows, closed);
-      if (window) cockpitTmuxOrThrow(['kill-window', '-t', window.windowId]);
-    }
-    store(result.state);
-    return { ...result, opened };
-  });
+  return withCockpitLock(() => applyTransitionLocked(transition, resolveAgentTab, resolveStoppedProject));
 }
 
-/** The stored tab state, kept in step with the open windows; read-only. */
+/** Shows the active tab again: puts a slot back into a frame that lost it. */
+export function refreshCockpit(): CockpitActionResult {
+  return applyCockpitTransition((state) => ({ ok: true, state, message: 'Refreshed the cockpit.' }));
+}
+
+/** The stored tab state, kept in step with the open tab panes; read-only. */
 export function readCockpitTabs(): CockpitTabState {
-  return currentTabs().state;
+  return cockpitView().state;
+}
+
+/** What the tab bar shows: the state, each project's name (its holding window's), and whether the slot is gone. */
+export interface CockpitBarView { state: CockpitTabState; names: Record<string, string>; slotMissing: boolean }
+
+export function readCockpitBar(): CockpitBarView {
+  const { panes, frame, state } = cockpitView();
+  const names: Record<string, string> = {};
+  for (const pane of panes) if (pane.holding && !names[pane.holding]) names[pane.holding] = pane.windowName;
+  return { state, names, slotMissing: !!frame && !frame.slot };
 }
 
 /** Whether the cockpit session runs. */
@@ -743,8 +1045,8 @@ export function cockpitMessage(client: string, text: string): void {
 }
 
 /**
- * Switches the cockpit to `tab`'s agent tab, opening it first when the agent
- * has none (so one tab, and one stream, per agent).
+ * Shows `tab`'s agent tab in the slot, opening it first when the agent has
+ * none (so one tab, and one stream, per agent).
  */
 export function openAgentTab(tab: CockpitAgentTab): 'opened' | 'switched' {
   const result = applyCockpitTransition((state) => openAgent(state, tab.projectId, tab.agentId), () => tab);
@@ -752,7 +1054,7 @@ export function openAgentTab(tab: CockpitAgentTab): 'opened' | 'switched' {
   return result.opened ? 'opened' : 'switched';
 }
 
-/** Switches the cockpit to `projectId`'s master tab; false when the project has no tab. */
+/** Shows `projectId`'s master tab; false when the project has no tab. */
 export function switchToMasterTab(projectId: string): boolean {
   return applyCockpitTransition((state) => {
     const selected = selectProject(state, projectId);

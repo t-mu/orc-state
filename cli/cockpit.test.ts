@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ProjectListEntry } from '../client.ts';
-import type { AgentTabResolver, CockpitActionResult } from '../adapters/tmuxCockpit.ts';
+import type { AgentTabResolver, CockpitActionResult, StoppedProjectResolver } from '../adapters/tmuxCockpit.ts';
 import type { CockpitTabState, OpenTab, TabTransition } from '../lib/cockpitTabs.ts';
-import { NOT_IN_COCKPIT, parseCockpitArgs, runCockpit, tabProject, waitingAgents, type CockpitDeps } from './cockpit.ts';
+import { NOT_IN_COCKPIT, parseCockpitArgs, renderTabBar, runCockpit, tabProject, waitingAgents, type CockpitDeps } from './cockpit.ts';
 
 const STATE: CockpitTabState = {
   activeProject: 'p-1',
@@ -23,11 +23,13 @@ function fakeDeps(overrides: Partial<CockpitDeps> = {}, open: OpenTab[] = [{ pro
   const messages: [string, string][] = [];
   let state = STATE;
   let resolver: AgentTabResolver | null = null;
+  let stopped: StoppedProjectResolver | null = null;
   const deps: CockpitDeps = {
     inside: () => true,
     running: () => true,
-    apply: vi.fn((transition: (s: CockpitTabState, o: OpenTab[]) => TabTransition, resolve?: AgentTabResolver): CockpitActionResult => {
+    apply: vi.fn((transition: (s: CockpitTabState, o: OpenTab[]) => TabTransition, resolve?: AgentTabResolver, resolveStopped?: StoppedProjectResolver): CockpitActionResult => {
       resolver = resolve ?? null;
+      stopped = resolveStopped ?? null;
       const result = transition(state, open);
       if (result.ok) state = result.state;
       return { ...result, opened: false };
@@ -36,12 +38,14 @@ function fakeDeps(overrides: Partial<CockpitDeps> = {}, open: OpenTab[] = [{ pro
     projects: () => [entry('p-1'), entry('p-2')],
     waiting: () => Promise.resolve([]),
     message: (client, text) => messages.push([client, text]),
+    bar: () => ({ state, names: {}, slotMissing: false }),
+    refresh: () => {},
     orc: ['/node', '/orc.js'],
     log: (line) => lines.push(line),
     error: (line) => errors.push(line),
     ...overrides,
   };
-  return { deps, lines, errors, messages, state: () => state, resolver: () => resolver };
+  return { deps, lines, errors, messages, state: () => state, resolver: () => resolver, stopped: () => stopped };
 }
 
 describe('parseCockpitArgs', () => {
@@ -59,6 +63,7 @@ describe('parseCockpitArgs', () => {
     [['close', 'w1'], { action: 'close', agentId: 'w1' }],
     [['attention'], { action: 'attention' }],
     [['state'], { action: 'state' }],
+    [['bar'], { action: 'bar' }],
   ])('parses %j', (argv, command) => {
     expect(parseCockpitArgs(argv)).toEqual({ command, client: null });
   });
@@ -140,6 +145,15 @@ describe('runCockpit', () => {
     expect(fake.state().activeProject).toBe('p-2');
   });
 
+  it('shows a registered project the cockpit has no tab for, as stopped: its message pane names how to start it', async () => {
+    const fake = fakeDeps({ projects: () => [entry('p-1'), entry('p-2'), entry('p-3')] });
+    expect(await runCockpit(['project', 'p-3'], fake.deps)).toBe(0);
+    expect(fake.state().activeProject).toBe('p-3');
+    expect(fake.state().projects.at(-1)).toEqual({ projectId: 'p-3', tabs: [], active: null });
+    expect(fake.stopped()!('p-3')).toEqual({ projectId: 'p-3', projectName: 'name-p-3', root: '/work/p-3' });
+    expect(() => fake.stopped()!('nope')).toThrow("unknown project 'nope'");
+  });
+
   it('cycles through the waiting agents for attention', async () => {
     const waiting = vi.fn(() => Promise.resolve([{ projectId: 'p-2', agentId: 'x5' }]));
     const fake = fakeDeps({ waiting });
@@ -182,5 +196,23 @@ describe('waitingAgents', () => {
   it('skips projects whose coordinator is not running and those it cannot ask', async () => {
     const projects = [entry('p-1'), entry('p-2', { coordinator_running: true, state_dir: '/nonexistent/orc-state' })];
     expect(await waitingAgents(STATE, projects)).toEqual([]);
+  });
+});
+
+describe('renderTabBar', () => {
+  it('shows the projects and the active project\'s numbered tabs, the active ones in brackets, above a rule', () => {
+    expect(renderTabBar({ state: STATE, names: { 'p-1': 'app' } }, 60)).toEqual([
+      'projects [app]  p-2 ',
+      'tabs      1 master  [2 w1]',
+      '─'.repeat(60),
+    ]);
+  });
+
+  it('fits a narrow pane and says when no project is open', () => {
+    const [projects, tabs, rule] = renderTabBar({ state: STATE, names: {} }, 12);
+    expect(projects).toBe('projects [p…');
+    expect(tabs).toHaveLength(12);
+    expect(rule).toBe('─'.repeat(12));
+    expect(renderTabBar({ state: { activeProject: null, projects: [] }, names: {} }, 80)[0]).toBe('No project is open; run orc start-session in one.');
   });
 });

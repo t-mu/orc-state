@@ -69,6 +69,16 @@ export function selectProject(state: CockpitTabState, projectId: string): TabTra
   return ok({ ...state, activeProject: projectId }, `Switched to project ${projectId}.`);
 }
 
+/**
+ * Make `projectId` the active project, adding it (master tab only) when the
+ * cockpit has no tab for it: the cockpit then shows that it is not running.
+ */
+export function showProject(state: CockpitTabState, projectId: string): TabTransition {
+  if (!projectId) return refused(state, 'Showing a project needs a project id.');
+  if (findProject(state, projectId)) return selectProject(state, projectId);
+  return ok(withProject(state, { projectId, tabs: [], active: null }), `Switched to project ${projectId}.`);
+}
+
 /** Make the next (`delta` 1) or previous (-1) project active, wrapping around. */
 export function cycleProject(state: CockpitTabState, delta: 1 | -1): TabTransition {
   if (state.projects.length === 0) return refused(state, 'No project is open in the cockpit; run orc start-session in one.');

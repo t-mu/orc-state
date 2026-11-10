@@ -29,18 +29,18 @@ orc start-session
 
 - **Coordinator** (background): dispatches tasks, probes worker processes, merges results.
 - **Master**: your interactive session. It runs in orc's private tmux server.
-- **Cockpit**: what `start-session` attaches this terminal to (tmux is required). A tmux session on a per-user server of its own (`tmux -L orc-cockpit`), with one tab per project: the master's pane, focused, and the dashboard (`orc watch`) beside it as a 40–60 column sidebar.
+- **Cockpit**: what `start-session` attaches this terminal to (tmux is required). A tmux session on a per-user server of its own (`tmux -L orc-cockpit`), shown as one window: the dashboard (`orc watch`) as a sidebar on the left, a tab bar at the top listing the projects and the active project's tabs, and below it the slot, showing the active tab: at first the master, focused.
 
 ### Getting around
 
-The cockpit claims only its own keys, all function keys by default, so they work on any keyboard layout without Option/Alt. Every other key, `Ctrl-b` included, reaches the focused pane. Mouse mode is on: click a pane to focus it or a tab in the status line to select it; a program that uses the mouse, such as the master, still gets its clicks.
+The cockpit claims only its own keys, all function keys by default, so they work on any keyboard layout without Option/Alt. Every other key, `Ctrl-b` included, reaches the focused pane. Mouse mode is on: click a pane to focus it; a program that uses the mouse, such as the master, still gets its clicks.
 
 | Keys | Does |
 |---|---|
 | `F1` … `F9` (or `F12 1` … `F12 9`) | select tab 1–9 of the active project (tab 1 is its master) |
-| `F10` | focus the dashboard pane |
+| `F10` | focus the dashboard (the sidebar) |
 | `F11` | show the next agent that needs you (its project and tab) |
-| `F12 o` | switch between the master and the dashboard pane |
+| `F12 o` | switch between the slot, the sidebar and the tab bar |
 | `F12 n` / `F12 p` | next / previous tab of the active project |
 | `F12 N` / `F12 P` | next / previous project, its tabs as you left them |
 | `F12 d` | detach |
@@ -49,10 +49,10 @@ The cockpit claims only its own keys, all function keys by default, so they work
 
 `F12` is the prefix: press it, release, then the key. Change the prefix and the direct keys with `ORC_COCKPIT_PREFIX` and `ORC_COCKPIT_KEYS` ([configuration.md → Cockpit keys](configuration.md#cockpit-keys)); `orc start-session` applies them to a running cockpit too.
 
-In the dashboard pane:
+In the dashboard:
 
 - `↑`/`↓` select an agent. An agent that needs you shows a badge (`QUESTION`, `PERMISSION`, `STALLED`, `NO PROGRESS`), with the question below it, and is listed first.
-- Enter on a worker or scout opens its live terminal in a tab next to the project's tab (`orc terminal <agent_id> --write`), or switches to that tab. Closing the tab ends only the stream; the agent keeps running. Enter on a master switches to its project's tab.
+- Enter on a worker or scout opens its live terminal in a tab of its project (`orc terminal <agent_id> --write`), shown in the slot, or shows that tab again; the stream stays open while other tabs are shown. Closing the tab ends only the stream; the agent keeps running. Enter on a master shows its project's master tab.
 - `t` opens the task explorer: the project's tasks and their specs, read-only.
 
 The dashboard only shows a question. Answer it through the master, or with `orc run-input-respond`.
@@ -61,7 +61,9 @@ The dashboard only shows a question. Answer it through the master, or with `orc 
 
 - Detach with `F12 d`, the master's `Ctrl-b d`, or by closing the terminal. The cockpit, the master, the workers and the coordinator keep running, and the master's MCP tools keep working.
 - Run `orc start-session` again to reattach. A live master is reattached with no prompts and no state reset.
-- Run it in another registered project to add that project's tab to the same cockpit. From a shell inside the cockpit it only switches to the tab.
+- Run it in another registered project to add that project to the same cockpit. Back in a project already there, it shows the tab you left it on. From a shell inside the cockpit it only switches the slot.
+- From a shell in the cockpit, `orc cockpit project <project_id>` shows a registered project that is not in it: the slot says how to start it. Nothing is started for you.
+- A cockpit from an older orc (a window per project) is rebuilt in this layout on the next `orc start-session`; no master or agent is stopped.
 - If the master process has died, its pane says so and waits; `orc start-session` starts it again. A Claude master resumes its recorded conversation (`--resume`); otherwise it starts fresh.
 - `orc start-session --no-cockpit` attaches straight to the master instead. It also works from inside your own tmux session, as a nested client.
 - `tmux -L orc-cockpit kill-server` closes the cockpit without stopping anything; `orc kill-all` stops the master and revokes its credential.

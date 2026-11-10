@@ -5,8 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { tmuxSocketPath } from './tmux.ts';
 import {
-  COCKPIT_SOCKET, DEFAULT_COCKPIT_KEYS, agentTabScript, agentWindowName, cockpitAgentTab, cockpitAttachCommand, cockpitKeyOptions, cockpitKeysHint, cockpitRunShell, cockpitServerEnv,
-  cockpitServerOptions, dashboardPaneScript, dashboardPaneWidth, insideCockpit, isTmuxKeyName, resolveCockpitKeys, masterKey, masterPaneScript, planAgentTab, terminalHasTrueColor, windowLayoutCommands, withCockpitLock,
+  COCKPIT_SOCKET, DEFAULT_COCKPIT_KEYS, SIDEBAR_COLUMNS, TAB_BAR_ROWS, agentTabScript, cockpitAgentTab, cockpitAttachCommand, cockpitKeyOptions, cockpitKeysHint,
+  cockpitRunShell, cockpitServerEnv, cockpitServerOptions, cockpitStoppedProject, dashboardPaneScript, frameOf, frameResizeHook, frameSizeCommands, insideCockpit,
+  isTmuxKeyName, keeperPaneScript, messagePaneScript, paneTab, parseCockpitPanes, placeholderPaneScript, resolveCockpitKeys, masterPaneScript, slotCommands,
+  startCommand, tabBarPaneScript, tabPaneOptions, terminalHasTrueColor, withCockpitLock, type CockpitPane,
 } from './tmuxCockpit.ts';
 
 const ORC = ['/usr/bin/node', '/orc/cli/orc.js'];
@@ -62,7 +64,7 @@ describe('masterPaneScript', () => {
   it('tells how to restart a master that is not running, quoting the project name', () => {
     const script = masterPaneScript(master, project, { tmux: 'tmux', trueColor: false });
     expect(script).toContain("Master '\\''master'\\'' of Bob'\\''s app is not running.");
-    expect(script).toContain('Run orc start-session for this project to start it');
+    expect(script).toContain("Start it: cd '\\''/work/app'\\'' && orc start-session");
     expect(parsesAsShell(script)).toBe(true);
   });
 
@@ -152,7 +154,7 @@ describe('cockpitServerOptions', () => {
     expect(options).toContainEqual(['bind-key', 'F12', 'send-prefix']);
     expect(options).toContainEqual(['bind-key', '-n', 'F1', ...runShell('tab 1')]);
     expect(options).toContainEqual(['bind-key', '-n', 'F9', ...runShell('tab 9')]);
-    expect(options).toContainEqual(['bind-key', '-n', 'F10', 'select-pane', '-t', '{right}']);
+    expect(options).toContainEqual(['bind-key', '-n', 'F10', 'select-pane', '-t', '{left}']);
     expect(options).toContainEqual(['bind-key', '-n', 'F11', ...runShell('attention')]);
     expect(options).toContainEqual(['set-option', '-g', 'mouse', 'on']);
     expect(options).toContainEqual(['set-option', '-g', 'base-index', '1']);
@@ -179,6 +181,13 @@ describe('cockpitKeyOptions', () => {
     expect(options).toContainEqual(['set-option', '-g', 'status-right', cockpitKeysHint(DEFAULT_COCKPIT_KEYS)]);
   });
 
+  it('leaves holding windows out of the status line', () => {
+    const options = cockpitKeyOptions(DEFAULT_COCKPIT_KEYS, null, ORC);
+    expect(options).toContainEqual(['set-option', '-g', 'window-status-format', '#{?#{@orc_holding},,#I:#W#F }']);
+    expect(options).toContainEqual(['set-option', '-g', 'window-status-current-format', '#{?#{@orc_holding},,#I:#W#F }']);
+    expect(options).toContainEqual(['set-option', '-g', 'window-status-separator', '']);
+  });
+
   it('points the prefix tab keys at orc cockpit: n/p, 1-9, & for the active project, N/P for projects', () => {
     const options = cockpitKeyOptions(DEFAULT_COCKPIT_KEYS, null, ORC);
     expect(options).toContainEqual(['bind-key', 'n', ...runShell('next')]);
@@ -199,25 +208,110 @@ describe('cockpitRunShell', () => {
   });
 });
 
-describe('windowLayoutCommands', () => {
-  it('splits the dashboard beside the master pane without focusing it, labels the window and focuses the master', () => {
-    const commands = windowLayoutCommands('@3', '%7', 200, project, master, 'DASH');
-    expect(commands[0]).toEqual(['split-window', '-h', '-d', '-l', '50', '-t', '%7', '-c', '/work/app', '/bin/sh', '-c', 'DASH']);
-    expect(commands).toContainEqual(['set-option', '-w', '-t', '@3', '@orc_project_id', 'p-1']);
-    expect(commands).toContainEqual(['set-option', '-w', '-t', '@3', '@orc_master', masterKey(master)]);
-    expect(commands).toContainEqual(['set-option', '-w', '-t', '@3', '@orc_master_pane', '%7']);
-    expect(commands.slice(-2)).toEqual([['select-window', '-t', '@3'], ['select-pane', '-t', '%7']]);
+const pane = (fields: Partial<CockpitPane>): CockpitPane => ({
+  paneId: '%0', windowId: '@0', windowName: 'w', inFrame: false, holding: '', role: '', projectId: '', agentId: '', masterKey: '', ...fields,
+});
+
+describe('frame', () => {
+  it('keeps the sidebar width and the tab bar height, restoring them whenever the window is resized', () => {
+    expect([SIDEBAR_COLUMNS, TAB_BAR_ROWS]).toEqual([34, 3]);
+    expect(frameSizeCommands('%1', '%2')).toEqual([['resize-pane', '-t', '%1', '-x', '34'], ['resize-pane', '-t', '%2', '-y', '3']]);
+    expect(frameResizeHook('@1', '%1', '%2')).toEqual(['set-hook', '-w', '-t', '@1', 'window-resized', 'resize-pane -t %1 -x 34 ; resize-pane -t %2 -y 3']);
+  });
+
+  it('reads panes split on <|>, so a project id with spaces survives', () => {
+    const out = ['%3<|>@1<|>orc<|>1<|>agent<|>w1<|><|>unregistered:/s/my proj<|>', '%4<|>@2<|>my proj<|><|>keeper<|><|><|><|>unregistered:/s/my proj', ''].join('\n');
+    expect(parseCockpitPanes(out)).toEqual([
+      pane({ paneId: '%3', windowId: '@1', windowName: 'orc', inFrame: true, role: 'agent', agentId: 'w1', projectId: 'unregistered:/s/my proj' }),
+      pane({ paneId: '%4', windowId: '@2', windowName: 'my proj', role: 'keeper', holding: 'unregistered:/s/my proj' }),
+    ]);
+  });
+
+  it('knows a tab by its pane options: a master or message pane is the master tab, keepers and frame panes are none', () => {
+    expect(paneTab(pane({ role: 'master', projectId: 'p-1', masterKey: 'k' }))).toEqual({ projectId: 'p-1', agentId: null });
+    expect(paneTab(pane({ role: 'message', projectId: 'p-1' }))).toEqual({ projectId: 'p-1', agentId: null });
+    expect(paneTab(pane({ role: 'agent', projectId: 'p-1', agentId: 'w1' }))).toEqual({ projectId: 'p-1', agentId: 'w1' });
+    for (const role of ['keeper', 'sidebar', 'tabbar', 'placeholder']) expect(paneTab(pane({ role, projectId: 'p-1' }))).toBeNull();
+    expect(paneTab(pane({ role: 'agent', projectId: 'p-1' }))).toBeNull();
+  });
+
+  it('finds the frame\'s sidebar, tab bar and slot; a closed slot is null; no frame window is no frame', () => {
+    const panes = [
+      pane({ paneId: '%1', windowId: '@1', inFrame: true, role: 'sidebar' }),
+      pane({ paneId: '%2', windowId: '@1', inFrame: true, role: 'tabbar' }),
+      pane({ paneId: '%5', windowId: '@1', inFrame: true, role: 'master', projectId: 'p-1' }),
+      pane({ paneId: '%6', windowId: '@2', holding: 'p-1', role: 'keeper' }),
+    ];
+    expect(frameOf(panes)).toEqual({ windowId: '@1', sidebar: '%1', tabbar: '%2', slot: panes[2] });
+    expect(frameOf(panes.filter((entry) => entry.paneId !== '%5'))?.slot).toBeNull();
+    expect(frameOf(panes.slice(3))).toBeNull();
+  });
+
+  it('names a tab pane with pane options, which move with it when it is swapped', () => {
+    expect(tabPaneOptions('%7', { role: 'agent', projectId: 'p-1', agentId: 'w1' })).toEqual([
+      ['set-option', '-p', '-t', '%7', '@orc_role', 'agent'],
+      ['set-option', '-p', '-t', '%7', '@orc_tab_project', 'p-1'],
+      ['set-option', '-p', '-t', '%7', '@orc_tab_agent', 'w1'],
+      ['set-option', '-p', '-t', '%7', '@orc_master_key', ''],
+    ]);
   });
 });
 
-describe('dashboardPaneWidth', () => {
-  it('is a sidebar of a quarter of the window within 40–60 columns, and never the primary pane', () => {
-    expect(dashboardPaneWidth(286)).toBe(60);
-    expect(dashboardPaneWidth(200)).toBe(50);
-    expect(dashboardPaneWidth(120)).toBe(40);
-    // A narrow window keeps the master the wider pane.
-    expect(dashboardPaneWidth(80)).toBe(32);
-    expect(dashboardPaneWidth(2)).toBe(1);
+describe('slotCommands', () => {
+  const frame = { windowId: '@1', sidebar: '%1', tabbar: '%2' };
+  const holding = (projectId: string) => ({ 'p-1': '@2', 'p-2': '@3' })[projectId] ?? null;
+  const focus = (paneId: string) => [['select-window', '-t', '@1'], ['select-pane', '-t', paneId]];
+
+  it('swaps a tab of the same project into the slot; the shown one takes its place in the holding window', () => {
+    const slot = pane({ paneId: '%5', windowId: '@1', inFrame: true, role: 'master', projectId: 'p-1' });
+    const target = pane({ paneId: '%8', windowId: '@2', holding: 'p-1', role: 'agent', projectId: 'p-1', agentId: 'w1' });
+    expect(slotCommands({ ...frame, slot }, target, holding)).toEqual([
+      ['swap-pane', '-d', '-s', '%8', '-t', '%5'],
+      ['select-layout', '-t', '@2', 'tiled'],
+      ...focus('%8'),
+    ]);
+  });
+
+  it('moves another project\'s tab back to its own holding window', () => {
+    const slot = pane({ paneId: '%5', windowId: '@1', inFrame: true, role: 'agent', projectId: 'p-1', agentId: 'w1' });
+    const target = pane({ paneId: '%9', windowId: '@3', holding: 'p-2', role: 'master', projectId: 'p-2' });
+    expect(slotCommands({ ...frame, slot }, target, holding)).toEqual([
+      ['swap-pane', '-d', '-s', '%9', '-t', '%5'],
+      ['join-pane', '-d', '-s', '%5', '-t', '@2'],
+      ['select-layout', '-t', '@2', 'tiled'],
+      ['select-layout', '-t', '@3', 'tiled'],
+      ...focus('%9'),
+    ]);
+  });
+
+  it('closes a placeholder it replaces, and only focuses a tab already shown', () => {
+    const slot = pane({ paneId: '%3', windowId: '@1', inFrame: true, role: 'placeholder' });
+    const target = pane({ paneId: '%9', windowId: '@3', holding: 'p-2', role: 'master', projectId: 'p-2' });
+    expect(slotCommands({ ...frame, slot }, target, holding)).toEqual([
+      ['swap-pane', '-d', '-s', '%9', '-t', '%3'],
+      ['kill-pane', '-t', '%3'],
+      ['select-layout', '-t', '@3', 'tiled'],
+      ...focus('%9'),
+    ]);
+    expect(slotCommands({ ...frame, slot: target }, target, holding)).toEqual(focus('%9'));
+  });
+});
+
+describe('pane scripts', () => {
+  it('a stopped project shows the command that starts it and waits, starting nothing', () => {
+    const script = messagePaneScript({ projectName: "Bob's app", root: '/work/my app' });
+    expect(parsesAsShell(script)).toBe(true);
+    expect(script).toContain("Bob'\\''s app is not running in the cockpit.");
+    expect(script).toContain(startCommand('/work/my app').replace(/'/g, "'\\''"));
+    expect(startCommand('/work/my app')).toBe("cd '/work/my app' && orc start-session");
+    expect(script).not.toMatch(/^\s*(orc|cd) /m);
+    expect(cockpitStoppedProject({ project_id: 'p-1', name: 'app', state_dir: '/s', target_repo_root: '/work/app' }))
+      .toEqual({ projectId: 'p-1', projectName: 'app', root: '/work/app' });
+  });
+
+  it('the keeper, the placeholder and the tab bar parse as shell; the tab bar runs orc cockpit bar', () => {
+    for (const script of [keeperPaneScript(), placeholderPaneScript(), tabBarPaneScript(ORC)]) expect(parsesAsShell(script)).toBe(true);
+    expect(tabBarPaneScript(ORC)).toContain("'/usr/bin/node' '/orc/cli/orc.js' 'cockpit' 'bar'");
   });
 });
 
@@ -253,44 +347,21 @@ describe('terminalHasTrueColor', () => {
 });
 
 describe('agent tabs', () => {
-  it('names a tab after its project and agent', () => {
-    expect(agentWindowName("Bob's app", 'grisly-moor')).toBe("Bob's app/grisly-moor");
-  });
-
-  it('switches to the agent\'s existing tab instead of opening another', () => {
-    const windows = [
-      { windowId: '@1', projectId: 'p-1', agentProjectId: '', agentId: '' },
-      { windowId: '@4', projectId: '', agentProjectId: 'p-1', agentId: 'w1' },
-      { windowId: '@2', projectId: 'p-2', agentProjectId: '', agentId: '' },
-      { windowId: '@5', projectId: '', agentProjectId: 'p-2', agentId: 'w1' },
-    ];
-    expect(planAgentTab(windows, 'p-1', 'w1')).toEqual({ action: 'switch', windowId: '@4' });
-    expect(planAgentTab(windows, 'p-2', 'w1')).toEqual({ action: 'switch', windowId: '@5' });
-  });
-
-  it('opens a new tab after its project\'s last tab, or at the end for a project without one', () => {
-    const windows = [
-      { windowId: '@1', projectId: 'p-1', agentProjectId: '', agentId: '' },
-      { windowId: '@4', projectId: '', agentProjectId: 'p-1', agentId: 'w1' },
-      { windowId: '@2', projectId: 'p-2', agentProjectId: '', agentId: '' },
-    ];
-    expect(planAgentTab(windows, 'p-1', 'w2')).toEqual({ action: 'open', after: '@4' });
-    expect(planAgentTab(windows, 'p-2', 'w2')).toEqual({ action: 'open', after: '@2' });
-    expect(planAgentTab(windows, 'p-3', 'w2')).toEqual({ action: 'open', after: null });
-  });
-
   it('runs the stream with ORC_* and TMUX unset first, then says when it ended and waits to close or reconnect', () => {
     const script = agentTabScript({
       agentId: 'w1', projectName: "Bob's app", command: ['/usr/bin/node', '/orc/cli/orc.ts', 'terminal', 'w1', '--write', '--project=p-1'],
-      env: { ORC_STATE_DIR: '/state/p 1' },
-    });
+      close: ['/opt/node #2/node', '/orc/cli/orc.ts', 'cockpit', 'close', 'w1'], env: { ORC_STATE_DIR: '/state/p 1' },
+    }, '/opt/tmux');
     expect(parsesAsShell(script)).toBe(true);
     const lines = script.split('\n');
-    expect(lines[0]).toBe('unset TMUX ORC_PROJECT_ID ORC_STATE_DIR ORC_CONTROL_SOCKET ORC_PROJECT_FLAG');
-    expect(lines[1]).toBe("export ORC_STATE_DIR='/state/p 1'");
+    expect(lines[0]).toBe('cockpit_tmux=$TMUX');
+    expect(lines[1]).toBe('unset TMUX ORC_PROJECT_ID ORC_STATE_DIR ORC_CONTROL_SOCKET ORC_PROJECT_FLAG');
+    expect(lines[2]).toBe("export ORC_STATE_DIR='/state/p 1'");
     expect(script).toContain("'/usr/bin/node' '/orc/cli/orc.ts' 'terminal' 'w1' '--write' '--project=p-1'");
     expect(script).toContain("The terminal of w1 (Bob'\\''s app) is closed");
-    expect(script).toContain('[ "$answer" = r ] || exit 0');
+    expect(script).toContain('[ "$answer" = r ] && continue');
+    // Enter closes the tab through the cockpit server, which outlives this pane; # is doubled for run-shell.
+    expect(script).toContain("TMUX=$cockpit_tmux '/opt/tmux' run-shell -b ''\\''/opt/node ##2/node'\\'' '\\''/orc/cli/orc.ts'\\'' '\\''cockpit'\\'' '\\''close'\\'' '\\''w1'\\'''");
   });
 });
 
@@ -300,7 +371,7 @@ describe('cockpitAgentTab', () => {
   it('streams a registered project\'s agent with --project', () => {
     expect(cockpitAgentTab('w1', { project_id: 'p-1', name: 'app', state_dir: '/s/p-1', target_repo_root: '/work/app' }, orc)).toEqual({
       projectId: 'p-1', projectName: 'app', agentId: 'w1', root: '/work/app',
-      command: [...orc, 'terminal', 'w1', '--write', '--project=p-1'], env: {},
+      command: [...orc, 'terminal', 'w1', '--write', '--project=p-1'], close: [...orc, 'cockpit', 'close', 'w1'], env: {},
     });
   });
 
