@@ -91,6 +91,13 @@ describe('masterPaneScript', () => {
     expect(parsesAsShell(script)).toBe(true);
   });
 
+  it('offers q to leave the cockpit while waiting, the way out that needs no Ctrl-b or function key', () => {
+    const script = masterPaneScript(master, project, { tmux: '/opt/tmux', trueColor: false });
+    expect(script).toContain('q: leave the cockpit');
+    expect(script).toMatch(/q\|Q\) TMUX=\$cockpit_tmux '\/opt\/tmux' detach-client/);
+    expect(script).toContain('stty -echo -icanon min 0 time 20');
+  });
+
   it('announces 24-bit colour to the nested client only when the terminal has it', () => {
     expect(masterPaneScript(master, project, { tmux: 'tmux', trueColor: true })).toContain(`'tmux' -T RGB -L 'orc-abc123' attach-session`);
     expect(masterPaneScript(master, project, { tmux: 'tmux', trueColor: false })).not.toContain('-T RGB');

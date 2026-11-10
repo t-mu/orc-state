@@ -310,7 +310,8 @@ function textPaneScript(lines: string[]): string {
  * too, as a direct attach would, but only while the pane is shown; a failed
  * attach keeps its error on screen and retries after a pause. A master that is
  * not running leaves a note with the command that starts it, and the pane
- * waits for it to start without echoing what is typed.
+ * waits for it to start; meanwhile `q` detaches the cockpit client (typing is
+ * not echoed), the one way out that needs neither Ctrl-b nor a function key.
  */
 export function masterPaneScript(master: CockpitMaster, project: Pick<CockpitProject, 'name' | 'root'>, options: CockpitOptions): string {
   const tmux = shellQuote(options.tmux);
@@ -320,6 +321,7 @@ export function masterPaneScript(master: CockpitMaster, project: Pick<CockpitPro
     `Master '${master.agentId}' of ${project.name} is not running.`,
     `Start it: ${startCommand(project.root)}`,
     'This pane attaches as soon as it runs. The cockpit, the workers and the coordinator keep running.',
+    'q: leave the cockpit (it keeps running; orc start-session comes back).',
   ].map(shellQuote).join(' ');
   return [
     // A nested tmux client refuses to start while TMUX names the cockpit; keep it to reach the cockpit client.
@@ -346,10 +348,21 @@ export function masterPaneScript(master: CockpitMaster, project: Pick<CockpitPro
     '    note',
     // Drawn again on resize: the pane may have been small in its holding window.
     '    trap note WINCH',
-    // Typing here does nothing: keep it off the screen so the pane does not look like an editor.
-    '    stty -echo 2>/dev/null',
-    '    while ! has; do sleep 2 & wait $!; done',
-    '    stty echo 2>/dev/null',
+    // Nothing here takes typing but q, which detaches: with no master, Ctrl-b reaches nothing and
+    // the cockpit's function keys may never arrive (a laptop's media keys, an editor's terminal).
+    // Keys are read unechoed, one at a time with a 2 s timeout, which also paces the has() poll.
+    '    if [ -t 0 ]; then',
+    '      saved=$(stty -g)',
+    '      stty -echo -icanon min 0 time 20',
+    '      while ! has; do',
+    '        case $(dd bs=1 count=1 2>/dev/null) in',
+    `          q|Q) TMUX=$cockpit_tmux ${tmux} detach-client 2>/dev/null ;;`,
+    '        esac',
+    '      done',
+    '      stty "$saved"',
+    '    else',
+    '      while ! has; do sleep 2 & wait $!; done',
+    '    fi',
     "    trap - WINCH",
     '  fi',
     'done',
