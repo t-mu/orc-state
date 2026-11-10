@@ -38,6 +38,8 @@ function fakeDeps(overrides: Partial<CockpitDeps> = {}, open: OpenTab[] = [{ pro
     projects: () => [entry('p-1'), entry('p-2')],
     waiting: () => Promise.resolve([]),
     message: (client, text) => messages.push([client, text]),
+    openExplorer: vi.fn(() => 'opened' as const),
+    watcher: () => { throw new Error('the explorer is not run in these tests'); },
     bar: () => ({ state, names: {}, slotMissing: false }),
     refresh: () => {},
     orc: ['/node', '/orc.js'],
@@ -62,6 +64,9 @@ describe('parseCockpitArgs', () => {
     [['close'], { action: 'close', agentId: null }],
     [['close', 'w1'], { action: 'close', agentId: 'w1' }],
     [['attention'], { action: 'attention' }],
+    [['tasks'], { action: 'tasks', close: false }],
+    [['tasks', 'close'], { action: 'tasks', close: true }],
+    [['explorer', 'p-1'], { action: 'explorer', projectId: 'p-1' }],
     [['state'], { action: 'state' }],
     [['bar'], { action: 'bar' }],
   ])('parses %j', (argv, command) => {
@@ -81,6 +86,8 @@ describe('parseCockpitArgs', () => {
     [['next', 'x'], "too many arguments for 'next'"],
     [['open', 'a', 'b', 'c'], "too many arguments for 'open'"],
     [['tab', '1', '--force'], "unknown option '--force'"],
+    [['tasks', 'open'], "tasks takes only 'close', not 'open'"],
+    [['explorer'], 'explorer needs a project id'],
   ])('rejects %j', (argv, error) => {
     expect(parseCockpitArgs(argv)).toEqual({ error });
   });
@@ -111,6 +118,31 @@ describe('runCockpit', () => {
     expect(fake.state().projects[0].active).toBeNull();
     expect(await runCockpit(['project', 'next'], fake.deps)).toBe(0);
     expect(fake.state().activeProject).toBe('p-2');
+  });
+
+  it('shows the task explorer for the active project, and says so when it already is', async () => {
+    const opened = fakeDeps({ openExplorer: vi.fn(() => 'opened' as const) });
+    expect(await runCockpit(['tasks'], opened.deps)).toBe(0);
+    expect(opened.deps.openExplorer).toHaveBeenCalledWith('p-1');
+    expect(opened.lines).toEqual(['Opened the task explorer.']);
+    const shown = fakeDeps({ openExplorer: vi.fn(() => 'switched' as const) });
+    expect(await runCockpit(['tasks'], shown.deps)).toBe(0);
+    expect(shown.lines).toEqual(['The task explorer is already shown.']);
+  });
+
+  it('refuses to show the task explorer when no project is open', async () => {
+    const fake = fakeDeps({ read: () => ({ activeProject: null, projects: [] }) });
+    expect(await runCockpit(['tasks'], fake.deps)).toBe(1);
+    expect(fake.errors).toEqual(['No project is open in the cockpit; run orc start-session in one.']);
+    expect(fake.deps.openExplorer).not.toHaveBeenCalled();
+  });
+
+  it('tasks close puts the active tab back through a transition, not the explorer opener', async () => {
+    const fake = fakeDeps();
+    expect(await runCockpit(['tasks', 'close'], fake.deps)).toBe(0);
+    expect(fake.deps.apply).toHaveBeenCalledTimes(1);
+    expect(fake.deps.openExplorer).not.toHaveBeenCalled();
+    expect(fake.lines).toEqual(['Closed the task explorer.']);
   });
 
   it('exits 1 for a refused transition from a shell', async () => {

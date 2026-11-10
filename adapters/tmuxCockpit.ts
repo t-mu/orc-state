@@ -156,7 +156,7 @@ function directKeyCommand(action: CockpitAction, orc: string[]): string[] {
 /** The prefix-table keys `orc cockpit` handles: the active project's tabs (n/p, 1-9, & closes) and the projects (N/P). */
 function prefixTabBindings(orc: string[]): string[][] {
   return [
-    ['n', 'next'], ['p', 'prev'], ['&', 'close'], ['N', 'project next'], ['P', 'project prev'],
+    ['n', 'next'], ['p', 'prev'], ['&', 'close'], ['N', 'project next'], ['P', 'project prev'], ['t', 'tasks'],
     ...Array.from({ length: 9 }, (_, index) => [String(index + 1), `tab ${index + 1}`]),
   ].map(([key, action]) => ['bind-key', key, ...cockpitRunShell(orc, action.split(' '))]);
 }
@@ -240,9 +240,11 @@ const MASTER_KEY_OPTION = '@orc_master_key';
  * What a cockpit pane is. The frame's `sidebar` and `tabbar`; `placeholder`
  * fills an empty slot; `keeper` keeps a holding window alive while all its
  * tabs are shown elsewhere; a tab is a project's `master`, its `message` (the
- * project is not running), or an `agent`'s terminal.
+ * project is not running), or an `agent`'s terminal. The `explorer` is the task
+ * explorer, not a tab: it exists only while it is shown in the slot, and any
+ * transition that takes it out of the slot kills it.
  */
-export type CockpitPaneRole = 'sidebar' | 'tabbar' | 'placeholder' | 'keeper' | 'master' | 'message' | 'agent';
+export type CockpitPaneRole = 'sidebar' | 'tabbar' | 'placeholder' | 'keeper' | 'master' | 'message' | 'agent' | 'explorer';
 
 /** Window options of the layout before the frame: one window per project and per agent tab. */
 const LEGACY_PROJECT_OPTION = '@orc_project_id';
@@ -398,6 +400,24 @@ export function tabBarPaneScript(orc: string[]): string {
     `  ${[...orc, 'cockpit', 'bar'].map(shellQuote).join(' ')}`,
     '  sleep 2',
     'done',
+  ].join('\n');
+}
+
+/**
+ * The explorer pane's script: `orc cockpit explorer <project_id>` until it
+ * closes (Esc or q), then `orc cockpit tasks close` run by the cockpit server,
+ * which swaps the active tab back into the slot and kills this pane. The
+ * explorer runs with TMUX kept, so it knows it is in the cockpit.
+ */
+export function explorerPaneScript(orc: string[], projectId: string, tmux: string): string {
+  const close = [...orc, 'cockpit', 'tasks', 'close'].map((part) => shellQuote(part).replace(/#/g, '##')).join(' ');
+  return [
+    'cockpit_tmux=$TMUX',
+    `unset ${PER_PROJECT_ENV.filter((key) => key.startsWith('ORC_')).join(' ')}`,
+    `${[...orc, 'cockpit', 'explorer', projectId].map(shellQuote).join(' ')}`,
+    `TMUX=$cockpit_tmux ${shellQuote(tmux)} run-shell -b ${shellQuote(close)} 2>/dev/null || exit 0`,
+    'sleep 5',
+    'exit 0',
   ].join('\n');
 }
 
@@ -1043,6 +1063,10 @@ function applyTransitionLocked(
       if (pane) cockpitTmuxOrThrow(['kill-pane', '-t', pane.paneId]);
     }
   }
+  // An explorer that left the slot is closed: it exists only while shown.
+  for (const pane of cockpitPanes().filter((pane) => pane.role === 'explorer' && !pane.inFrame)) {
+    cockpitTmuxOrThrow(['kill-pane', '-t', pane.paneId]);
+  }
   fitHoldingWindows();
   return { ...result, opened };
 }
@@ -1103,6 +1127,41 @@ export function openAgentTab(tab: CockpitAgentTab): 'opened' | 'switched' {
   const result = applyCockpitTransition((state) => openAgent(state, tab.projectId, tab.agentId), () => tab);
   if (!result.ok) throw new Error(result.message);
   return result.opened ? 'opened' : 'switched';
+}
+
+/** The holding window the task explorer's pane waits in while it is not shown. */
+const EXPLORER_HOLDING = 'explorer';
+
+/**
+ * Shows the task explorer for `projectId` in the slot, in place of the active
+ * tab (which stays the active tab, and comes back on close). Opens the
+ * explorer's pane when there is none; one that is already shown is left as it
+ * is. Returns whether it was opened or was already shown.
+ */
+export function openExplorer(projectId: string, orc: string[]): 'opened' | 'switched' {
+  return withCockpitLock(() => {
+    ensureSlot(frameOf(cockpitPanes()));
+    const panes = cockpitPanes();
+    // An explorer pane left outside the frame (a plain tmux key moved it) is stale: only one may exist.
+    for (const stale of panes.filter((pane) => pane.role === 'explorer' && !pane.inFrame)) {
+      cockpitTmuxOrThrow(['kill-pane', '-t', stale.paneId]);
+    }
+    const frame = frameOf(panes);
+    if (!frame?.slot) throw new Error(NO_FRAME);
+    if (frame.slot.role === 'explorer') return 'switched';
+    const holding = holdingWindows();
+    const windowId = holding.get(EXPLORER_HOLDING) ?? ensureHoldingWindow(EXPLORER_HOLDING, 'tasks');
+    const paneId = cockpitTmuxOrThrow(['split-window', '-d', '-t', windowId, '-P', '-F', '#{pane_id}', '/bin/sh', '-c', explorerPaneScript(orc, projectId, tmuxBinary())]).trim();
+    if (!paneId.startsWith('%')) throw new Error(`unexpected tmux output '${paneId}'`);
+    cockpitTmuxOrThrow(commandList([['set-option', '-p', '-t', paneId, ROLE_OPTION, 'explorer']]));
+    const target = cockpitPanes().find((pane) => pane.paneId === paneId);
+    if (!target) throw new Error(`the task explorer pane ${paneId} did not start`);
+    const slot = frame.slot;
+    if (paneTab(slot) && !holding.has(slot.projectId)) holding.set(slot.projectId, ensureHoldingWindow(slot.projectId, slot.projectId));
+    cockpitTmuxOrThrow(commandList(slotCommands({ ...frame, slot }, target, (id) => holding.get(id) ?? null)));
+    fitHoldingWindows();
+    return 'opened';
+  });
 }
 
 /** Shows `projectId`'s master tab; false when the project has no tab. */

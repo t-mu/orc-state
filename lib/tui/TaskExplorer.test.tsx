@@ -4,8 +4,7 @@ import { stripVTControlCharacters } from 'node:util';
 import React, { act } from 'react';
 import { cleanup, render } from 'ink-testing-library';
 import { afterEach, describe, expect, expectTypeOf, it } from 'vitest';
-import type { ProjectConnectionState, ProjectWatchState, ProjectWatchUpdate } from '../../client.ts';
-import { App } from './App.tsx';
+import type { ProjectConnectionState } from '../../client.ts';
 import { TaskExplorer, type TaskExplorerProps } from './TaskExplorer.tsx';
 import type { ProjectTaskSummary, ProjectTaskView, TaskRevisionSummary, TuiTaskClient } from './taskList.ts';
 
@@ -222,33 +221,28 @@ describe('TaskExplorer', () => {
   });
 });
 
-describe('task explorer in the dashboard', () => {
-  function watchState(id: string, connection: ProjectConnectionState): ProjectWatchState {
-    return {
-      project: { id, name: id, target_repo_root: `/repo/${id}`, state_dir: `/state/${id}`, repo_present: true, control_socket: null, coordinator_running: connection === 'running' },
-      connection, error: null, status: null, cursor: null,
-    };
-  }
-  const source = (states: ProjectWatchState[]) => ({
-    projects: () => states,
-    onUpdate: (_listener: (update: ProjectWatchUpdate) => void) => () => {},
+describe('TaskExplorer close', () => {
+  it('Esc or q in the list calls onClose', async () => {
+    const client = fakeClient({ '/state/alpha': [task('alpha/one', 'todo')] });
+    for (const key of [ESC, 'q']) {
+      let closed = 0;
+      const app = render(<TaskExplorer projects={[proj('alpha')]} initialProjectId="alpha" createClient={client.create} rows={undefined} columns={60} onClose={() => { closed += 1; }} />);
+      await settle();
+      await settle(() => app.stdin.write(key));
+      expect(closed).toBe(1);
+      app.unmount();
+    }
   });
 
-  it('t opens the explorer on the current project and toggles back to the dashboard', async () => {
-    const client = fakeClient({ '/state/mine': [task('mine/one', 'todo')] });
-    const app = render(<App source={source([watchState('other', 'running'), watchState('mine', 'running')])} stateDir="/state/mine" intervalMs={60_000} createTaskClient={client.create} />);
+  it('Esc in the spec view goes back to the list rather than closing', async () => {
+    const client = fakeClient({ '/state/alpha': [task('alpha/one', 'todo')] });
+    let closed = 0;
+    const app = render(<TaskExplorer projects={[proj('alpha')]} initialProjectId="alpha" createClient={client.create} rows={undefined} columns={60} onClose={() => { closed += 1; }} />);
     await settle();
-    expect(plain(app.lastFrame())).toContain('Notifications');
-
-    await settle(() => app.stdin.write('t'));
-    let frame = plain(app.lastFrame());
-    expect(frame).toContain('Tasks mine');
-    expect(frame).toContain('mine/one');
-    expect(frame).not.toContain('Notifications');
-
-    await settle(() => app.stdin.write('t'));
-    frame = plain(app.lastFrame());
-    expect(frame).toContain('Notifications');
+    await settle(() => app.stdin.write(ENTER));
+    await settle(() => app.stdin.write(ESC));
+    expect(closed).toBe(0);
+    expect(plain(app.lastFrame())).toContain('Tasks alpha');
   });
 });
 

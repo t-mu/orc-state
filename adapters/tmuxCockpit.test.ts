@@ -8,7 +8,7 @@ import {
   COCKPIT_SOCKET, DEFAULT_COCKPIT_KEYS, SIDEBAR_COLUMNS, TAB_BAR_ROWS, agentTabScript, cockpitAgentTab, cockpitAttachCommand, cockpitKeyOptions, cockpitKeysHint,
   cockpitRunShell, cockpitServerEnv, cockpitServerOptions, cockpitStoppedProject, dashboardPaneScript, frameOf, frameResizeHook, frameSizeCommands, holdingFitCommands, insideCockpit,
   isTmuxKeyName, keeperPaneScript, messagePaneScript, paneTab, parseCockpitPanes, placeholderPaneScript, resolveCockpitKeys, masterPaneScript, slotCommands,
-  startCommand, tabBarPaneScript, tabPaneOptions, terminalHasTrueColor, withCockpitLock, type CockpitPane,
+  startCommand, tabBarPaneScript, tabPaneOptions, terminalHasTrueColor, withCockpitLock, explorerPaneScript, type CockpitPane,
 } from './tmuxCockpit.ts';
 
 const ORC = ['/usr/bin/node', '/orc/cli/orc.js'];
@@ -443,4 +443,20 @@ describe('withCockpitLock', () => {
     expect(await Promise.all([run(), run()])).toEqual([0, 0]);
     expect(readFileSync(counter, 'utf8')).toBe('10');
   }, 20_000);
+});
+
+describe('task explorer pane', () => {
+  it('runs the explorer for the project, then has the cockpit close it', () => {
+    const script = explorerPaneScript(['node', '/orc/orc.js'], 'p-1', '/usr/bin/tmux');
+    expect(script).toContain("'node' '/orc/orc.js' 'cockpit' 'explorer' 'p-1'");
+    expect(script).toContain("'/usr/bin/tmux' run-shell -b");
+    expect(script).toContain("'\\''tasks'\\'' '\\''close'\\''");
+    expect(script).not.toContain('unset TMUX ');
+  });
+
+  it('binds the prefix t to the explorer', () => {
+    const options = cockpitKeyOptions(DEFAULT_COCKPIT_KEYS, null, ['node', '/orc/orc.js']);
+    const bound = options.find((o) => o[0] === 'bind-key' && o[1] === 't');
+    expect(bound?.join(' ')).toContain("cockpit' 'tasks'");
+  });
 });

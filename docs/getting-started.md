@@ -45,6 +45,7 @@ The cockpit claims only its own keys, all function keys by default, so they work
 | `F12 N` / `F12 P` | next / previous project, its tabs as you left them |
 | `F12 d` | detach |
 | `F12 &` | close the current agent tab; the master tab stays; never stops a master or agent |
+| `F12 t` | show the task explorer of the active project in the slot; Esc or `q` in its list closes it and the slot shows the tab you had |
 | `F12` `F12` | send `F12` to the pane |
 
 `F12` is the prefix: press it, release, then the key. Change the prefix and the direct keys with `ORC_COCKPIT_PREFIX` and `ORC_COCKPIT_KEYS` ([configuration.md → Cockpit keys](configuration.md#cockpit-keys)); `orc start-session` applies them to a running cockpit too.
@@ -53,7 +54,7 @@ In the dashboard:
 
 - `↑`/`↓` select an agent. An agent that needs you shows a badge (`QUESTION`, `PERMISSION`, `STALLED`, `NO PROGRESS`), with the question below it, and is listed first.
 - Enter on a worker or scout opens its live terminal in a tab of its project (`orc terminal <agent_id> --write`), shown in the slot, or shows that tab again; the stream stays open while other tabs are shown. Closing the tab ends only the stream; the agent keeps running. Enter on a master shows its project's master tab.
-- `t` opens the task explorer: the project's tasks and their specs, read-only.
+- `F12 t` shows the task explorer in the slot: the active project's tasks and their specs, read-only (see the keys above).
 
 The dashboard only shows a question. Answer it through the master, or with `orc run-input-respond`.
 
