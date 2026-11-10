@@ -15,7 +15,7 @@ const TUI_DIR = join(REPO_ROOT, 'lib', 'tui');
 const BOUNDARY_DIRS = [TUI_DIR, join(REPO_ROOT, 'lib', 'cockpit2')];
 const CLIENT_ENTRY = join(REPO_ROOT, 'client.ts');
 /** Helpers with no runtime import of another repo module (checked below). */
-const PURE_HELPERS = new Set(['lib/banner.ts', 'lib/currentActivity.ts', 'lib/terminalHost.ts', 'lib/cockpitTabs.ts', 'lib/cockpitKeys.ts']
+const PURE_HELPERS = new Set(['lib/banner.ts', 'lib/currentActivity.ts', 'lib/terminalHost.ts', 'lib/cockpitTabs.ts', 'lib/cockpitKeys.ts', 'lib/cellWidth.ts']
   .map((path) => join(REPO_ROOT, path)));
 
 interface ImportRef { specifier: string; typeOnly: boolean }
