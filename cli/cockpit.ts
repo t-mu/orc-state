@@ -23,7 +23,7 @@
  */
 import { basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ControlClient, listProjects, type ProjectListEntry } from '../client.ts';
+import { ControlClient, ProjectWatcher, listProjects, type ProjectListEntry } from '../client.ts';
 import {
   UNREGISTERED_PROJECT_PREFIX, applyCockpitTransition, cockpitAgentTab, cockpitMessage, cockpitRunning, cockpitStoppedProject, insideCockpit,
   openExplorer, readCockpitBar, readCockpitTabs, refreshCockpit,
@@ -34,7 +34,6 @@ import {
   type AttentionAgent, type CockpitTabState, type OpenTab, type TabTransition,
 } from '../lib/cockpitTabs.ts';
 import { USAGE } from './usage.ts';
-import { ProjectWatcher } from '../client.ts';
 
 export type CockpitCommand =
   | { action: 'project'; target: string }

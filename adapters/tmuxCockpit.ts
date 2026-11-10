@@ -1142,6 +1142,10 @@ export function openExplorer(projectId: string, orc: string[]): 'opened' | 'swit
   return withCockpitLock(() => {
     ensureSlot(frameOf(cockpitPanes()));
     const panes = cockpitPanes();
+    // An explorer pane left outside the frame (a plain tmux key moved it) is stale: only one may exist.
+    for (const stale of panes.filter((pane) => pane.role === 'explorer' && !pane.inFrame)) {
+      cockpitTmuxOrThrow(['kill-pane', '-t', stale.paneId]);
+    }
     const frame = frameOf(panes);
     if (!frame?.slot) throw new Error(NO_FRAME);
     if (frame.slot.role === 'explorer') return 'switched';

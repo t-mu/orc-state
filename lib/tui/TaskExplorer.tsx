@@ -206,7 +206,7 @@ export function TaskExplorer({ projects, initialProjectId, createClient, rows, c
             </>
           )
         : null}
-      <Text dimColor wrap="truncate">↑↓ select · ⏎ open · s status · f feature · r reload · Esc close</Text>
+      <Text dimColor wrap="truncate">↑↓ select · ⏎ open · s status · f feature · r reload · Esc/q close</Text>
     </Box>
   );
 }
