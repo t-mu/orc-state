@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ProjectListEntry } from '../client.ts';
 import type { AgentTabResolver, CockpitActionResult, StoppedProjectResolver } from '../adapters/tmuxCockpit.ts';
 import type { CockpitTabState, OpenTab, TabTransition } from '../lib/cockpitTabs.ts';
-import { NOT_IN_COCKPIT, parseCockpitArgs, renderTabBar, runCockpit, tabProject, waitingAgents, type CockpitDeps } from './cockpit.ts';
+import { NOT_IN_COCKPIT, parseCockpitArgs, runCockpit, throttle, tabProject, waitingAgents, type CockpitDeps } from './cockpit.ts';
 
 const STATE: CockpitTabState = {
   activeProject: 'p-1',
@@ -40,8 +40,10 @@ function fakeDeps(overrides: Partial<CockpitDeps> = {}, open: OpenTab[] = [{ pro
     message: (client, text) => messages.push([client, text]),
     openExplorer: vi.fn(() => 'opened' as const),
     watcher: () => { throw new Error('the explorer is not run in these tests'); },
-    bar: () => ({ state, names: {}, slotMissing: false }),
+    bar: () => ({ state, slotMissing: false }),
     refresh: () => {},
+    changes: () => () => {},
+    focusSlot: () => {},
     orc: ['/node', '/orc.js'],
     log: (line) => lines.push(line),
     error: (line) => errors.push(line),
@@ -231,20 +233,18 @@ describe('waitingAgents', () => {
   });
 });
 
-describe('renderTabBar', () => {
-  it('shows the projects and the active project\'s numbered tabs, the active ones in brackets, above a rule', () => {
-    expect(renderTabBar({ state: STATE, names: { 'p-1': 'app' } }, 60)).toEqual([
-      'projects [app]  p-2 ',
-      'tabs      1 master  [2 w1]',
-      '─'.repeat(60),
-    ]);
-  });
-
-  it('fits a narrow pane and says when no project is open', () => {
-    const [projects, tabs, rule] = renderTabBar({ state: STATE, names: {} }, 12);
-    expect(projects).toBe('projects [p…');
-    expect(tabs).toHaveLength(12);
-    expect(rule).toBe('─'.repeat(12));
-    expect(renderTabBar({ state: { activeProject: null, projects: [] }, names: {} }, 80)[0]).toBe('No project is open; run orc start-session in one.');
+describe('throttle', () => {
+  it('runs at most once per interval, so a slot the bar cannot put back does not loop on its own change signal', () => {
+    let clock = 0;
+    let runs = 0;
+    const refresh = throttle(() => { runs += 1; }, 5_000, () => clock);
+    for (let i = 0; i < 50; i += 1) refresh();
+    expect(runs).toBe(1);
+    clock = 4_999;
+    refresh();
+    expect(runs).toBe(1);
+    clock = 5_000;
+    refresh();
+    expect(runs).toBe(2);
   });
 });

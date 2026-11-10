@@ -159,6 +159,8 @@ describe('cockpitServerOptions', () => {
     expect(options).toContainEqual(['set-option', '-g', 'mouse', 'on']);
     expect(options).toContainEqual(['set-option', '-g', 'base-index', '1']);
     expect(options).toContainEqual(['set-option', '-g', 'default-terminal', 'tmux-256color']);
+    // A tab's pane exiting tells the tab bar to re-read the tab state.
+    expect(options).toContainEqual(['set-hook', '-g', 'pane-exited', 'wait-for -S orc-cockpit-changed']);
     expect(options.flat()).not.toContain('C-]');
     expect(options.flat()).not.toContain('terminal-features');
     // A new cockpit has nothing to unbind but tmux's own prefix.

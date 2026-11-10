@@ -16,8 +16,8 @@
  *
  * Applies one cockpit tab transition (lib/cockpitTabs.ts) and its tmux side
  * effects (adapters/tmuxCockpit.ts). Runs only inside the cockpit: from its key
- * bindings, the dashboard, or a shell in one of its panes. `bar` is what the
- * tab bar pane runs: a text view of the tab state, redrawn as it changes.
+ * bindings, the sidebar, the tab bar, or a shell in one of its panes. `bar` is
+ * what the tab bar pane runs: the active project's tabs, clickable.
  * `tasks` shows the task explorer in the slot (`tasks close` puts the active
  * tab back); `explorer` is what the explorer's pane runs.
  */
@@ -26,7 +26,7 @@ import { fileURLToPath } from 'node:url';
 import { ControlClient, ProjectWatcher, listProjects, type ProjectListEntry } from '../client.ts';
 import {
   UNREGISTERED_PROJECT_PREFIX, applyCockpitTransition, cockpitAgentTab, cockpitMessage, cockpitRunning, cockpitStoppedProject, insideCockpit,
-  openExplorer, readCockpitBar, readCockpitTabs, refreshCockpit,
+  focusCockpitSlot, openExplorer, readCockpitBar, readCockpitTabs, refreshCockpit, watchCockpitChanges,
   type AgentTabResolver, type CockpitBarView, type CockpitTabProject, type StoppedProjectResolver,
 } from '../adapters/tmuxCockpit.ts';
 import {
@@ -168,12 +168,14 @@ export interface CockpitDeps {
   projects: () => ProjectListEntry[];
   waiting: (state: CockpitTabState, projects: ProjectListEntry[]) => Promise<AttentionAgent[]>;
   message: (client: string, text: string) => void;
-  /** The tab bar's view, and what puts a closed slot back. */
+  /** The tab bar's view, what puts a closed slot back, the change signal it redraws on, and what focuses the slot after a click. */
   bar: () => CockpitBarView;
   refresh: () => void;
+  changes: (onChange: () => void) => () => void;
+  focusSlot: () => void;
   /** Shows the task explorer of a project in the slot; 'switched' when it already is. */
   openExplorer: (projectId: string) => 'opened' | 'switched';
-  /** The project watcher the explorer's pane reads the projects from. */
+  /** The project watcher the explorer's and the tab bar's panes read the projects from. */
   watcher: () => ProjectWatcher;
   /** The command that runs orc, for the agent tabs it opens. */
   orc: string[];
@@ -198,6 +200,8 @@ const defaultDeps = (): CockpitDeps => ({
   message: cockpitMessage,
   bar: readCockpitBar,
   refresh: () => { refreshCockpit(); },
+  changes: (onChange) => watchCockpitChanges(onChange),
+  focusSlot: () => { focusCockpitSlot(); },
   openExplorer: (projectId) => openExplorer(projectId, cockpitOrc()),
   watcher: () => new ProjectWatcher({ listProjects: () => listProjects() }),
   orc: cockpitOrc(),
@@ -261,54 +265,46 @@ export async function runCockpit(argv: string[], deps: CockpitDeps = defaultDeps
   }
 }
 
-/** Fits `text` into `columns` cells, an ellipsis marking a cut. */
-function fit(text: string, columns: number): string {
-  return text.length <= columns ? text : `${text.slice(0, Math.max(0, columns - 1))}…`;
+/** How often the tab bar may try to put back a missing slot: the fallback re-read's interval (TAB_BAR_INTERVAL_MS). */
+const BAR_REFRESH_MS = 5_000;
+
+/** `fn`, run at most once per `intervalMs` (calls in between are dropped). */
+export function throttle(fn: () => void, intervalMs: number, now: () => number = Date.now): () => void {
+  let lastRun = -Infinity;
+  return () => {
+    const at = now();
+    if (at - lastRun < intervalMs) return;
+    lastRun = at;
+    fn();
+  };
 }
 
 /**
- * The tab bar's three rows: the projects (the active one in brackets), the
- * active project's tabs numbered as the tab keys select them (the active one
- * in brackets), and a rule above the slot.
+ * Runs the tab bar (lib/tui/TabBar.tsx) until the pane closes: the active
+ * project's tabs, redrawn when an action signals a change (and at the
+ * sidebar's refresh otherwise), attention from the project watcher. A click
+ * runs `orc cockpit tab` or `close`; a slot that was closed is put back.
  */
-export function renderTabBar(view: Pick<CockpitBarView, 'state' | 'names'>, columns: number): string[] {
-  const { state, names } = view;
-  const mark = (label: string, active: boolean) => (active ? `[${label}]` : ` ${label} `);
-  const projects = state.projects.map((project) => mark(names[project.projectId] || project.projectId, project.projectId === state.activeProject));
-  const active = state.projects.find((project) => project.projectId === state.activeProject);
-  const tabs = active
-    ? [null, ...active.tabs].map((tab, index) => mark(`${index + 1} ${tab ?? 'master'}`, tab === active.active))
-    : [];
-  const width = Math.max(1, columns);
-  return [
-    fit(projects.length > 0 ? `projects ${projects.join(' ')}` : 'No project is open; run orc start-session in one.', width),
-    fit(tabs.length > 0 ? `tabs     ${tabs.join(' ')}` : '', width),
-    '─'.repeat(width),
-  ];
-}
-
-const BAR_POLL_MS = 500;
-
-/** Runs the tab bar until the pane closes: redraws when the state or the width changes, and puts back a slot that was closed. */
 async function runTabBar(deps: CockpitDeps): Promise<number> {
-  let last = '';
-  process.stdout.write('\x1b[?25l');
-  for (;;) {
-    let lines: string[];
-    try {
+  // Loaded on demand, as the explorer is: the other actions must not load Ink.
+  const { runTabBar: runApp } = await (import(runtimeImportPath('../lib/tui/TabBar.tsx', '../lib/tui/TabBar.js')) as Promise<typeof import('../lib/tui/TabBar.tsx')>);
+  const { runOrcCommand } = await (import(runtimeImportPath('./watch.ts', './watch.js')) as Promise<typeof import('./watch.ts')>);
+  // A refresh signals a change, which re-reads; a slot it cannot put back must not loop.
+  const refreshSlot = throttle(() => deps.refresh(), BAR_REFRESH_MS);
+  return runApp({
+    read: () => {
       const view = deps.bar();
-      if (view.slotMissing) deps.refresh();
-      lines = renderTabBar(view, process.stdout.columns || 80);
-    } catch (error) {
-      lines = [`orc cockpit bar: ${(error as Error).message}`];
-    }
-    const screen = lines.join('\n');
-    if (screen !== last) {
-      process.stdout.write(`\x1b[H\x1b[2J${screen}`);
-      last = screen;
-    }
-    await new Promise((resolve) => setTimeout(resolve, BAR_POLL_MS));
-  }
+      if (view.slotMissing) refreshSlot();
+      return view.state;
+    },
+    watcher: deps.watcher(),
+    changes: deps.changes,
+    actions: {
+      select: (tab) => runOrcCommand([...deps.orc, 'cockpit', 'tab', tab]),
+      close: (agentId) => runOrcCommand([...deps.orc, 'cockpit', 'close', agentId]),
+      focusSlot: () => { deps.focusSlot(); },
+    },
+  });
 }
 
 if (import.meta.url === new URL(process.argv[1], 'file:').href) {

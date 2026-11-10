@@ -4,7 +4,7 @@
  * The cockpit `orc start-session` opens: one tmux session in a per-user tmux
  * server of its own (never a project's private `orc-<hash>` server), shown as
  * one window, the frame: the sidebar (left, full height, the `orc watch`
- * dashboard), the tab bar (top right, `orc cockpit bar`) and the slot (bottom
+ * sidebar), the tab bar (top right, `orc cockpit bar`) and the slot (bottom
  * right) showing the active project's active tab. Each tab's process lives in
  * a pane of its project's hidden holding window and is swapped into the slot
  * when its tab is shown, so switching is instant and streams stay open. A
@@ -20,7 +20,7 @@
  * reaches the focused pane. Mouse mode is on: a click focuses a pane, and a
  * pane whose program asks for the mouse still gets it.
  */
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import {
@@ -393,7 +393,7 @@ export function dashboardPaneScript(project: Pick<CockpitProject, 'env'>, watchC
   ].join('\n');
 }
 
-/** The tab bar's script: `orc cockpit bar`, a text view of the tab state, restarted if it exits. */
+/** The tab bar's script: `orc cockpit bar`, the clickable tabs of the active project, restarted if it exits. */
 export function tabBarPaneScript(orc: string[]): string {
   return [
     'while :; do',
@@ -433,6 +433,8 @@ export function cockpitServerOptions(options: { trueColor: boolean; terminal: st
     ['set-option', '-g', 'escape-time', '10'],
     ['set-option', '-g', 'default-terminal', options.terminal],
     ...(options.trueColor ? [['set-option', '-as', 'terminal-features', ',*:RGB']] : []),
+    // A tab's pane exiting changes the tab state without an `orc cockpit` action: tell the tab bar.
+    ['set-hook', '-g', 'pane-exited', `wait-for -S ${COCKPIT_CHANGED_CHANNEL}`],
     ...cockpitKeyOptions(options.keys, null, options.orc),
   ];
 }
@@ -458,8 +460,10 @@ export function cockpitServerEnv(env: NodeJS.ProcessEnv = process.env): Record<s
   return next as Record<string, string>;
 }
 
+const cockpitTmuxArgs = (args: string[]) => ['-L', COCKPIT_SOCKET, '-f', '/dev/null', ...args];
+
 function cockpitTmux(args: string[]) {
-  return spawnSync(tmuxBinary(), ['-L', COCKPIT_SOCKET, '-f', '/dev/null', ...args], {
+  return spawnSync(tmuxBinary(), cockpitTmuxArgs(args), {
     encoding: 'utf8',
     timeout: 10_000,
     env: cockpitServerEnv(),
@@ -1086,7 +1090,11 @@ export function applyCockpitTransition(
   resolveAgentTab?: AgentTabResolver,
   resolveStoppedProject?: StoppedProjectResolver,
 ): CockpitActionResult {
-  return withCockpitLock(() => applyTransitionLocked(transition, resolveAgentTab, resolveStoppedProject));
+  try {
+    return withCockpitLock(() => applyTransitionLocked(transition, resolveAgentTab, resolveStoppedProject));
+  } finally {
+    signalCockpitChange();
+  }
 }
 
 /** Shows the active tab again: puts a slot back into a frame that lost it. */
@@ -1099,14 +1107,61 @@ export function readCockpitTabs(): CockpitTabState {
   return cockpitView().state;
 }
 
-/** What the tab bar shows: the state, each project's name (its holding window's), and whether the slot is gone. */
-export interface CockpitBarView { state: CockpitTabState; names: Record<string, string>; slotMissing: boolean }
+/** What the tab bar shows: the state, and whether the slot is gone (the bar puts it back). */
+export interface CockpitBarView { state: CockpitTabState; slotMissing: boolean }
 
 export function readCockpitBar(): CockpitBarView {
-  const { panes, frame, state } = cockpitView();
-  const names: Record<string, string> = {};
-  for (const pane of panes) if (pane.holding && !names[pane.holding]) names[pane.holding] = pane.windowName;
-  return { state, names, slotMissing: !!frame && !frame.slot };
+  const { frame, state } = cockpitView();
+  return { state, slotMissing: !!frame && !frame.slot };
+}
+
+/**
+ * The tmux wait channel signalled whenever the tab state may have changed:
+ * after every transition, and (a server hook) when a pane exits. Signalled
+ * with nobody waiting, the next wait returns at once, so no change is missed.
+ */
+export const COCKPIT_CHANGED_CHANNEL = 'orc-cockpit-changed';
+
+/** Signals the change channel; a cockpit server that is gone is no error. */
+export function signalCockpitChange(): void {
+  cockpitTmux(['wait-for', '-S', COCKPIT_CHANGED_CHANNEL]);
+}
+
+/**
+ * Calls `onChange` each time the change channel is signalled (the tab bar's
+ * redraw), waiting in a `tmux wait-for` child; after a failed wait (no server)
+ * it tries again in `retryMs`. Returns how to stop.
+ */
+export function watchCockpitChanges(onChange: () => void, retryMs = 5_000): () => void {
+  let stopped = false;
+  let child: ReturnType<typeof spawn> | null = null;
+  let timer: NodeJS.Timeout | null = null;
+  const wait = () => {
+    if (stopped) return;
+    const waiting = spawn(tmuxBinary(), cockpitTmuxArgs(['wait-for', COCKPIT_CHANGED_CHANNEL]), { stdio: 'ignore', env: cockpitServerEnv() });
+    child = waiting;
+    let ended = false;
+    const end = (signalled: boolean) => {
+      if (ended) return;
+      ended = true;
+      child = null;
+      if (stopped) return;
+      if (signalled) {
+        onChange();
+        wait();
+      } else {
+        timer = setTimeout(wait, retryMs);
+      }
+    };
+    waiting.on('error', () => end(false));
+    waiting.on('exit', (code) => end(code === 0));
+  };
+  wait();
+  return () => {
+    stopped = true;
+    if (timer) clearTimeout(timer);
+    child?.kill();
+  };
 }
 
 /** Whether the cockpit session runs. */
