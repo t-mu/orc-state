@@ -27,6 +27,7 @@ import {
   EMPTY_COCKPIT_STATE, MASTER_TAB, closedTabs, parseTabs, reconcileTabs, selectProject, selectTab, serializeTabs, shownTab,
   type CockpitTabState, type OpenTab, type TabTransition,
 } from '../lib/cockpitTabs.ts';
+import { terminalHasTrueColor as envHasTrueColor } from '../lib/cockpit2/color.ts';
 import { COCKPIT_ACTIONS, cockpitKeysHint, type CockpitAction, type CockpitKeys } from '../lib/cockpitKeys.ts';
 import { acquireLock, releaseLock } from '../lib/lock.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
@@ -188,9 +189,9 @@ export interface CockpitOptions {
   trueColor: boolean;
 }
 
-/** Whether `COLORTERM` announces 24-bit colour. */
+/** Whether `COLORTERM` announces 24-bit colour (lib/cockpit2/color.ts, which cockpit2 uses too). */
 export function terminalHasTrueColor(env: NodeJS.ProcessEnv = process.env): boolean {
-  return /^(truecolor|24bit)$/i.test(env.COLORTERM ?? '');
+  return envHasTrueColor(env);
 }
 
 /** Identifies the master a pane attaches to; a different one (a replaced master) respawns the pane. */

@@ -10,6 +10,7 @@
  * a locale-dependent encoding.
  */
 import type { Cell, CellStyle, Color, Cursor } from './screen.ts';
+import { nearestXterm256, type ColorDepth } from './color.ts';
 import { DEFAULT_STYLE, type Frame } from './frame.ts';
 
 const ESC = '\x1b';
@@ -23,14 +24,18 @@ const ATTRIBUTES = [
   ['blink', '5'], ['inverse', '7'], ['invisible', '8'], ['strikethrough', '9'],
 ] as const;
 
-function colorParams(color: Color, base: 30 | 40): string {
+function colorParams(color: Color, base: 30 | 40, depth: ColorDepth = 'truecolor'): string {
   if (color.type === 'default') return String(base + 9);
-  if (color.type === 'rgb') return `${base + 8};2;${color.r};${color.g};${color.b}`;
+  if (color.type === 'rgb') {
+    if (depth === '256') return `${base + 8};5;${nearestXterm256(color.r, color.g, color.b)}`;
+    return `${base + 8};2;${color.r};${color.g};${color.b}`;
+  }
   if (color.index < 8) return String(base + color.index);
   if (color.index < 16) return String(base + 60 + color.index - 8);
   return `${base + 8};5;${color.index}`;
 }
 
+/** Compares the intended colours, whatever the depth they are written in, so a style compares the same in every depth. */
 const sameColor = (a: Color, b: Color): boolean => colorParams(a, 30) === colorParams(b, 30);
 
 export function sameStyle(a: CellStyle, b: CellStyle): boolean {
@@ -41,14 +46,15 @@ export function sameStyle(a: CellStyle, b: CellStyle): boolean {
  * The SGR sequence that changes the terminal from `from` (null: unknown) to
  * `to`: only what changed, or a reset plus everything set when an attribute
  * is dropped or the current style is unknown. '' when nothing changes.
+ * With `depth` `256` an RGB colour is written as its nearest xterm-256 index.
  */
-export function sgrTransition(from: CellStyle | null, to: CellStyle): string {
+export function sgrTransition(from: CellStyle | null, to: CellStyle, depth: ColorDepth = 'truecolor'): string {
   const params: string[] = [];
   const reset = from === null || ATTRIBUTES.some(([key]) => from[key] && !to[key]);
   if (reset) params.push('0');
   for (const [key, code] of ATTRIBUTES) if (to[key] && (reset || !from[key])) params.push(code);
-  if (reset ? to.fg.type !== 'default' : !sameColor(from.fg, to.fg)) params.push(colorParams(to.fg, 30));
-  if (reset ? to.bg.type !== 'default' : !sameColor(from.bg, to.bg)) params.push(colorParams(to.bg, 40));
+  if (reset ? to.fg.type !== 'default' : !sameColor(from.fg, to.fg)) params.push(colorParams(to.fg, 30, depth));
+  if (reset ? to.bg.type !== 'default' : !sameColor(from.bg, to.bg)) params.push(colorParams(to.bg, 40, depth));
   return params.length ? `${ESC}[${params.join(';')}m` : '';
 }
 
@@ -75,9 +81,10 @@ const moveTo = (x: number, y: number) => `${ESC}[${y + 1};${x + 1}H`;
 /**
  * Terminal output that turns `prev` (what the terminal shows; null when
  * unknown) into `next`, then parks the cursor at `cursor`. Repaints every cell
- * when `prev` is null or its size differs.
+ * when `prev` is null or its size differs. `depth` is the terminal's colour
+ * depth (color.ts `colorDepthFromEnv`).
  */
-export function renderDiff(prev: Frame | null, next: Frame, cursor: Cursor): string {
+export function renderDiff(prev: Frame | null, next: Frame, cursor: Cursor, depth: ColorDepth = 'truecolor'): string {
   const full = prev === null || prev.cols !== next.cols || prev.rows !== next.rows;
   let out = SYNC_ON + HIDE_CURSOR;
   let style: CellStyle | null = null; // unknown until we set it
@@ -91,14 +98,14 @@ export function renderDiff(prev: Frame | null, next: Frame, cursor: Cursor): str
       if (!changed) continue;
     }
     if (at !== i) out += moveTo(i % cols, Math.floor(i / cols));
-    out += sgrTransition(style, cell.style);
+    out += sgrTransition(style, cell.style, depth);
     style = cell.style;
     out += cell.text;
     const end = i + (cell.width === 2 ? 2 : 1);
     // At a row's end the terminal waits to wrap, and an uncertain advance may be off: reposition next time.
     at = end % cols === 0 || uncertainAdvance(cell) ? -1 : end;
   }
-  if (style !== null) out += sgrTransition(style, DEFAULT_STYLE);
+  if (style !== null) out += sgrTransition(style, DEFAULT_STYLE, depth);
   out += moveTo(cursor.x, cursor.y);
   if (cursor.visible) out += SHOW_CURSOR;
   return out + SYNC_OFF;

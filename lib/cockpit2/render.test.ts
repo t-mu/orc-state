@@ -30,6 +30,14 @@ describe('sgrTransition', () => {
     expect(sgrTransition(DEFAULT_STYLE, style({ bg: { type: 'rgb', r: 1, g: 2, b: 3 } }))).toBe(`${ESC}[48;2;1;2;3m`);
   });
 
+  it('with depth 256 writes an RGB colour as its nearest xterm-256 index and leaves the rest alone', () => {
+    const orange: Color = { type: 'rgb', r: 255, g: 135, b: 0 };
+    expect(sgrTransition(DEFAULT_STYLE, style({ fg: orange }), '256')).toBe(`${ESC}[38;5;208m`);
+    expect(sgrTransition(DEFAULT_STYLE, style({ bg: { type: 'rgb', r: 128, g: 128, b: 128 } }), '256')).toBe(`${ESC}[48;5;244m`);
+    expect(sgrTransition(null, style({ bold: true, fg: RED, bg: { type: 'palette', index: 200 } }), '256')).toBe(`${ESC}[0;1;31;48;5;200m`);
+    expect(sgrTransition(style({ fg: orange }), style({ fg: { ...orange } }), '256')).toBe('');
+  });
+
   it('resets when an attribute is dropped, then restores the rest', () => {
     expect(sgrTransition(style({ bold: true }), DEFAULT_STYLE)).toBe(`${ESC}[0m`);
     expect(sgrTransition(style({ bold: true, italic: true, fg: RED }), style({ italic: true, fg: RED }))).toBe(`${ESC}[0;3;31m`);
@@ -38,6 +46,42 @@ describe('sgrTransition', () => {
 });
 
 describe('renderDiff', () => {
+  /** A frame with RGB foreground and background colours, and the RGB colour a later frame changes one cell to. */
+  function rgbFrames(): [Frame, Frame] {
+    const a = createFrame(3, 1);
+    drawText(a, 0, 0, 'ab', style({ fg: { type: 'rgb', r: 255, g: 0, b: 0 }, bg: { type: 'rgb', r: 20, g: 20, b: 20 } }));
+    drawText(a, 2, 0, 'c', style({ fg: { type: 'rgb', r: 0, g: 0, b: 255 } }));
+    const b = structuredClone(a);
+    drawText(b, 1, 0, 'x', style({ fg: { type: 'rgb', r: 0, g: 255, b: 0 } }));
+    return [a, b];
+  }
+
+  it('writes RGB colours as is in true colour', () => {
+    const [a, b] = rgbFrames();
+    expect(renderDiff(null, a, HIDDEN)).toBe(
+      `${PRE}${ESC}[1;1H${ESC}[0;38;2;255;0;0;48;2;20;20;20mab${ESC}[38;2;0;0;255;49mc${ESC}[39m${ESC}[1;1H${POST}`,
+    );
+    expect(renderDiff(a, b, HIDDEN, 'truecolor')).toBe(`${PRE}${ESC}[1;2H${ESC}[0;38;2;0;255;0mx${ESC}[39m${ESC}[1;1H${POST}`);
+  });
+
+  it('with depth 256 never writes an RGB colour, only the nearest xterm-256 index', () => {
+    const [a, b] = rgbFrames();
+    const full = renderDiff(null, a, HIDDEN, '256');
+    expect(full).toBe(`${PRE}${ESC}[1;1H${ESC}[0;38;5;196;48;5;233mab${ESC}[38;5;21;49mc${ESC}[39m${ESC}[1;1H${POST}`);
+    const diff = renderDiff(a, b, HIDDEN, '256');
+    expect(diff).toBe(`${PRE}${ESC}[1;2H${ESC}[0;38;5;46mx${ESC}[39m${ESC}[1;1H${POST}`);
+    expect(full + diff).not.toMatch(/[34]8;2;/);
+  });
+
+  it('with depth 256 an unchanged RGB frame writes no cell, even where two colours share an index', () => {
+    const a = createFrame(2, 1);
+    drawText(a, 0, 0, 'a', style({ fg: { type: 'rgb', r: 250, g: 0, b: 0 } }));
+    const b = structuredClone(a);
+    expect(renderDiff(a, b, HIDDEN, '256')).toBe(`${PRE}${ESC}[1;1H${POST}`);
+    drawText(b, 0, 0, 'a', style({ fg: { type: 'rgb', r: 255, g: 0, b: 0 } })); // the same index 196, but a different intended colour
+    expect(renderDiff(a, b, HIDDEN, '256')).toBe(`${PRE}${ESC}[1;1H${ESC}[0;38;5;196ma${ESC}[39m${ESC}[1;1H${POST}`);
+  });
+
   it('an unchanged frame produces no cell output', () => {
     const a = createFrame(6, 2);
     drawText(a, 0, 0, 'ab中😀', style({ bold: true }));
