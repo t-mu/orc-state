@@ -342,7 +342,7 @@ describe.skipIf(!hasTmux)('TmuxControlClient (private tmux server)', () => {
       for (const modes of results) expect(modes).toMatchObject({ paneId: expect.stringMatching(/^%\d+$/), cols, rows });
       for (const client of batchClients) client.close();
     }
-  }, 20_000);
+  }, 10_000);
 
   it('emits exit when the session is killed', async () => {
     session('doomed', 'sleep 30');
