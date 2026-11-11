@@ -9,6 +9,7 @@ import type { Backlog } from '../types/backlog.ts';
 import type { ActorType, OrcEventInput } from '../types/events.ts';
 import { requeueBackoffMs as _requeueBackoffMs, failureTaskOutcome } from './claimLeaseManager.ts';
 import { writeRunRevisionSnapshot } from './documentIndex.ts';
+import { InjectionScanError, injectionScanBlockedReason } from './promptInjectionScan.ts';
 import { commitBacklog, refreshBacklogProjection, requireProjectTaskStore } from './projectTasks.ts';
 
 const MAX_ATTEMPTS = 5; // auto-block a task after this many dispatch+fail cycles
@@ -96,9 +97,14 @@ export function claimTask(
         payload: { lease_expires_at },
       }]);
     } catch (error) {
-      // The claim never became a live run: return the task to the queue without counting an attempt.
       projectStore.inTransaction(() => {
-        projectStore.applyTransition(taskRef, { cause: 'failure_requeue', to: 'todo', runId: run_id, reason: 'claim_not_committed', actorId: agentId });
+        if (error instanceof InjectionScanError) {
+          // A spec that fails the scan fails every time: block it so dispatch moves on to other work.
+          projectStore.applyTransition(taskRef, { cause: 'failure_block', to: 'blocked', runId: run_id, reason: injectionScanBlockedReason(error), actorId: agentId });
+        } else {
+          // The claim never became a live run: return the task to the queue without counting an attempt.
+          projectStore.applyTransition(taskRef, { cause: 'failure_requeue', to: 'todo', runId: run_id, reason: 'claim_not_committed', actorId: agentId });
+        }
         projectStore.abandonRun(run_id);
       });
       refreshBacklogProjection(stateDir);

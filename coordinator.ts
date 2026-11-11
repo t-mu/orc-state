@@ -54,6 +54,7 @@ import { checkSandboxControlSocket } from './lib/sandboxDeps.ts';
 import { cleanupRunWorktree, deleteRunWorktree, ensureRunWorktree, getRunWorktree, pruneMissingRunWorktrees } from './lib/runWorktree.ts';
 import { HERMETIC_GIT_CONFIG_ARGS } from './lib/gitPlumbing.ts';
 import { InjectionScanError } from './lib/promptInjectionScan.ts';
+import { DispatchStallDetector, type DispatchTickOutcome } from './lib/dispatchStall.ts';
 import { pruneOrphanRunTaskSnapshots, taskSnapshotStatus, verifyRunTaskSnapshot } from './lib/documentIndex.ts';
 import { resumeWorkerSession, spawnEphemeralWorker } from './lib/workerRuntime.ts';
 import { prReviewSteps, type WorkerTaskWorkflow } from './lib/sessionBootstrap.ts';
@@ -1712,7 +1713,7 @@ async function tick() {
   // Agents that received a nudge this tick are excluded from dispatch to avoid
   // sending them a new task envelope in the same tick as an in-flight nudge.
   const nudgedThisTick = new Set([...nudgedByRunStart, ...nudgedByInProgress]);
-  await executeDispatchPlan(agents, claims, workerPoolConfig, tickBacklog, nudgedThisTick);
+  reportDispatchStall(await executeDispatchPlan(agents, claims, workerPoolConfig, tickBacklog, nudgedThisTick));
 
   if (MEMORY_PRUNE_INTERVAL_MS > 0 && Date.now() - lastMemoryPruneAt > MEMORY_PRUNE_INTERVAL_MS) {
     try {
@@ -1911,19 +1912,16 @@ const KNOWN_TASK_TYPES_SET = new Set(TASK_TYPES);
 const TASK_PRIORITY_RANK: Record<string, number> = { low: 0, normal: 1, high: 2, critical: 3 };
 
 /**
- * Find the next task eligible for dynamic worker spawning.
+ * Tasks eligible for dynamic worker spawning, highest priority first.
  *
  * Unlike agent-bound task selection, this scan does NOT filter on provider —
  * the provider is resolved from the task itself at spawn time. Owner-reserved
  * tasks are excluded since they require a specific pre-known agent identity.
- *
- * Returns `{ ref, required_provider }` for the highest-priority eligible task,
- * or null when no task is ready.
  */
-function nextSpawnableTask(
+function spawnableTasks(
   backlog: unknown,
   { excludeTaskRefs = new Set<string>() }: { excludeTaskRefs?: ReadonlySet<string> } = {},
-): { ref: string; required_provider: ProviderName | null } | null {
+): Array<{ ref: string; required_provider: ProviderName | null }> {
   const b = backlog as Backlog | null;
   const doneSet = new Set<string>();
   for (const feature of (b?.features ?? [])) {
@@ -1954,9 +1952,24 @@ function nextSpawnableTask(
       index += 1;
     }
   }
-  if (eligible.length === 0) return null;
   eligible.sort((a, b) => b.rank - a.rank || a.index - b.index);
-  return { ref: eligible[0].ref, required_provider: eligible[0].required_provider };
+  return eligible.map(({ ref, required_provider }) => ({ ref, required_provider }));
+}
+
+/** Last dispatch failure per task ref (`injection_scan`, `session_start_failed`, `dispatch_error`), for `dispatch_stalled`. */
+const lastDispatchFailure = new Map<string, string>();
+const dispatchStallDetector = new DispatchStallDetector();
+
+/** Tell the master once per stall that free capacity and ready work are not turning into runs. */
+function reportDispatchStall(outcome: DispatchTickOutcome): void {
+  const stall = dispatchStallDetector.observe(outcome, lastDispatchFailure);
+  // Keep reasons only for tasks still waiting; one that left the queue has nothing to explain.
+  for (const ref of lastDispatchFailure.keys()) {
+    if (!outcome.readyTaskRefs.includes(ref)) lastDispatchFailure.delete(ref);
+  }
+  if (!stall) return;
+  log(`dispatch stalled for ${stall.consecutive_ticks} ticks: ${stall.free_slots} free slot(s), ready: ${stall.ready_task_refs.join(', ')}`);
+  emit({ event: 'dispatch_stalled', actor_type: 'coordinator', actor_id: 'coordinator', payload: stall });
 }
 
 async function executeDispatchPlan(
@@ -1965,11 +1978,11 @@ async function executeDispatchPlan(
   workerPoolConfig: WorkerPoolConfig,
   tickBacklog: unknown,
   _nudgedThisTick: Set<string>,
-): Promise<void> {
+): Promise<DispatchTickOutcome> {
   // Capacity = configured max minus current active runs
   const activeClaimCount = activeClaimAgents(claims).size;
   const availableCapacity = workerPoolConfig.max_workers - activeClaimCount;
-  if (availableCapacity <= 0) return;
+  if (availableCapacity <= 0) return { freeSlots: 0, readyTaskRefs: [], claimed: 0 };
 
   // Find tasks eligible for spawning (up to available capacity slots)
   const reservedTaskRefs = new Set<string>(
@@ -1977,19 +1990,11 @@ async function executeDispatchPlan(
       .filter((c) => ['claimed', 'in_progress'].includes(c.state))
       .map((c) => c.task_ref),
   );
-  const dispatchItems: Array<{ ref: string; required_provider: ProviderName | null }> = [];
-  for (let i = 0; i < availableCapacity; i++) {
-    const next = nextSpawnableTask(tickBacklog, {
-      excludeTaskRefs: new Set([
-        ...reservedTaskRefs,
-        ...dispatchItems.map((d) => d.ref),
-      ]),
-    });
-    if (!next) break;
-    dispatchItems.push(next);
-  }
+  const ready = spawnableTasks(tickBacklog, { excludeTaskRefs: reservedTaskRefs });
+  const dispatchItems = ready.slice(0, availableCapacity);
+  const outcome: DispatchTickOutcome = { freeSlots: availableCapacity, readyTaskRefs: ready.map((task) => task.ref), claimed: 0 };
 
-  if (dispatchItems.length === 0) return;
+  if (dispatchItems.length === 0) return outcome;
 
   const dispatchResults = await runBounded(dispatchItems.map((item) => async () => {
     const taskRef = item.ref;
@@ -2035,6 +2040,7 @@ async function executeDispatchPlan(
         // Session launch failed; agent was cleaned up inside spawnEphemeralWorker
         spawnedAgentId = null;
         const failReason = spawnResult.reason ?? 'worker session could not be launched in assigned worktree';
+        lastDispatchFailure.set(taskRef, 'session_start_failed');
         finishRun(STATE_DIR, runId, agentId, {
           success: false,
           failureReason: `session_start_failed: ${failReason}`,
@@ -2058,14 +2064,18 @@ async function executeDispatchPlan(
           throw err;
         }
       }
+      outcome.claimed += 1;
+      lastDispatchFailure.delete(taskRef);
     } catch (err) {
       if (err instanceof InjectionScanError) {
+        // The claim blocked the task (injection_scan reason), so later ticks skip it.
+        lastDispatchFailure.set(taskRef, 'injection_scan');
         emit({
           event: 'task_dispatch_blocked',
           actor_type: 'coordinator',
           actor_id: 'coordinator',
           task_ref: taskRef,
-          payload: { reason: 'injection_scan', findings: err.findings },
+          payload: { reason: 'injection_scan', findings: err.findings, task_status: findTask(readBacklog(STATE_DIR), taskRef)?.status ?? null },
         });
         if (runId && spawnedAgentId) {
           finishRun(STATE_DIR, runId, spawnedAgentId, {
@@ -2081,6 +2091,7 @@ async function executeDispatchPlan(
         }
         return;
       }
+      lastDispatchFailure.set(taskRef, 'dispatch_error');
       if (runId && spawnedAgentId) {
         finishRun(STATE_DIR, runId, spawnedAgentId, {
           success: false,
@@ -2101,6 +2112,7 @@ async function executeDispatchPlan(
       log(`ERROR ${(result.reason as Error)?.message ?? 'unknown dispatch error'}`);
     }
   }
+  return outcome;
 }
 
 export function buildTaskEnvelope(taskRef: string, runId: string, agentId: string) {

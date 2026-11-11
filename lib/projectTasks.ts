@@ -10,6 +10,7 @@ import {
   type ProjectTask, type TaskPriority, type TaskProvider, type TaskSpecChanges, type TaskSpecInput,
 } from './projectTaskStore.ts';
 import { isSupportedProvider } from './providers.ts';
+import { isInjectionScanBlockedReason, scanForInjection } from './promptInjectionScan.ts';
 import type { Backlog, Feature, Task } from '../types/backlog.ts';
 import type { TaskTransitionCause } from './projectContract.ts';
 import type { Claim } from '../types/claims.ts';
@@ -331,6 +332,13 @@ function definitionMetadata(input: TaskAuthoringInput, base: Record<string, unkn
   return metadata;
 }
 
+/** Refuse a spec body the dispatch-time injection scan would refuse, so the author sees the findings now. */
+function assertSpecPassesInjectionScan(ref: string, bodyMarkdown: string): void {
+  const scan = scanForInjection(bodyMarkdown);
+  if (scan.safe) return;
+  throw new TaskInputError(`Task spec for ${ref} failed the prompt-injection scan; remove these and retry: ${scan.findings.join('; ')}`);
+}
+
 function assertActor(actorId: string): void {
   if (!AGENT_ID_RE.test(actorId)) throw new TaskInputError(`Invalid actor-id: ${actorId}. Must match ^[a-z0-9][a-z0-9-]*$.`);
 }
@@ -377,6 +385,7 @@ export function createProjectTask(stateDir: string, input: TaskAuthoringInput, a
   const store = requireProjectTaskStore(stateDir);
   const { spec, owner } = prepareProjectTask(store, input, actorId);
   const ref = spec.ref;
+  assertSpecPassesInjectionScan(ref, spec.bodyMarkdown);
   const task = store.inTransaction(() => {
     store.createTask(spec);
     store.setDispatchState(ref, { planningState: 'ready_for_dispatch', delegatedBy: actorId, owner });
@@ -439,7 +448,14 @@ export function reviseProjectTask(
     ...(input.required_provider !== undefined ? { requiredProvider: (input.required_provider ?? null) as TaskProvider | null } : {}),
     ...(dependsOn !== undefined ? { dependsOn } : {}),
   };
-  const result = store.reviseTask(ref, expectedRevision, changes);
+  assertSpecPassesInjectionScan(ref, nextBody ?? current.bodyMarkdown);
+  const result = store.inTransaction(() => {
+    const revised = store.reviseTask(ref, expectedRevision, changes);
+    // A task blocked only because its spec failed the scan at dispatch is dispatchable again once a clean revision exists.
+    if (!revised.changed || revised.task.status !== 'blocked' || !isInjectionScanBlockedReason(revised.task.blockedReason)) return { ...revised, unblocked: false };
+    store.applyTransition(ref, { cause: 'unblock', to: 'todo', reason: `spec revised to clean revision ${revised.task.revision}`, actorId });
+    return { task: store.getTask(ref)!, changed: true, unblocked: true };
+  });
   if (result.changed) {
     notify(stateDir, () => appendSequencedEvent(stateDir, {
       ts: result.task.updatedAt, event: 'task_updated',
@@ -448,10 +464,11 @@ export function reviseProjectTask(
         status: result.task.status,
         fields: Object.keys(input).filter((key) => input[key] !== undefined),
         spec_revision: result.task.revision, previous_revision: expectedRevision, content_hash: result.task.contentHash,
+        ...(result.unblocked ? { previous_status: 'blocked', unblocked: true } : {}),
       },
     }));
   }
-  return result;
+  return { task: result.task, changed: result.changed };
 }
 
 /** API view of a project task, including the revision an editor must pass back. */

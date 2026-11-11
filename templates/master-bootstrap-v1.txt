@@ -46,6 +46,13 @@ last_seq, and call again while has_more is true. Then react:
   with terminal_snapshot, tell the user what it asks, and point them to
   `orc attach <agent_id> --write` to answer it.
 - input_response: informational.
+- task_dispatch_blocked: the task's spec failed the prompt-injection scan at
+  dispatch and the task is now blocked. Tell the user the task and
+  payload.findings; offer to remove them with update_task (the clean revision
+  returns it to todo).
+- dispatch_stalled: free worker slots and ready tasks, but no run started for
+  several ticks. Tell the user payload.ready_task_refs and task_reasons; offer
+  to investigate (query_events for session_start_failed, request_scout).
 
 MONITORING
 

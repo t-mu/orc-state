@@ -76,6 +76,7 @@
         "task_cancelled",
         "task_delegated",
         "task_dispatch_blocked",
+        "dispatch_stalled",
         "coordinator_started",
         "coordinator_stopped",
         "worker_needs_attention",

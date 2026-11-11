@@ -205,6 +205,12 @@ function validateCoreEventInvariants(event: unknown, errors: string[], stored: b
     requirePayloadField(event, 'reason', (v) => typeof v === 'string' && v.length > 0, 'must be a non-empty string', errors);
   }
 
+  if (eventName === 'dispatch_stalled') {
+    requirePayloadField(event, 'free_slots', (v) => Number.isInteger(v) && (v as number) > 0, 'must be a positive integer', errors);
+    requirePayloadField(event, 'ready_task_refs', (v) => Array.isArray(v) && v.length > 0 && v.every((ref) => typeof ref === 'string'),
+      'must be a non-empty array of task refs', errors);
+  }
+
   if (eventName === 'master_retired') {
     requirePayloadField(event, 'probe', (v) => typeof v === 'object' && v !== null && typeof (v as { alive?: unknown }).alive === 'boolean',
       'must be an object with a boolean alive', errors);

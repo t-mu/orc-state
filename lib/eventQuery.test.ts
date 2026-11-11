@@ -72,13 +72,19 @@ describe('queryEventsPage', () => {
     seed('run_failed', { payload: { policy: 'requeue' } });
     seed('run_cancelled');
     seed('input_response', { payload: { response: 'yes', request_id: 'r1' } });
+    seed('task_dispatch_blocked', { actor_type: 'coordinator', actor_id: 'coordinator', payload: { reason: 'injection_scan', findings: ['x'] } });
+    seed('dispatch_stalled', {
+      actor_type: 'coordinator', actor_id: 'coordinator', run_id: undefined, agent_id: undefined, task_ref: undefined,
+      payload: { free_slots: 1, ready_task_refs: ['f/t'], task_reasons: {}, consecutive_ticks: 3 },
+    });
     const page = queryEventsPage(dir, { notifications_only: true, after_seq: 0 });
     expect(page.events.map((event) => event.event)).toEqual([
       'run_finished', 'input_requested', 'worker_needs_attention', 'run_failed', 'run_cancelled', 'input_response',
+      'task_dispatch_blocked', 'dispatch_stalled',
     ]);
-    expect(page.last_seq).toBe(8);
+    expect(page.last_seq).toBe(10);
     expect(queryEventsPage(dir, { notifications_only: true, after_seq: 5 }).events.map((event) => event.event))
-      .toEqual(['run_failed', 'run_cancelled', 'input_response']);
+      .toEqual(['run_failed', 'run_cancelled', 'input_response', 'task_dispatch_blocked', 'dispatch_stalled']);
   });
 
   it('filters by run_id, agent_id, task_ref, event_type and fts_query', () => {

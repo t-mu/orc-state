@@ -76,15 +76,16 @@ todo/claimed/in_progress/blocked → cancelled
 | `claimed → in_progress` | Worker `orc run-start` |
 | `in_progress → done` | Coordinator after a confirmed merge (`merge_succeeded`), once. `run-work-complete` changes only the run's finalization state. Recovery: `orc task-mark-done` |
 | `claimed/in_progress → todo` | Failed run requeued (`run-fail` default policy, lease expiry, dead session not resumed); counts an attempt and sets `requeue_eligible_after` |
-| `claimed/in_progress → blocked` | `run-fail --policy=block` (reason required), or 5 failed attempts |
-| `blocked → todo` | Operator `orc task-unblock` / master `unblock_task` |
+| `claimed/in_progress → blocked` | `run-fail --policy=block` (reason required), or 5 failed attempts; or the claim's spec fails the prompt-injection scan (`blocked_reason: injection_scan: <findings>`, no run starts) |
+| `blocked → todo` | Operator `orc task-unblock` / master `unblock_task`; or a clean spec revision of a task blocked with an `injection_scan` reason |
 | `non-todo → todo` | Operator `orc task-reset` / master `reset_task`, including a done or cancelled task |
 | `todo/claimed/in_progress/blocked → cancelled` | Master `cancel_task` / operator `orc task-cancel` |
 
 - Every status change is a `task_transitions` row (cause, run, actor) written in the same transaction as the task and run binding. `runtime.db` commits first; the `events.db` run row and event follow in every path that writes both, and startup reconciliation repairs a crash between them. A snapshot's task `status` may therefore be ahead of its `cursor` for a moment.
 - Infrastructure failures (dispatch, session start, run-start timeout) do not count an attempt.
 - A run that ends after its task was reset or cancelled leaves the task alone.
-- Status is never edited through a spec or `update_task`; imports never apply status.
+- Status is never edited through a spec or `update_task`; imports never apply status. The one side effect: a revision that clears an `injection_scan` block returns the task to `todo` (`task_updated` with `unblocked: true`).
+- Task create and revise (CLI `orc project task create|edit|import`, MCP `create_task`/`update_task`) refuse a body that fails `scanForInjection` (`lib/promptInjectionScan.ts`) with the findings (code point and offset, phrase or line prefix and line); nothing is stored. The claim scans the pinned revision again, which catches specs stored before this check.
 - A `todo` task with an unfinished dependency stays `todo`; `blocked` means an explicit decision or failure.
 
 ### Dispatch eligibility
@@ -190,7 +191,8 @@ Worker identity: `run_id` is the stable key for one piece of a worker's work. Ag
 | `session_resumed`, `session_resume_failed` | Coordinator; `start-session` (master resume) | provider session resumed under the same `session_id` (`session_id`, `agent_id`, `run_id?`, `generation`, `provider_conversation_id?`, `reason?`; `reason` required on failure) |
 | `task_added`, `task_updated` | Master / operator / Coordinator | task created / changed |
 | `task_cancelled`, `task_delegated` | Master / operator | `cancel_task`, `delegate_task`; `task_cancelled` payload lists every cancelled run in `cancelled_run_ids` |
-| `task_dispatch_blocked` | Coordinator | dispatch refused (deps, no agent) |
+| `task_dispatch_blocked` | Coordinator | the claimed spec failed the prompt-injection scan; the task is now `blocked` (`reason: injection_scan`, `findings`, `task_status`) |
+| `dispatch_stalled` | Coordinator | for 3 consecutive ticks there were free worker slots and dispatch-ready tasks but no run was claimed (`free_slots`, `ready_task_refs`, `task_reasons`: last known failure per ready task — `injection_scan`, `session_start_failed`, `dispatch_error` — and `consecutive_ticks`); once per stall, re-armed after a claim, a full pool or an empty queue |
 | `command_queued` … `command_outcome_unknown` | Coordinator | durable command states: `queued`, `dispatching`, `send_started`, `sent`, `accepted`, `running`, `completed`, `failed`, `cancelled`, `outcome_unknown` |
 | `coordinator_started`, `coordinator_stopped` | Coordinator | process start/stop |
 | `worker_needs_attention` | Coordinator | `reason`: `stale` or `no_progress` (with `idle_ms`), or `session_not_running` (`session_id`, `session_state`, `not_running_ms`, `state_reason?`) |
@@ -198,7 +200,7 @@ Worker identity: `run_id` is the stable key for one piece of a worker's work. Ag
 | `activity_note` | Coordinator | to-do/note label changed (`label`, `source`); ≤ 1 per 30 s per run |
 | `stop_blocked` | Coordinator | `Stop` hook refused (`phase`, `count`, `stop_hook_active`) |
 
-- Notification events (master polling): `run_finished`, `run_failed`, `run_cancelled`, `worker_needs_attention`, `input_requested`, `input_response`.
+- Notification events (master polling): `run_finished`, `run_failed`, `run_cancelled`, `worker_needs_attention`, `input_requested`, `input_response`, `task_dispatch_blocked`, `dispatch_stalled`.
 - Task outcome fields on `run_failed` and `claim_expired`: `task_status` (resulting status: `todo` when requeued, `blocked` after `--policy=block` or the fifth attempt, unchanged when an operator already moved the task), `attempt_count`, `requeue_eligible_after`, `blocked_reason` (only when `blocked`). `policy` is what was asked for; `task_status` is what happened. Events written before these fields existed lack them, and a stored `claim_expired` from before `agent_id` was required still reads back (the rule applies on append).
 - A terminal run event (`run_finished`, `run_failed`, `run_cancelled`, `claim_expired`) also clears the run's finalization fields; no `finalization_changed` is emitted for that.
 - Lease renewals are snapshot-only: a renewal without a `heartbeat` event (coordinator phase-signal or PID-probe renewal, finalize lease) changes `lease_expires_at` with no event; read it from `/v1/snapshot`.
@@ -486,7 +488,7 @@ With `--json`, `task-cancel`, `task-reset`, `task-unblock`, `task-mark-done`, `d
 | Contract | Source |
 |---|---|
 | Event names and payloads | the [Events](#events) table and [schemas/event.schema.json](../schemas/event.schema.json); a new event type is a minor change, removing or renaming one is major |
-| Notification events | `run_finished`, `run_failed`, `run_cancelled`, `worker_needs_attention`, `input_requested`, `input_response` |
+| Notification events | `run_finished`, `run_failed`, `run_cancelled`, `worker_needs_attention`, `input_requested`, `input_response`, `task_dispatch_blocked`, `dispatch_stalled` |
 
 ---
 

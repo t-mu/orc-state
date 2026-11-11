@@ -601,6 +601,8 @@ const NOTIFICATION_EVENT_TYPES = [
   'worker_needs_attention',
   'input_requested',
   'input_response',
+  'task_dispatch_blocked',
+  'dispatch_stalled',
 ] as const;
 
 export interface EventPageFilter {
