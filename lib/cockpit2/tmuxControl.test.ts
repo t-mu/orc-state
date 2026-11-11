@@ -133,6 +133,27 @@ describe('TmuxControlClient (fake process)', () => {
     await expect(pasted).resolves.toBeUndefined();
   });
 
+  it('resolves an empty paste without sending a tmux command', async () => {
+    const { proc, client } = fakeClient();
+    await expect(client.paste('%2', '')).resolves.toBeUndefined();
+    await tick();
+    expect(proc.written).toEqual([]);
+  });
+
+  it('delivers a reply whose body has %end, %error and %begin lines whole, then keeps FIFO order', async () => {
+    const { proc, client } = fakeClient();
+    const capture = client.capture('%1');
+    const failing = expect(client.command('bogus')).rejects.toThrow('%end 5 2 1\nunknown command');
+    const next = client.command('list-panes');
+    proc.ok();
+    proc.reply('%begin 5 2 1', 'foo', '%end of story', '%error 5 2 0', '%begin 6 3 1', 'bar', '%end 5 2 1');
+    proc.reply('%begin 5 3 1', '%end 5 2 1', 'unknown command', '%error 5 3 1');
+    proc.reply('%begin 5 4 1', '%0', '%end 5 4 1');
+    await expect(capture).resolves.toEqual(['foo', '%end of story', '%error 5 2 0', '%begin 6 3 1', 'bar']);
+    await failing;
+    await expect(next).resolves.toEqual(['%0']);
+  });
+
   it('builds resize, paneModes, capture (live and saved), pause and resume commands', async () => {
     const { proc, client } = fakeClient();
     const resized = client.resize(120, 40);

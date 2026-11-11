@@ -80,6 +80,24 @@ describe('TmuxControlParser with replies', () => {
     ]);
   });
 
+  it('ends a block only on the %end/%error matching its %begin; other % lines are body text', () => {
+    const parser = new TmuxControlParser<TmuxControlEvent | TmuxControlReplyEvent>({ replies: true });
+    const events = parser.push(Buffer.from([
+      '%begin 10 5 1', 'foo', '%end of story', '%error at line 3', '%begin 1 1 1', '%end 10 5 0', '%error 11 5 1', 'bar', '%end 10 5 1',
+      '%begin 10 6 1', '%end 10 6 1 trailing', '%end 10 6 1', '%error 10 6 1',
+      '%begin 10 7 1', 'boom', '%error 10 7 1',
+      '%output %0 x',
+      '',
+    ].join('\n')));
+    expect(events.map((event) => event.type === 'output' ? event.type : event)).toEqual([
+      { type: 'reply', lines: ['foo', '%end of story', '%error at line 3', '%begin 1 1 1', '%end 10 5 0', '%error 11 5 1', 'bar'], error: false },
+      { type: 'reply', lines: ['%end 10 6 1 trailing'], error: false },
+      { type: 'notification', line: '%error 10 6 1' },
+      { type: 'reply', lines: ['boom'], error: true },
+      'output',
+    ]);
+  });
+
   it('returns none of them without the option', () => {
     const events = new TmuxControlParser().push(Buffer.from('%begin 1 1 0\nbody\n%error 1 1 0\n%sessions-changed\n%window-add @1\n'));
     expect(events).toEqual([]);
