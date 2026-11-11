@@ -53,7 +53,7 @@ export const cellWidthUnicodeProvider: IUnicodeVersionProvider = {
   },
 };
 
-/** A pane's terminal modes as tmux reports them (pane format flags); Step 1's `paneModes()` returns this shape. */
+/** A pane's terminal modes as tmux reports them (pane format flags); tmuxControl's `PaneReport` extends it. */
 export interface PaneModes {
   alternateOn: boolean;
   /**

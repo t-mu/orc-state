@@ -15,6 +15,7 @@ import { spawn as spawnProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import type { Readable, Writable } from 'node:stream';
 import { TmuxControlParser, type TmuxControlEvent, type TmuxControlReplyEvent } from '../terminalHost.ts';
+import type { PaneModes } from './screen.ts';
 
 /** The part of a child process the client uses; tests pass a fake. */
 export interface ControlProcess {
@@ -38,24 +39,22 @@ export interface TmuxControlOptions {
   spawn?: SpawnControl;
 }
 
-export interface PaneModes {
+/** What `paneModes()` reports: the pane, its size and cursor, and its terminal modes (the screen model's `PaneModes`). */
+export interface PaneReport extends PaneModes {
   paneId: string;
   cols: number;
   rows: number;
   cursorX: number;
   cursorY: number;
-  alternateOn: boolean;
-  mouseAny: boolean;
-  mouseButton: boolean;
-  mouseStandard: boolean;
-  mouseSgr: boolean;
-  mouseUtf8: boolean;
-  keypadCursor: boolean;
-  cursorVisible: boolean;
 }
 
 export type TmuxControlEvents = {
   output: [paneId: string, bytes: Buffer];
+  /** A `%layout-change`: the window's new size (also sent when the size stayed, e.g. a split). */
+  resize: [cols: number, rows: number];
+  /** `%sessions-changed`: a session was created or destroyed on the server. */
+  sessionsChanged: [];
+  /** Any other `%` notification line. */
   notification: [line: string];
   exit: [reason: string];
 };
@@ -149,7 +148,7 @@ export class TmuxControlClient extends EventEmitter<TmuxControlEvents> {
     await this.command(`refresh-client -C ${cols}x${rows}`);
   }
 
-  async paneModes(target: string): Promise<PaneModes> {
+  async paneModes(target: string): Promise<PaneReport> {
     const format = PANE_MODE_FORMATS.map((name) => `#{${name}}`).join(' ');
     const [line = ''] = await this.command(`display-message -p -t ${target} '${format}'`);
     const [paneId, ...values] = line.split(' ');
@@ -185,15 +184,21 @@ export class TmuxControlClient extends EventEmitter<TmuxControlEvents> {
   }
 
   private onData(chunk: Buffer): void {
+    // The parser follows a decoded %layout-change's `resize` with the line as a `notification`; that line is not re-sent.
+    let afterResize = false;
     for (const event of this.parser.push(chunk)) {
       if (this.exited !== null) return;
+      const decodedLayout = afterResize;
+      afterResize = event.type === 'resize';
       switch (event.type) {
         case 'reply': this.onReply(event.lines, event.error, event.flags); break;
         case 'output': this.emit('output', event.pane, event.data); break;
         case 'exit': this.end(event.reason); break;
-        case 'sessions-changed': this.emit('notification', '%sessions-changed'); break;
-        case 'notification': this.emit('notification', event.line); break;
-        case 'resize': break; // the matching `notification` carries the %layout-change line
+        case 'resize': this.emit('resize', event.columns, event.rows); break;
+        case 'sessions-changed': this.emit('sessionsChanged'); break;
+        case 'notification':
+          if (!(decodedLayout && event.line.startsWith('%layout-change'))) this.emit('notification', event.line);
+          break;
       }
     }
   }
