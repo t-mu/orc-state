@@ -127,9 +127,11 @@ export class TmuxControlClient extends EventEmitter<TmuxControlEvents> {
   /**
    * Pastes text through a uniquely named buffer that `paste-buffer -d` deletes.
    * tmux replaces LF with CR and adds bracketed-paste markers only when the
-   * app enabled mode 2004.
+   * app enabled mode 2004. Empty text sends nothing: tmux creates no buffer
+   * for it, so `paste-buffer` would fail.
    */
   async paste(paneId: string, text: string): Promise<void> {
+    if (text === '') return;
     const buffer = `cockpit2-paste-${process.pid}-${++pasteCounter}`;
     await Promise.all([
       this.command(`set-buffer -b ${buffer} ${quoteTmuxArgument(text)}`),

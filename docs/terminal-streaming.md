@@ -35,7 +35,9 @@
 - Replace `\\([0-7]{3})` with that byte; pass all other bytes through. Feed the result to xterm.js as
   `Uint8Array`. Don't UTF-8-decode per line: a multi-byte char may be split across `%output` lines.
 - Command replies come between `%begin`/`%end`|`%error`, in FIFO order. The first block answers the
-  attach itself. Notifications never appear inside a block.
+  attach itself. Notifications never appear inside a block. Bodies are not escaped, so a block ends
+  only on the `%end`/`%error` whose `<time> <number> <flags>` matches its `%begin`; any other line,
+  even one starting `%end `, is body text.
 - `refresh-client -f pause-after=N` was accepted; output then arrives as `%extended-output %0 0 : ...`.
 - Killing the attached session sends `%exit` to its client.
 
