@@ -12,7 +12,7 @@ import type { MouseEvent } from './mouse.ts';
 import { EDGE_COLUMN, EDGE_ROW } from './frame.ts';
 import type { PaneClient } from './sessions.ts';
 import type { PaneReport } from './tmuxControl.ts';
-import { DEFAULT_VIEW_STATE, type TmuxTarget } from './viewState.ts';
+import { DEFAULT_VIEW_STATE, addProject, type TmuxTarget } from './viewState.ts';
 import {
   ESC, F12, FakeTerminal, FakeWatcher, MASTER_TARGET, MemoryStore, W1_TARGET, apps, projectState, shown, sidebarRows, sleep, slotRows, text,
   waitFor, waitForSidebar, waitForSlotLine, waitForSlotText, waitForTabBar,
@@ -310,7 +310,7 @@ describe('runApp (fake tmux client)', () => {
     const { terminal, client, app } = start();
     await attached(terminal);
     terminal.type('\x11');
-    await app.done;
+    expect(await app.done).toBe('quit');
     expect(terminal.restored).toBe(1);
     expect(client().closed).toBe(1);
     expect(client().sent).toEqual([]);
@@ -621,6 +621,44 @@ describe('runApp tabs and projects (fake tmux clients)', () => {
     expect(second.clients.map((fake) => fake.target)).toEqual([W1_TARGET]); // only the shown tab attaches
   });
 
+  it('ends with takeover when another cockpit asked it to exit, restored and saved as on a quit', async () => {
+    const store = new MemoryStore();
+    const { terminal, client, app } = start({ store });
+    await attached(terminal);
+    app.quit('takeover');
+    expect(await app.done).toBe('takeover');
+    expect(terminal.restored).toBe(1);
+    expect(client().closed).toBe(1);
+    expect(store.state.tabs.activeProject).toBe('demo');
+  });
+
+  it('keeps a project another process added while it saves, and reloadViewState shows the project that process made active', async () => {
+    const store = new MemoryStore();
+    const projects = [projectState('demo', { workers: [{ agent_id: 'w1', ...W1_TARGET }] }), projectState('other', { master: { socket: 'orc-other', session: 'orc-master-other' } })];
+    const { terminal, app } = start({ store, projects });
+    await attached(terminal);
+    // Another checkout's start-session adds its project (viewState.ts addProject) before this cockpit's next save.
+    await addProject(store, 'other');
+    app.apply((state) => openAgent(state, 'demo', 'w1'));
+    await waitFor(() => store.state.tabs.projects.some((project) => project.projectId === 'demo' && project.active === 'w1'));
+    // The save kept the added project; this cockpit took it in, and (another writer having made it active) shows it.
+    expect(store.state.tabs.projects.map((project) => project.projectId)).toEqual(['demo', 'other']);
+    await waitFor(() => app.tabs().activeProject === 'other');
+    await attached(terminal, 'orc-master-other');
+
+    // A wake-up after another add: the project is taken in and shown at once.
+    await addProject(store, 'third');
+    app.reloadViewState();
+    expect(app.tabs().activeProject).toBe('third');
+    expect(app.tabs().projects.map((project) => project.projectId)).toEqual(['demo', 'other', 'third']);
+    await waitFor(() => store.state.tabs.activeProject === 'third');
+    // A reload with nothing new changes nothing.
+    app.apply((state) => showProject(state, 'demo'));
+    await waitFor(() => store.state.tabs.activeProject === 'demo');
+    app.reloadViewState();
+    expect(app.tabs().activeProject).toBe('demo');
+  });
+
   it('shows the master from the stored target while the coordinator is down', async () => {
     const stored = { socket: 'orc-old', session: 'orc-master-stored' };
     const store = new MemoryStore({ tabs: { activeProject: 'demo', projects: [{ projectId: 'demo', tabs: [], active: null }] }, masterTargets: { demo: stored } });
@@ -783,7 +821,7 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     expect(other.sent).toEqual([`${other.paneId} z`]);
   });
 
-  it('navigates the sidebar by keyboard: F10 focuses it, arrows move, Enter opens, Tab switches box, Esc returns to the pane', async () => {
+  it('navigates the sidebar by keyboard: F10 focuses it, arrows move, Enter opens and gives the opened tab the keys, Tab switches box, Esc returns to the pane', async () => {
     const { terminal, clients, app } = withWorkers();
     await attached(terminal);
     const master = clients[0];
@@ -792,27 +830,40 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     // The cursor starts on the first agent (the one needing attention); down moves to w1, Enter opens it.
     terminal.type(`${ESC}[B\r`);
     expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: ['w1'], active: 'w1' });
-    // The keys stay with the sidebar: nothing reaches a pane, not even a paste.
-    terminal.type(`xi${ESC}[200~p${ESC}[201~`);
-    await sleep(30);
+    // The opened tab has the keys, as after a click: view mode, so i then a key reach the worker, and nothing the master.
+    await waitForSidebar(terminal, '[view] i: type · q/Esc: close');
+    await attached(terminal, 'orc-w1');
+    const worker = clients.find((fake) => fake.target.session === 'orc-w1')!;
+    terminal.type('ix');
+    expect(worker.sent).toEqual([`${worker.paneId} x`]);
     expect(master.sent).toEqual([]);
-    expect(clients.every((fake) => fake.sent.length === 0 && fake.pastes.length === 0)).toBe(true);
-    // k moves up again, Enter opens the wide-named agent.
+
+    // Back in the sidebar (its cursor kept on w1): k moves up, Enter opens the wide-named agent.
+    terminal.type(F10);
+    await waitForSidebar(terminal, 'Enter: open');
     terminal.type('k\r');
     expect(app.tabs().projects[0].active).toBe(WIDE_AGENT);
+    await waitForSidebar(terminal, '[view] i: type');
 
-    // Tab to the projects box: down and Enter switch project.
+    // Tab to the projects box: down and Enter switch project, and its master takes the keys.
+    terminal.type(F10);
+    await waitForSidebar(terminal, 'Enter: open');
     terminal.type('\tj\r');
     expect(app.tabs().activeProject).toBe('other');
     await waitForSidebar(terminal, '▸ 日本語');
-    terminal.type(`${ESC}[Z`); // Shift-Tab back to the agents box
-    terminal.type(ESC);
-    // Esc goes to the pane after the lone-Esc timeout: then keys reach the master again.
     await waitForSidebar(terminal, '[master] keys go to the master');
     await attached(terminal, 'orc-master-other');
     const other = clients.find((fake) => fake.target.session === 'orc-master-other')!;
     terminal.type('y');
-    expect(other.sent).toEqual(['%' + other.paneId.slice(1) + ' y']);
+    expect(other.sent).toEqual([`${other.paneId} y`]);
+
+    // Esc returns from the sidebar to the pane without opening anything.
+    terminal.type(F10);
+    await waitForSidebar(terminal, 'Enter: open');
+    terminal.type(ESC);
+    await waitForSidebar(terminal, '[master] keys go to the master');
+    terminal.type('z');
+    expect(other.sent).toEqual([`${other.paneId} y`, `${other.paneId} z`]);
   });
 
   it('toggles the focus with the prefix then o, and a click in the slot gives it the keys', async () => {

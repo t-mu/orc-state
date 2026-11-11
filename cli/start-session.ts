@@ -20,14 +20,16 @@
  *   2. Reuse/replace/register the master
  *   3. Start the master provider CLI in a tmux session (resuming its Claude
  *      conversation when one is recorded)
- *   4. Open the cockpit (adapters/tmuxCockpit.ts) on this project's master and
- *      attach this terminal to it: one window whose slot shows the project (the
- *      master for a new one, the tab it last showed otherwise); a cockpit with
- *      the old layout is rebuilt first. `--no-cockpit` attaches to the master directly
+ *   4. Run the cockpit (cli/cockpit2.ts) in this terminal on this project: the
+ *      master for a new one, the tab it last showed otherwise. One cockpit runs
+ *      per user: a running one is asked to exit; from inside orc's tmux
+ *      servers (the master's shell) the project is added to the running
+ *      cockpit instead. A leftover tmux-pane cockpit server is ended first.
+ *      `--no-cockpit` attaches to the master directly
  *
- * Detaching (the cockpit's prefix d, F12 d by default, or the master's Ctrl-b d) or closing the terminal leaves the
- * cockpit and the master running; the master's credential is revoked when it
- * exits or by `orc kill-all`.
+ * Quitting the cockpit (Ctrl-q, or its prefix then d: F12 d by default), the
+ * master's Ctrl-b d with `--no-cockpit`, or closing the terminal leaves the
+ * master running; the master's credential is revoked when it exits or by `orc kill-all`.
  */
 import { mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -57,10 +59,8 @@ import {
   printManagedWorkerNotice,
 } from '../lib/prompts.ts';
 import { checkAndInstallBinary, probeProviderAuth, PROVIDER_BINARIES } from '../lib/binaryCheck.ts';
-import { checkTmux, createTmuxAdapter, inspectTmuxSession, startTmuxSession, tmuxAttachCommand, tmuxBinary, tmuxSessionTarget } from '../adapters/tmux.ts';
-import {
-  cockpitAttachCommand, cockpitKeysHint, ensureCockpitWindow, insideCockpit, resolveCockpitKeys, terminalHasTrueColor,
-} from '../adapters/tmuxCockpit.ts';
+import { checkTmux, createTmuxAdapter, inspectTmuxSession, startTmuxSession, tmuxAttachCommand } from '../adapters/tmux.ts';
+import { resolveCockpitKeys } from '../lib/cockpitKeys.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
 import { listSupervisedSessions, MASTER_RETIRE_FAILURES, retireMaster, type MasterProbe } from '../lib/sessionSupervisor.ts';
 import { getMasterBootstrap, MASTER_BOOTSTRAP_TEMPLATE } from '../lib/sessionBootstrap.ts';
@@ -267,56 +267,57 @@ function attachMaster(agent: NonNullable<typeof master>, sessionName: string) {
 }
 
 /**
- * Open the cockpit on this project's master: create it or add this project to
- * it, show the project in the slot, then attach this terminal to it (from a
- * shell inside the cockpit, only switch to the project). Returns false, with a warning, when the cockpit could not
- * be set up, so the caller attaches to the master directly.
+ * Run the cockpit on this project in this terminal (cli/cockpit2.ts
+ * `launchCockpit2`) until it quits or another cockpit takes over; from inside
+ * orc's tmux servers, only add the project to the running cockpit. Returns
+ * false, with a warning, when the cockpit could not run, so the caller
+ * attaches to the master directly.
  */
-function openCockpit(agent: NonNullable<typeof master>, sessionName: string): boolean {
+async function openCockpit(agent: NonNullable<typeof master>, sessionName: string): Promise<boolean> {
   const project = ACTIVE_PROJECT!;
-  const { socket, session } = tmuxSessionTarget(sessionName, agent.provider_ref);
   const { keys, problems } = resolveCockpitKeys();
   for (const problem of problems) console.warn(`Warning: ${problem}.`);
+  let launch;
   try {
-    ensureCockpitWindow({
-      project: { id: project.id, name: project.name, root: resolveInvocationCwd(), env: orcStateEnv() },
-      master: { agentId: agent.agent_id, socket, session },
-      watchCommand: [process.execPath, runtimeModulePath('./orc.ts', './orc.js'), 'watch'],
-      orc: [process.execPath, runtimeModulePath('./orc.ts', './orc.js')],
-      options: { tmux: tmuxBinary(), trueColor: terminalHasTrueColor() },
+    // Loaded only for a cockpit: --no-cockpit and a run without a TTY never load the renderer.
+    const { cockpit2KeysHint, launchCockpit2 } = await import('./cockpit2.ts');
+    launch = await launchCockpit2({
+      projectId: project.id,
       keys,
-      size: { columns: process.stdout.columns, rows: process.stdout.rows },
+      onClaimed: (replaced) => {
+        if (replaced) console.log(`\nAsked the cockpit running in another terminal (pid ${replaced.pid}) to exit.`);
+        console.log(`\nOpening the cockpit on master '${agent.agent_id}' (${project.name}). ${cockpit2KeysHint(keys)}.`);
+      },
     });
   } catch (error) {
     console.warn(`Warning: could not open the cockpit (${formatErrorMessage(error)}); attaching to the master directly.`);
     return false;
   }
-  if (insideCockpit()) {
-    console.log(`\nSwitched the cockpit to ${project.name}.`);
+  if (launch.kind === 'added') {
+    console.log(launch.running
+      ? `\nAdded ${project.name} to the cockpit (pid ${launch.running.pid}); it shows the project now.`
+      : `\nAdded ${project.name} to the cockpit; it opens there the next time orc start-session runs in a terminal outside orc's tmux sessions.`);
     return true;
   }
-  console.log(`\nOpening the cockpit on master '${agent.agent_id}' (${project.name}). ${cockpitKeysHint(keys)}.`);
-  const { TMUX: _tmux, ...env } = process.env;
-  const { command, args } = cockpitAttachCommand();
-  const result = spawnSync(command, args, { stdio: 'inherit', env });
-  if (result.error) {
-    console.warn(`Warning: could not attach to the cockpit (${result.error.message}); attaching to the master directly.`);
-    return false;
-  }
-  afterClientExit(agent, sessionName, {
-    detached: '\nDetached. The cockpit and the master keep running; run orc start-session to reattach.',
-    ended: '\nMaster session ended. The cockpit and the coordinator keep running; run orc start-session to restart the master.',
-  });
+  afterClientExit(agent, sessionName, launch.ended === 'takeover'
+    ? {
+      detached: '\nThe cockpit moved to another terminal. The master keeps running.',
+      ended: '\nThe cockpit moved to another terminal. The master session ended; run orc start-session to restart it.',
+    }
+    : {
+      detached: '\nQuit the cockpit. The master keeps running; run orc start-session to open the cockpit again.',
+      ended: '\nMaster session ended. The coordinator keeps running; run orc start-session to restart the master.',
+    });
   return true;
 }
 
 /** Attach this terminal to the master: in the cockpit unless `--no-cockpit`; without a TTY, only say where it runs. */
-function openMaster(agent: NonNullable<typeof master>, sessionName: string) {
+async function openMaster(agent: NonNullable<typeof master>, sessionName: string) {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     console.log(`\nMaster '${agent.agent_id}' is running in orc's tmux server. Run orc start-session from a terminal to attach.`);
     return;
   }
-  if (!boolFlag('no-cockpit') && openCockpit(agent, sessionName)) return;
+  if (!boolFlag('no-cockpit') && await openCockpit(agent, sessionName)) return;
   attachMaster(agent, sessionName);
 }
 
@@ -389,7 +390,7 @@ if (master && liveMasterSession) {
   }
   console.log(`✓ Master '${master.agent_id}' is already running`);
   await ensureCoordinatorRunning();
-  openMaster(master, liveMasterSession);
+  await openMaster(master, liveMasterSession);
   process.exit(0);
 }
 
@@ -659,4 +660,4 @@ try {
 
 // Coordinator spawn deferred to here — the master started and its state is committed.
 await ensureCoordinatorRunning();
-openMaster(master, masterSessionName);
+await openMaster(master, masterSessionName);

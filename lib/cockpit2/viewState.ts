@@ -8,15 +8,21 @@
  * master whose coordinator is down. It never holds orchestration state.
  *
  * Updates read, change and replace the file atomically (a 0600 temp file
- * renamed over it) while holding a lock file the CLI layer names, so
- * concurrent writers, in this cockpit or another process, never leave a torn
- * file or lose each other's changes. A missing or corrupt file loads as the
- * defaults.
+ * renamed over it) while holding a lock file the CLI layer names (lockFile.ts),
+ * so concurrent writers, in this cockpit or another process, never leave a
+ * torn file or lose each other's changes. A missing or corrupt file loads as
+ * the defaults.
+ *
+ * Another process adds a project to a running cockpit by writing it here
+ * (`addProject`) and waking the cockpit (instance.ts), which takes the
+ * projects it does not have yet (`mergeProjects`) on the wake-up and on every
+ * save, so its own saves never drop them.
  */
 import { randomBytes } from 'node:crypto';
-import { closeSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
+import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { EMPTY_COCKPIT_STATE, parseTabs, type CockpitTabState } from '../cockpitTabs.ts';
+import { EMPTY_COCKPIT_STATE, parseTabs, showProject, type CockpitTabState } from '../cockpitTabs.ts';
+import { acquireLockFile, releaseLockFile } from './lockFile.ts';
 
 export interface TmuxTarget { socket: string; session: string }
 
@@ -75,50 +81,6 @@ export interface ViewStateStoreOptions {
   staleLockMs?: number;
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-const readToken = (lockPath: string): string | null => {
-  try { return readFileSync(lockPath, 'utf8'); } catch { return null; }
-};
-
-/**
- * Takes the lock: creates `lockPath` exclusively with a unique token in it.
- * A stale lock is renamed aside (only one waiter can win that rename) and,
- * when what was moved turns out to be a fresh lock after all, put back.
- */
-async function acquireLock(lockPath: string, timeoutMs: number, staleMs: number): Promise<string> {
-  const token = `${process.pid} ${randomBytes(8).toString('hex')}\n`;
-  const until = Date.now() + timeoutMs;
-  for (;;) {
-    try {
-      const fd = openSync(lockPath, 'wx', 0o600);
-      try { writeSync(fd, token); } finally { closeSync(fd); }
-      return token;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-    }
-    let stale = false;
-    try { stale = Date.now() - statSync(lockPath).mtimeMs > staleMs; } catch { continue; /* released meanwhile */ }
-    if (stale) {
-      const aside = `${lockPath}.${randomBytes(4).toString('hex')}.stale`;
-      try { renameSync(lockPath, aside); } catch { continue; /* another waiter took it over */ }
-      try {
-        // Moved a lock taken between the stat and the rename: give it back (fails when a newer one exists).
-        if (Date.now() - statSync(aside).mtimeMs <= staleMs) linkSync(aside, lockPath);
-      } catch { /* a newer lock exists, or the aside is gone */ }
-      try { unlinkSync(aside); } catch { /* gone */ }
-      continue;
-    }
-    if (Date.now() > until) throw new Error(`the view state is locked by another writer (${lockPath})`);
-    await sleep(5 + Math.random() * 10);
-  }
-}
-
-/** Releases the lock only while it still holds this writer's token (it may have been taken over as stale). */
-function releaseLock(lockPath: string, token: string): void {
-  if (readToken(lockPath) !== token) return;
-  try { unlinkSync(lockPath); } catch { /* gone */ }
-}
-
 function readState(path: string): ViewState {
   try {
     return parseViewState(readFileSync(path, 'utf8'));
@@ -137,7 +99,13 @@ export function createViewStateStore(options: ViewStateStoreOptions): ViewStateS
     async update(change) {
       mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
       mkdirSync(dirname(lockPath), { recursive: true, mode: 0o700 });
-      const token = await acquireLock(lockPath, timeoutMs, staleMs);
+      const token = await acquireLockFile(lockPath, {
+        token: `${process.pid} ${randomBytes(8).toString('hex')}\n`,
+        timeoutMs,
+        // A writer holds the lock for milliseconds: an old one was left by a crashed writer.
+        isStale: (file) => { try { return Date.now() - statSync(file).mtimeMs > staleMs; } catch { return false; } },
+        heldMessage: (file) => `the view state is locked by another writer (${file})`,
+      });
       const temp = `${path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
       try {
         const next = change(readState(path));
@@ -154,8 +122,25 @@ export function createViewStateStore(options: ViewStateStoreOptions): ViewStateS
         try { unlinkSync(temp); } catch { /* never created */ }
         throw error;
       } finally {
-        releaseLock(lockPath, token);
+        releaseLockFile(lockPath, token);
       }
     },
   };
+}
+
+/**
+ * `ours` with the projects only `stored` has appended in their stored order:
+ * another process added them (no transition removes a project), so a save or
+ * a reload keeps them. Ours win for every project both have.
+ */
+export function mergeProjects(ours: CockpitTabState, stored: CockpitTabState): CockpitTabState {
+  const known = new Set(ours.projects.map((project) => project.projectId));
+  const added = stored.projects.filter((project) => !known.has(project.projectId));
+  if (added.length === 0) return ours;
+  return { ...ours, projects: [...ours.projects, ...added.map((project) => ({ ...project, tabs: [...project.tabs] }))] };
+}
+
+/** Adds `projectId` to the stored view state and makes it the active project, as a running cockpit then shows it. */
+export function addProject(store: ViewStateStore, projectId: string): Promise<ViewState> {
+  return store.update((stored) => ({ ...stored, tabs: showProject(stored.tabs, projectId).state }));
 }

@@ -29,49 +29,47 @@ orc start-session
 
 - **Coordinator** (background): dispatches tasks, probes worker processes, merges results.
 - **Master**: your interactive session. It runs in orc's private tmux server.
-- **Cockpit**: what `start-session` attaches this terminal to (tmux is required). A tmux session on a per-user server of its own (`tmux -L orc-cockpit`), shown as one window: the sidebar (`orc watch`) on the left, a tab bar at the top with the active project's tabs, and below it the slot, showing the active tab: at first the master, focused. Each project has its own tabs: its master first, then the agent terminals you open, in opening order. A tab not shown keeps running in the background, so switching is instant and a stream is never reopened.
+- **Cockpit**: what `start-session` runs in this terminal. It draws the whole terminal itself: the sidebar on the left, a tab bar at the top with the active project's tabs, and below it the slot, showing the active tab: at first the master, which has the keys. Each project has its own tabs: its master first, then the agent terminals you open, in opening order. The master is reached directly on orc's tmux server, so its tab works while the coordinator is stopped.
 
 ### Getting around
 
-The cockpit claims only its own keys, all function keys by default, so they work on any keyboard layout without Option/Alt. Every other key, `Ctrl-b` included, reaches the focused pane. Mouse mode is on: click a pane to focus it; a program that uses the mouse, such as the master, still gets its clicks. Click a tab in the tab bar to show it, its `×` to close an agent tab, and a project or an agent in the sidebar to select it.
+The cockpit claims only its own keys, function keys and `Ctrl-q` by default, so they work on any keyboard layout without Option/Alt. Every other key, `Ctrl-b` included, reaches the active tab, and a paste arrives there as one paste. Click a tab in the tab bar to show it, its `×` to close an agent tab, and a project or an agent in the sidebar to open it; what you click takes the keys. In the slot, a program that uses the mouse gets it; otherwise the wheel scrolls the tab's scrollback and a drag selects text, copied to the clipboard on release (hold Shift to select over a program that uses the mouse).
 
 | Keys | Does |
 |---|---|
 | `F1` … `F9` (or `F12 1` … `F12 9`) | select tab 1–9 of the active project (tab 1 is its master) |
-| `F10` | focus the sidebar |
+| `F10` (or `F12 o`) | give the sidebar the keys; `Esc` (or `F12 o` again) gives them back to the tab |
 | `F11` | show the next agent that needs you (its project and tab) |
-| `F12 o` | switch between the slot, the sidebar and the tab bar |
 | `F12 n` / `F12 p` | next / previous tab of the active project |
 | `F12 N` / `F12 P` | next / previous project, its tabs as you left them |
-| `F12 d` | detach |
+| `Ctrl-q` or `F12 d` | quit the cockpit; nothing else stops |
 | `F12 &` | close the current agent tab; the master tab stays; never stops a master or agent |
-| `F12 t` | show the task explorer of the active project in the slot; Esc or `q` in its list closes it and the slot shows the tab you had |
-| `F12` `F12` | send `F12` to the pane |
+| `F12 t` | open the task explorer of the active project as a tab; Esc or `q` in its list closes it and shows the tab you had |
+| `F12` `F12` | send `F12` to the tab |
 
-`F12` is the prefix: press it, release, then the key. Change the prefix and the direct keys with `ORC_COCKPIT_PREFIX` and `ORC_COCKPIT_KEYS` ([configuration.md → Cockpit keys](configuration.md#cockpit-keys)); `orc start-session` applies them to a running cockpit too.
+`F12` is the prefix: press it, release, then the key. Change the prefix and the other keys with `ORC_COCKPIT_PREFIX` and `ORC_COCKPIT_KEYS` ([configuration.md → Cockpit keys](configuration.md#cockpit-keys)).
 
-In the sidebar (`F10` focuses it):
+In the sidebar (`F10` gives it the keys):
 
 - **Status**: the active project's coordinator, its workers used/total, and how many agents need you across projects.
-- **Projects**: every registered project with its state and `!N` when N of its agents need you; `▸` marks the active one. Selecting another project shows it with the tabs and the active tab you left it on; one that is not running shows the command that starts it (the cockpit starts nothing itself).
+- **Projects**: every registered project with its state and `!N` when N of its agents need you; `▸` marks the active one. Opening another project shows it with the tabs and the active tab you left it on; one that is not running shows the command that starts it (the cockpit starts nothing itself).
 - **Agents** of the active project, workers and scouts: name, phase and run time, then what it is doing. An agent that needs you shows a badge (`QUESTION`, `PERMISSION`, `STALLED`, `NO PROGRESS`) with the question or reason below it, and is listed first.
-- `↑`/`↓` move within a box, `Tab` switches between Projects and Agents, Enter (or a click) selects, `Esc` goes back to the slot. Selecting a project shows it in the slot (`orc cockpit project`); selecting an agent opens its live terminal in a tab of its project (`orc terminal <agent_id> --view-first`), or shows that tab again; the stream stays open while other tabs are shown. The tab opens in view mode: no key reaches the agent, and `q`, `Esc`, `Ctrl-D`, `Ctrl-C` or `Ctrl-]` closes the tab at once. `i` switches to typing mode (every key goes to the agent); `Ctrl-]` returns to view mode. A notice line shows the current mode and its keys. Closing the tab ends only the stream; the agent keeps running.
-- `F12 t` shows the task explorer in the slot: the active project's tasks and their specs, read-only (see the keys above).
+- `↑`/`↓` (or `j`/`k`) move within a box, `Tab` switches between Projects and Agents, `Enter` (or a click) opens and gives the opened tab the keys, `Esc` goes back to the tab. Opening an agent shows its live terminal in a tab of its project, or that tab again. The tab opens in view mode: no key reaches the agent, and `q`, `Esc`, `Ctrl-D`, `Ctrl-C` or `Ctrl-]` closes the tab at once. `i` switches to typing mode (every key goes to the agent) until `Ctrl-]` or you leave the tab. A line in the sidebar shows the current mode and its keys. Closing the tab ends only the view; the agent keeps running.
 
 The tab bar shows the active project's tabs, the active one highlighted. An agent tab whose agent needs you carries the same badge, and `‹ N` / `N ›` count the tabs that do not fit.
 
 The sidebar and the tab bar only show a question. Answer it through the master, or with `orc run-input-respond`; the badges clear once it is answered.
 
-### Detach and reattach
+### Quit and come back
 
-- Detach with `F12 d`, the master's `Ctrl-b d`, or by closing the terminal. The cockpit, the master, the workers and the coordinator keep running, and the master's MCP tools keep working.
-- Run `orc start-session` again to reattach. A live master is reattached with no prompts and no state reset.
-- Run it in another registered project to add that project to the same cockpit. Back in a project already there, it shows the tab you left it on. From a shell inside the cockpit it only switches the slot.
-- From a shell in the cockpit, `orc cockpit project <project_id>` shows a registered project that is not in it: the slot says how to start it. Nothing is started for you.
-- A cockpit from an older orc (a window per project) is rebuilt in this layout on the next `orc start-session`; no master or agent is stopped.
-- If the master process has died, its pane says so and waits; `orc start-session` starts it again. A Claude master resumes its recorded conversation (`--resume`); otherwise it starts fresh.
-- `orc start-session --no-cockpit` attaches straight to the master instead. It also works from inside your own tmux session, as a nested client.
-- `tmux -L orc-cockpit kill-server` closes the cockpit without stopping anything; `orc kill-all` stops the master and revokes its credential.
+- Quit with `Ctrl-q` or `F12 d`, or close the terminal. The master, the workers and the coordinator keep running, and the master's MCP tools keep working.
+- Run `orc start-session` again to reopen the cockpit. A live master is reattached with no prompts and no state reset, and the cockpit opens with the tabs it had.
+- One cockpit runs at a time. Run `orc start-session` in another terminal and the cockpit moves there: the old one exits and says the cockpit moved to another terminal.
+- Run it in another registered project, from another terminal, and the cockpit moves there with that project shown; the other projects and their tabs stay in it (quit the cockpit first to run it in the same terminal). Back in a project already there, it shows the tab you left it on.
+- From a shell inside orc's tmux sessions, such as the master's, `orc start-session` opens no second cockpit: it adds the project to the running cockpit, which shows it.
+- If the master process has died, its tab says so with the command that starts it; `orc start-session` starts it again. A Claude master resumes its recorded conversation (`--resume`); otherwise it starts fresh.
+- `orc start-session --no-cockpit` attaches straight to the master instead (`Ctrl-b d` detaches). It also works from inside your own tmux session, as a nested client.
+- A cockpit that hangs: run `orc start-session` from another terminal, or see [recovery.md → Cockpit](recovery.md#cockpit). `orc kill-all` stops the master and revokes its credential.
 
 Providers come from the project settings (`orc project config list`); a task's `required_provider` overrides the worker provider.
 
