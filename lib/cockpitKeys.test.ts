@@ -39,6 +39,24 @@ describe('resolveCockpitKeys', () => {
   });
 });
 
+describe('the cockpit2 quit key', () => {
+  it('defaults to C-q and is set or unbound with quit=<key> in ORC_COCKPIT_KEYS', () => {
+    expect(resolveCockpitKeys({}).keys.quit).toBe('C-q');
+    expect(resolveCockpitKeys({ ORC_COCKPIT_KEYS: 'quit=C-x' })).toMatchObject({ keys: { quit: 'C-x' }, problems: [] });
+    expect(resolveCockpitKeys({ ORC_COCKPIT_KEYS: 'quit=none' }).keys.quit).toBeNull();
+  });
+
+  it('rejects a plain key and drops one that clashes with the prefix or a direct key, leaving them unchanged', () => {
+    const plain = resolveCockpitKeys({ ORC_COCKPIT_KEYS: 'quit=q' });
+    expect(plain.keys.quit).toBe('C-q');
+    expect(plain.problems).toEqual([expect.stringContaining("'q' cannot be the quit key")]);
+    const clash = resolveCockpitKeys({ ORC_COCKPIT_KEYS: 'quit=F10' });
+    expect(clash.keys.quit).toBeNull();
+    expect(clash.keys.direct.dashboard).toBe('F10');
+    expect(resolveCockpitKeys({ ORC_COCKPIT_PREFIX: 'C-q' }).keys).toMatchObject({ prefix: 'C-q', quit: null });
+  });
+});
+
 describe('isTmuxKeyName', () => {
   it('accepts tmux key names and rejects the rest', () => {
     for (const key of ['F12', 'f5', 'C-]', 'M-x', 'C-M-Left', 'PageUp', '&']) expect(isTmuxKeyName(key)).toBe(true);
@@ -54,7 +72,7 @@ describe('cockpitKeysHint', () => {
 
   it('spells out modifiers and leaves out unbound keys', () => {
     const direct = Object.fromEntries(Object.keys(DEFAULT_COCKPIT_KEYS.direct).map((action) => [action, null])) as typeof DEFAULT_COCKPIT_KEYS.direct;
-    expect(cockpitKeysHint({ prefix: 'C-a', direct: { ...direct, tab1: 'M-1' } }))
+    expect(cockpitKeysHint({ prefix: 'C-a', direct: { ...direct, tab1: 'M-1' }, quit: null }))
       .toBe('Alt-1: tab | Ctrl-a o: switch pane | Ctrl-a n/p: next/previous tab | Ctrl-a N/P: project | Ctrl-a d: detach');
   });
 });

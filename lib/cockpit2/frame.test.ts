@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { blitScreen, cellAt, createFrame, DEFAULT_STYLE, drawText, EDGE_COLUMN, EDGE_ROW, EDGE_STYLE, fillRect, type Frame } from './frame.ts';
+import { blitScreen, cellAt, createFrame, DEFAULT_STYLE, drawText, EDGE_COLUMN, EDGE_ROW, EDGE_STYLE, fillRect, slotCursor, type Frame } from './frame.ts';
 import { createScreen, type Cell, type CellStyle } from './screen.ts';
 
 const BOLD: CellStyle = { ...DEFAULT_STYLE, bold: true };
@@ -168,5 +168,35 @@ describe('blitScreen', () => {
     } finally {
       screen.dispose();
     }
+  });
+});
+
+describe('slotCursor', () => {
+  const region = { x: 34, y: 3, cols: 46, rows: 21 };
+  const pane = (x: number, y: number, visible = true, scrollOffset = 0) => ({ cursor: () => ({ x, y, visible }), scrollOffset });
+
+  it('maps the pane-relative cursor into the region', () => {
+    expect(slotCursor(pane(0, 0), region, true)).toEqual({ x: 34, y: 3, visible: true });
+    expect(slotCursor(pane(45, 20), region, true)).toEqual({ x: 79, y: 23, visible: true });
+  });
+
+  it('hides it when it is outside the cropped region', () => {
+    expect(slotCursor(pane(46, 0), region, true).visible).toBe(false);
+    expect(slotCursor(pane(0, 21), region, true).visible).toBe(false);
+  });
+
+  it('hides it while the pane is scrolled back, the program hid it, or the slot has no focus', () => {
+    expect(slotCursor(pane(1, 1, true, 5), region, true).visible).toBe(false);
+    expect(slotCursor(pane(1, 1, false), region, true).visible).toBe(false);
+    expect(slotCursor(pane(1, 1), region, false)).toEqual({ x: 34, y: 3, visible: false });
+  });
+
+  it('follows a real screen scrolled back into its scrollback', async () => {
+    const screen = createScreen({ cols: 10, rows: 3, scrollback: 20 });
+    await screen.write(Array.from({ length: 8 }, (_, i) => `line${i}`).join('\r\n'));
+    expect(slotCursor(screen, { x: 0, y: 0, cols: 10, rows: 3 }, true)).toEqual({ x: 5, y: 2, visible: true });
+    screen.scroll(-2);
+    expect(slotCursor(screen, { x: 0, y: 0, cols: 10, rows: 3 }, true).visible).toBe(false);
+    screen.dispose();
   });
 });
