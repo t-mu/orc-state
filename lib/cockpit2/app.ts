@@ -80,7 +80,7 @@ import {
   type CockpitTabState, type OpenTab, type TabTransition,
 } from '../cockpitTabs.ts';
 import { keyLabel, type CockpitKeys } from '../cockpitKeys.ts';
-import { buildSidebarModel } from '../tui/sidebar.ts';
+import { ATTENTION_BADGE, buildSidebarModel, projectState } from '../tui/sidebar.ts';
 import { buildProjectViews } from '../tui/status.ts';
 import { buildTabBarModel, tabAttention, tabBarClickTarget } from '../tui/tabBarModel.ts';
 import { blitScreen, createFrame, drawText, slotCursor, type Frame, type Region } from './frame.ts';
@@ -91,8 +91,8 @@ import { createTokenizer, type Token } from './input.ts';
 import { createMotionCoalescer, encodeMouse, parseSgrMouse, routeSlotMouse, type MouseEvent } from './mouse.ts';
 import { renderDiff, sameStyle } from './render.ts';
 import type { Cursor, Screen } from './screen.ts';
-import { DEFAULT_THEME, styleOf, type Theme } from './theme.ts';
-import { drawPaneFrame } from './chrome.ts';
+import { DEFAULT_THEME, attentionRole, projectStateRole, styleOf, type Theme } from './theme.ts';
+import { drawPaneBox, type PaneHeader } from './chrome.ts';
 import { highlightSelection, osc52, selectionText, type CellPoint, type Selection } from './selection.ts';
 import { Sessions, type ConnectPane, type PaneSession } from './sessions.ts';
 import type { TerminalSession } from './terminal.ts';
@@ -110,7 +110,7 @@ import {
 // ── layout ────────────────────────────────────────────────────────────────────
 
 export const SIDEBAR_COLS = 34;
-export const TAB_BAR_ROWS = 1;
+export const TAB_BAR_ROWS = 3;
 /** The header (top) and footer (bottom) rows, full width; dropped (footer first) before the slot shrinks below its minimum. */
 export const HEADER_ROWS = 1;
 export const FOOTER_ROWS = 1;
@@ -145,16 +145,20 @@ export interface Layout {
 /**
  * The regions of a `cols` by `rows` terminal: the sidebar's width and the
  * tab bar's height stay fixed while there is room. Rows beyond the slot's
- * minimum go to the tab bar's row, then the header, then the footer.
+ * minimum go to the tabs' label row, then the header, then the tabs' other
+ * rows, then the footer.
  */
 export function computeLayout(cols: number, rows: number): Layout {
   const sidebarCols = Math.min(SIDEBAR_COLS, Math.max(0, cols - MIN_SLOT_COLS));
   let spare = Math.max(0, rows - MIN_SLOT_ROWS);
-  // The tab bar's row, then the header (its buttons stay reachable), then the footer.
-  const tabBarRows = Math.min(TAB_BAR_ROWS, spare);
+  // The tabs' label row, then the header, then the rest of the tabs' height, then the footer.
+  let tabBarRows = Math.min(1, spare);
   spare -= tabBarRows;
   const headerRows = Math.min(HEADER_ROWS, spare);
   spare -= headerRows;
+  const fatRows = Math.min(TAB_BAR_ROWS - tabBarRows, spare);
+  tabBarRows += fatRows;
+  spare -= fatRows;
   const footerRows = Math.min(FOOTER_ROWS, spare);
   const rightCols = Math.max(0, cols - sidebarCols);
   const middleRows = Math.max(0, rows - headerRows - footerRows);
@@ -610,6 +614,39 @@ export function runApp(options: AppOptions): App {
     return { message, screen: message ? null : session?.screen ?? null };
   }
 
+  /**
+   * The shown tab's header on the pane's top border: an agent's task, phase,
+   * provider and run time with its attention badge; the master's coordinator,
+   * worker capacity and task counts; the explorer's project.
+   */
+  function paneHeader(): PaneHeader | null {
+    const tab = shownTab(tabs);
+    const state = tab ? watched.get(tab.projectId) : undefined;
+    const [view] = state ? buildProjectViews([state]) : [];
+    if (explorer) return { title: 'tasks', parts: ['task explorer', view?.name ?? ''], badge: null };
+    if (!tab || !view) return null;
+    if (tab.agentId === null || tab.agentId === MASTER_TAB) {
+      const status = view.status;
+      const capacity = status?.worker_capacity;
+      const counts = status?.tasks?.counts ?? {};
+      const tasks = ['todo', 'in_progress', 'blocked'].filter((key) => counts[key]).map((key) => `${counts[key]} ${key.replace('_', ' ')}`);
+      const state = projectState(view.connection);
+      return {
+        title: 'master',
+        parts: [view.name, capacity ? `workers ${capacity.used_slots}/${capacity.configured_slots}` : '', tasks.length ? `tasks ${tasks.join(', ')}` : 'no open tasks'],
+        badge: { label: `coordinator ${state}`, role: projectStateRole(state) },
+      };
+    }
+    const model = buildSidebarModel([view], { stateDir: '', activeProjectId: view.project_id, nowMs: Date.now(), registryError: null, agentDetails: true });
+    const agent = model.agents.find((candidate) => candidate.agent_id === tab.agentId);
+    if (!agent) return { title: String(tab.agentId), parts: ['not running'], badge: null };
+    return {
+      title: agent.agent_id,
+      parts: [agent.task_ref ?? agent.role, agent.phase, agent.provider ?? '', agent.elapsed ?? ''],
+      badge: agent.attention ? { label: ATTENTION_BADGE[agent.attention], role: attentionRole(agent.attention) } : null,
+    };
+  }
+
   // ── rendering ──
   function render(): void {
     renderTimer = null;
@@ -623,7 +660,7 @@ export function runApp(options: AppOptions): App {
       error: refusal ?? (lastSaveError ? `view state not saved: ${lastSaveError}` : null),
       theme,
     });
-    if (layout.paneFrame) drawPaneFrame(frame, layout.paneFrame, styleOf(theme, focus === 'slot' ? 'chrome.borderFocus' : 'chrome.border'));
+    if (layout.paneFrame) drawPaneBox(frame, layout.paneFrame, paneHeader(), focus === 'slot', theme);
     drawFooter(frame, layout.footer, { mode: modeNotice(keyContext()), breadcrumb: breadcrumb(), hints: footerHints(keys), theme });
     const { message, screen } = slotContent();
     let cursor: Cursor = { x: 0, y: 0, visible: false };

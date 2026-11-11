@@ -283,6 +283,7 @@ describe.skipIf(!tmuxOk)('orc cockpit end to end, in a host tmux pane', () => {
   it('lists agents, badges a question, shows a worker view-only, types, pastes, ignores mouse motion and restores tabs across a project switch', async () => {
     // The master in the slot; the sidebar lists both projects and the worker (its agents are workers and scouts, never the master).
     await waitFor('the master in the slot', () => screen().includes('AGENT master READY'));
+    await waitFor('the master\'s header on the pane box', () => screen().includes('[ MASTER ]') && screen().includes('[COORDINATOR '));
     await waitFor('the sidebar to list the worker and both projects', () =>
       sidebarRow('worker-a') !== '' && sidebarRow(alpha.name) !== '' && sidebarRow(beta.name) !== '');
     expect(sidebar().join('\n')).not.toContain('QUESTION');
@@ -295,6 +296,7 @@ describe.skipIf(!tmuxOk)('orc cockpit end to end, in a host tmux pane', () => {
     // A click on the worker's row shows its screen in a view-only tab: nothing typed reaches it, q closes it.
     clickSidebar('worker-a');
     await waitFor('the worker\'s screen', () => screen().includes('AGENT worker-a READY'));
+    await waitFor('the worker\'s header on the pane box', () => screen().includes('[ WORKER-A ]') && screen().includes('[QUESTION]'));
     await waitFor('the view-only notice', () => screen().includes('[view] i: type'));
     send('x');
     send('q');

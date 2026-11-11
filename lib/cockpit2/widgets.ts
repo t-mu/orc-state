@@ -17,8 +17,8 @@
  */
 import { stringWidth } from '../cellWidth.ts';
 import { fitText } from '../tui/sidebar.ts';
-import { layoutTabBar, tabBarRows, type TabBarLayout, type TabBarModel, type TabBarSegment } from '../tui/tabBarModel.ts';
-import { DEFAULT_STYLE, drawText, type Frame, type Region } from './frame.ts';
+import { CLOSE_MARKER, layoutTabBar, type TabBarLayout, type TabBarModel } from '../tui/tabBarModel.ts';
+import { drawText, fillRect, type Frame, type Region } from './frame.ts';
 import type { CellStyle } from './screen.ts';
 import { attentionRole, badgeRole, styleOf, type Theme, type ThemeRole } from './theme.ts';
 
@@ -135,42 +135,45 @@ export interface TabBarDrawOptions {
 }
 
 /**
- * A tab's segment as a solid block: the active tab in `tab.active`, the others
- * in `tab.inactive`; badge and close mark keep their colour on the tab's fill
- * (inverse on the active tab when its role has no fill colour, as in `mono`).
- * A tab's side borders become plain spaces: the gap between blocks.
- */
-function tabBlockStyle(segment: TabBarSegment, tab: TabBarModel['tabs'][number], theme: Theme): CellStyle {
-  const fill = styleOf(theme, tab.active ? 'tab.active' : 'tab.inactive');
-  const hasFill = fill.bg.type !== 'default';
-  const onFill = (style: CellStyle): CellStyle => (hasFill ? { ...style, bg: fill.bg } : tab.active ? { ...style, inverse: true } : style);
-  switch (segment.kind) {
-    case 'border': return DEFAULT_STYLE;
-    case 'badge': return onFill(styleOf(theme, badgeRole(tab.attention ? attentionRole(tab.attention) : 'status.attention')));
-    case 'close': return onFill(styleOf(theme, 'tab.close'));
-    default: return fill;
-  }
-}
-
-/**
- * Draws the tab bar into `region`'s first row: the tabs as solid blocks with
- * a one-column gap between them (the active one in `tab.active`) and the
- * overflow markers; a notice or the last action's error takes the row instead.
+ * Draws the tab bar into `region`: each tab a solid block as tall as the bar
+ * (the active one in `tab.active`, the others in `tab.inactive`) with its
+ * number, label, badge and close mark on the middle row, one column between
+ * blocks, the overflow markers beside them. Badge and close mark keep their
+ * colour on the tab's fill (inverse on the active tab when its role has no
+ * fill colour, as in `mono`). The last action's error takes the middle row.
  */
 export function drawTabBar(frame: Frame, region: Region, view: TabBarView, options: TabBarDrawOptions): void {
   if (region.cols <= 0 || region.rows <= 0) return;
   const { model, layout } = view;
   const { theme } = options;
+  const labelY = region.y + Math.floor((region.rows - 1) / 2);
   if (options.error) {
-    drawText(frame, region.x, region.y, options.error, styleOf(theme, 'error'), region.cols);
+    drawText(frame, region.x, labelY, options.error, styleOf(theme, 'error'), region.cols);
     return;
   }
-  const [, middle] = tabBarRows(model, layout, region.cols, null);
-  drawRuns(frame, region.x, region.y, middle.map((segment): Run => {
-    const tab = segment.tab === undefined ? null : model.tabs[segment.tab];
-    if (!tab) return [segment.text, styleOf(theme, 'text.muted')];
-    return [segment.kind === 'border' ? ' ' : segment.text, tabBlockStyle(segment, tab, theme)];
-  }), region.cols);
+  if (model.notice) {
+    drawText(frame, region.x, labelY, model.notice, styleOf(theme, 'text.muted'), region.cols);
+    return;
+  }
+  const muted = styleOf(theme, 'text.muted');
+  if (layout.leftMarker) drawText(frame, region.x, labelY, layout.leftMarker, muted, region.cols);
+  let end = stringWidth(layout.leftMarker);
+  for (const cell of layout.cells) {
+    const tab = model.tabs[cell.index];
+    const fill = styleOf(theme, tab.active ? 'tab.active' : 'tab.inactive');
+    const hasFill = fill.bg.type !== 'default';
+    const onFill = (style: CellStyle): CellStyle => (hasFill ? { ...style, bg: fill.bg } : tab.active ? { ...style, inverse: true } : style);
+    const x = region.x + cell.x;
+    const cols = Math.min(cell.width, region.cols - cell.x);
+    if (cols <= 0) break;
+    fillRect(frame, { x, y: region.y, cols, rows: region.rows }, fill);
+    const runs: Run[] = [[cell.text, fill]];
+    if (cell.badge) runs.push([cell.badge, onFill(styleOf(theme, badgeRole(tab.attention ? attentionRole(tab.attention) : 'status.attention')))]);
+    if (tab.closable) runs.push([' ', fill], [CLOSE_MARKER, onFill(styleOf(theme, 'tab.close'))]);
+    drawRuns(frame, x + 1, labelY, runs, cols - 2);
+    end = cell.x + cell.width;
+  }
+  if (layout.rightMarker) drawText(frame, region.x + end, labelY, layout.rightMarker, muted, region.cols - end);
 }
 
 // ── footer ───────────────────────────────────────────────────────────────────

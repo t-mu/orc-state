@@ -65,17 +65,18 @@ A file that cannot be read or parsed, or names an unknown base, is reported and 
 
 ```
 ┌ header: 1 row, full width ─────────────────────────────────┐
-│ sidebar   │ tab strip: 1 row                               │
-│ 34 cols   │┌──────────────────────────────────────────────┐│
-│ Project   ││ slot: the active tab's pane, in the pane     ││
-│ Other     ││ frame                                        ││
-│ projects  ││                                              ││
+│ sidebar   │ ██████████ ████████████ tab strip: 3 rows      │
+│ 34 cols   │ █1 master█ █2 w1 ! Q ×█ solid blocks,          │
+│           │ ██████████ ████████████ 1-column gaps          │
+│ Project   │┌─ [ W1 ] task-1 · implement ───── [QUESTION] ─┐│
+│ Other     ││ slot: the active tab's pane, inside          ││
+│ projects  ││ the pane box                                 ││
 │ Agents    │└──────────────────────────────────────────────┘│
 └ footer: 1 row, full width ─────────────────────────────────┘
 ```
 
-`computeLayout` in `lib/cockpit2/app.ts`. The slot keeps at least 20 columns and 3 rows. On a short terminal rows go, in this order: the footer, the header, then the tab strip. On a narrow one the sidebar narrows.
+`computeLayout` in `lib/cockpit2/app.ts`. The slot keeps at least 20 columns and 3 rows. On a short terminal rows go, in this order: the footer, the tab strip's top and bottom rows, the header, then the tab strip's label row. On a narrow one the sidebar narrows.
 
-The tab strip is one row of solid blocks, one per tab, the tabs' side borders drawn as blank gaps: the active tab in `tab.active`, the others in `tab.inactive`, a tab's badge and `×` keeping their colour on its fill; overflow markers and notices are in `text.muted`, and an error takes the whole row. The pane frame (`paneFrame`, drawn by `drawPaneFrame` in `lib/cockpit2/chrome.ts`) is a plain box around the slot, its top border on its own row under the tab strip, in `chrome.border` (`chrome.borderFocus` while the slot has the keys). It costs two columns and two rows, so it is drawn only while the slot inside it keeps 20x3; otherwise the slot takes the whole area. At 80x24 the header is row 0, the tab strip row 1, the frame rows 2 to 22 (46x21 at (34,2)), the slot inside it 44x19 at (35,3) and the footer row 23; the frame's cells take no clicks.
+The tab strip is three rows of solid blocks, one per tab, with one blank column (`TAB_GAP` in `lib/tui/tabBarModel.ts`) between blocks: the active tab in `tab.active`, the others in `tab.inactive`, each block filled on every row with its number, label, badge and `×` on the middle row, a tab's badge and `×` keeping their colour on its fill; overflow markers and notices are in `text.muted` on the middle row, and an error takes the middle row instead of the tabs. A click anywhere in a block selects its tab (`×` closes it); the gaps take no action. The pane box (`paneFrame`, drawn by `drawPaneBox` in `lib/cockpit2/chrome.ts`) is a full box around the slot in `chrome.border` (`chrome.borderFocus` while the slot has the keys), its top border the shown tab's header: `[ TITLE ]`, then facts joined by ` · ` in `text.muted` (whole facts only, in order, while they fit), then a status badge flush right (` [BADGE] ─┐`, dropped when it would meet the title). An agent tab shows its agent id, task (or role), phase, provider and run time, badged with its attention kind; an agent not running shows `not running`; the master tab shows `master`, the project, `workers used/configured` and the open task counts (or `no open tasks`), badged `coordinator <state>`; the task explorer shows `tasks`, `task explorer` and the project. The box costs two columns and two rows, so it is drawn only while the slot inside it keeps 20x3; otherwise the slot takes the whole area. At 80x24 the header is row 0, the tab strip rows 1 to 3, the box rows 4 to 22 (46x19 at (34,4), its top border the header), the slot inside it 44x17 at (35,5) and the footer row 23; the box's cells take no clicks.
 
 The sidebar is three cards (`lib/cockpit2/sidebarCards.ts`): Project (the active project's coordinator state, worker capacity and, only while there is one, a notice row), Other projects (one row each) and Agents (one row each, a second row for an agent needing attention; a row too narrow for the agent's role drops the role whole rather than cutting it). Space or a click on an agent's `[+]` expands it into a box with its task, phase, provider, activity or question and the open key. When rows run short, Other projects shrinks to a `+N more` line before Agents loses rows; the cursor's row (an expanded agent's whole block) stays in view.

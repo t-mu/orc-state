@@ -96,6 +96,9 @@ const tabTail = (tab: TabBarTab) => `${tab.closable ? ` ${CLOSE_MARKER}` : ''} `
 /** A tab's width: its borders, its text, badge, close marker and padding. */
 export const tabWidth = (tab: TabBarTab) => 2 + stringWidth(tabText(tab)) + stringWidth(tabBadge(tab)) + stringWidth(tabTail(tab));
 
+/** Columns between two tabs. */
+export const TAB_GAP = 1;
+
 const leftMarkerOf = (hidden: number) => (hidden > 0 ? `‹ ${hidden} ` : '');
 const rightMarkerOf = (hidden: number) => (hidden > 0 ? ` ${hidden} ›` : '');
 
@@ -109,7 +112,7 @@ export function layoutTabBar(model: TabBarModel, columns: number): TabBarLayout 
   const { tabs } = model;
   const widths = tabs.map(tabWidth);
   const total = (start: number, end: number) => widths.slice(start, end).reduce((sum, width) => sum + width, 0)
-    + stringWidth(leftMarkerOf(start)) + stringWidth(rightMarkerOf(tabs.length - end));
+    + TAB_GAP * Math.max(0, end - start - 1) + stringWidth(leftMarkerOf(start)) + stringWidth(rightMarkerOf(tabs.length - end));
   const fits = (start: number, end: number) => total(start, end) <= columns;
 
   let start = 0;
@@ -150,7 +153,7 @@ export function layoutTabBar(model: TabBarModel, columns: number): TabBarLayout 
     }
     const width = 2 + stringWidth(text) + stringWidth(badge) + stringWidth(tail);
     cells.push({ index, x, width, text, badge, closeX: tab.closable ? x + 1 + stringWidth(text) + stringWidth(badge) + 1 : null });
-    x += width;
+    x += width + TAB_GAP;
   }
   return { cells, hiddenLeft: start, hiddenRight: tabs.length - end, leftMarker, rightMarker };
 }
@@ -186,9 +189,14 @@ export function tabBarRows(model: TabBarModel, layout: TabBarLayout, columns: nu
     middle.push({ kind: 'marker', text: layout.leftMarker });
     bottom.push({ kind: 'rule', text: '─'.repeat(stringWidth(layout.leftMarker)) });
   }
-  for (const cell of layout.cells) {
+  for (const [position, cell] of layout.cells.entries()) {
     const tab = model.tabs[cell.index];
     const inner = cell.width - 2;
+    if (position > 0) {
+      top.push({ kind: 'border', text: ' '.repeat(TAB_GAP) });
+      middle.push({ kind: 'border', text: ' '.repeat(TAB_GAP) });
+      bottom.push({ kind: 'rule', text: '─'.repeat(TAB_GAP) });
+    }
     top.push({ kind: 'border', text: `┌${'─'.repeat(inner)}┐`, tab: cell.index });
     middle.push({ kind: 'border', text: '│', tab: cell.index });
     middle.push({ kind: 'text', text: cell.text, tab: cell.index });
@@ -202,7 +210,7 @@ export function tabBarRows(model: TabBarModel, layout: TabBarLayout, columns: nu
     bottom.push({ kind: 'border', text: tab.active ? `┘${' '.repeat(inner)}└` : `┴${'─'.repeat(inner)}┴`, tab: cell.index });
   }
   if (layout.rightMarker) middle.push({ kind: 'marker', text: layout.rightMarker });
-  const used = stringWidth(layout.leftMarker) + layout.cells.reduce((sum, cell) => sum + cell.width, 0);
+  const used = stringWidth(layout.leftMarker) + layout.cells.reduce((sum, cell) => sum + cell.width, 0) + TAB_GAP * Math.max(0, layout.cells.length - 1);
   if (width > used) bottom.push({ kind: 'rule', text: '─'.repeat(width - used) });
   return [top, middle, bottomError ?? bottom];
 }
