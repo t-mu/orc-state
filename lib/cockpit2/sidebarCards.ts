@@ -120,7 +120,7 @@ export type SidebarCard = 'project' | 'otherProjects' | 'agents';
 
 /** A card's body row: what is drawn there and what a click on it hits. */
 export type CardLine =
-  | { kind: 'coordinator' } | { kind: 'workers' } | { kind: 'notice' }
+  | { kind: 'coordinator' } | { kind: 'workers' } | { kind: 'notice' } | { kind: 'noProjects' }
   | { kind: 'project'; index: number }
   | { kind: 'agent'; index: number } | { kind: 'detail'; index: number }
   | { kind: 'more'; count: number }
@@ -216,7 +216,10 @@ export function sidebarCardsLayout(model: SidebarModel, rows: number, nav: Sideb
 
   const body = (cardRows: number) => Math.max(0, cardRows - BORDERS);
   const otherCursor = inOthers ? others.indexOf(cursor.projectIndex) : -1;
-  const projectLines: CardLine[] = ([{ kind: 'coordinator' }, { kind: 'workers' }, { kind: 'notice' }] as CardLine[]).slice(0, body(project));
+  // With no project at all the card says so (`(none)`, as the old projects box did) above the notice that tells why.
+  const projectLines: CardLine[] = (model.projects.length === 0
+    ? [{ kind: 'noProjects' }, { kind: 'notice' }] as CardLine[]
+    : [{ kind: 'coordinator' }, { kind: 'workers' }, { kind: 'notice' }] as CardLine[]).slice(0, body(project));
   const cards: CardLayout[] = [{ card: 'project', y: 0, rows: project, lines: projectLines }];
   if (other > 0) cards.push({ card: 'otherProjects', y: project, rows: other, lines: otherLines(others, body(other), otherCursor) });
   cards.push({ card: 'agents', y: project + other, rows: agents, lines: agentLines(model.agents, body(agents), cursor.agentIndex) });
@@ -329,6 +332,13 @@ function drawCardRow(frame: Frame, x: number, y: number, cols: number, row: Card
   const used = drawRuns(frame, x, y, runs, cols);
   if (!showTail || !row.badge) return;
   const badge = drawBadge(frame, x + used, y, row.badge.label, row.badge.role, theme, cols - used);
+  // A stale row dims its badge too (the cursor row's badge keeps its own style).
+  if (row.dim && !row.cursor) {
+    for (let col = x + used; col < x + used + badge; col += 1) {
+      const cell = frame.cells[y * frame.cols + col];
+      cell.style = { ...cell.style, dim: true };
+    }
+  }
   drawRuns(frame, x + used + badge, y, tail, cols - used - badge);
 }
 
@@ -381,6 +391,9 @@ export function drawSidebarCards(frame: Frame, region: Region, layout: SidebarCa
         drawCardRow(frame, x, y, cols, { left: `workers ${workers ? `${workers.used}/${workers.total}` : '-'}`, leftRuns: plain, cursor }, theme);
         return;
       }
+      case 'noProjects':
+        drawRuns(frame, x, y, [[fitText('(none)', cols), role('text.muted')]], cols);
+        return;
       case 'notice':
         if (model.notice) drawRuns(frame, x, y, [[fitText(model.notice, cols), role('status.warn')]], cols);
         return;

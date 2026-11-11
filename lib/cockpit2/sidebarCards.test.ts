@@ -217,6 +217,8 @@ describe('sidebarCardTarget and sidebarCardClick', () => {
     expect(sidebarCardTarget(layout, 5, rowOf('OTHER PROJECTS'))).toBeNull();
     expect(sidebarCardTarget(layout, 5, rowOf('a3 ') + 1)).toBeNull(); // a blank row of the Agents card
     expect(sidebarCardTarget(layout, 5, 21)).toBeNull(); // its bottom border
+    const none = sidebarCardsLayout(model(0, 0, { projects: [], activeProjectId: null, notice: 'no registered projects' }), 22, INITIAL_SIDEBAR_NAV, COLS);
+    expect([1, 2].map((y) => sidebarCardTarget(none, 5, y))).toEqual([null, null]); // `(none)` and the notice
     const cut = sidebarCardsLayout(model(5, 8), 22, INITIAL_SIDEBAR_NAV, COLS);
     const more = rowOfLine(cut, 'otherProjects', (line) => line.kind === 'more');
     expect(sidebarCardTarget(cut, 5, more)).toBeNull();
@@ -266,7 +268,7 @@ describe('drawSidebarCards', () => {
     expect(text.match(/\[RUNNING\]/g)).toHaveLength(1);
     expect(text).not.toMatch(/Status|STATUS|needs? you/);
     expect(render(model(1, 2, { status: { coordinator: null, workers: null, attention: 0 }, projects: [], activeProjectId: null, agents: [], notice: 'no registered projects' })).lines.slice(0, 4))
-      .toEqual(['┌─ [ PROJECT ] ──────────────────┐', '│ coordinator -                  │', '│ workers -                      │', '│ no registered projects         │']);
+      .toEqual(['┌─ [ PROJECT ] ──────────────────┐', '│ (none)                         │', '│ no registered projects         │', '│                                │']);
   });
 
   it('keeps the question or reason row only for agents needing attention', () => {
@@ -286,6 +288,7 @@ describe('drawSidebarCards', () => {
     expect(stale.lines.join('\n')).toContain('2 stale');
     const y = stale.lines.findIndex((line) => line.includes('a2 '));
     expect(stale.frame.cells[y * COLS + 6].style.dim).toBe(true);
+    expect(stale.frame.cells[y * COLS + stale.lines[y].indexOf('[IMPLEMENT]')].style).toEqual({ ...styleOf(AMBER, 'status.active.badge'), dim: true });
   });
 
   it('draws the focused card\'s border in chrome.borderFocus and the cursor row in row.cursor, on the Project card for the active project', () => {
