@@ -17,6 +17,10 @@
  *    on an agent tab, which returns to view mode.
  *
  * None of the view and typing keys needs the prefix.
+ *
+ * Typing writes into the pane through tmux directly and takes no coordinator
+ * terminal lease (Plan 6 leaves leases out, as for `orc attach --write`), so
+ * an `orc terminal --write` holder can type into the same agent at once.
  */
 import { COCKPIT_ACTIONS, type CockpitAction, type CockpitKeys } from '../cockpitKeys.ts';
 import { keyMatcher, type Token } from './input.ts';
