@@ -152,6 +152,22 @@ function segmentStyle(segment: TabBarSegment, model: TabBarModel, slotFocused: b
 }
 
 /**
+ * A segment of the active tab inside its fill: the label in `tab.active`; the
+ * borders in the fill's own colour (a solid block; with no fill colour, as in
+ * `mono`, the borders take the role's attributes); badge and close mark keep
+ * their colour on the fill.
+ */
+function activeTabFill(segment: TabBarSegment, base: CellStyle, theme: Theme): CellStyle {
+  const fill = styleOf(theme, 'tab.active');
+  const hasFill = fill.bg.type !== 'default';
+  switch (segment.kind) {
+    case 'border': return hasFill ? { ...fill, fg: fill.bg, bold: false } : fill;
+    case 'text': return fill;
+    default: return hasFill ? { ...base, bg: fill.bg } : { ...base, inverse: true };
+  }
+}
+
+/**
  * Draws the tab bar into `region`: the tabs' top borders, their labels, and
  * the rule above the slot (open under the active tab). A region shorter than
  * three rows keeps the labels' row (then the bottom row).
@@ -162,7 +178,13 @@ export function drawTabBar(frame: Frame, region: Region, view: TabBarView, optio
   const [top, middle, bottom] = tabBarRows(model, layout, region.cols, options.error);
   const rows = region.rows >= 3 ? [top, middle, bottom] : region.rows === 2 ? [middle, bottom] : [middle];
   rows.forEach((segments, offset) => {
-    drawRuns(frame, region.x, region.y + offset, segments.map((segment): Run => [segment.text, segmentStyle(segment, model, options.slotFocused, options.theme)]), region.cols);
+    // The active tab's top border and label row are one filled block (`tab.active`); its bottom row stays open onto the pane.
+    const filled = segments !== bottom;
+    drawRuns(frame, region.x, region.y + offset, segments.map((segment): Run => {
+      const base = segmentStyle(segment, model, options.slotFocused, options.theme);
+      const active = segment.tab !== undefined && model.tabs[segment.tab]?.active;
+      return [segment.text, filled && active ? activeTabFill(segment, base, options.theme) : base];
+    }), region.cols);
   });
 }
 

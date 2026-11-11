@@ -483,7 +483,7 @@ export function drawSidebarCards(frame: Frame, region: Region, layout: SidebarCa
     const rows = Math.min(card.rows, bottom - (region.y + card.y));
     if (rows < 2) continue;
     const focused = card.card === focusedCard;
-    const title = card.card === 'project' ? active?.name ?? 'project' : card.card === 'otherProjects' ? 'Other projects' : 'Agents';
+    const title = card.card === 'project' ? active?.name ?? 'project' : card.card === 'otherProjects' ? 'Projects' : 'Agents';
     const count = card.card === 'otherProjects'
       ? String(model.projects.length - (active ? 1 : 0))
       : card.card === 'agents' && model.agents.length > 0 ? `${model.agents.length} ${model.agentsStale ? 'stale' : 'live'}` : '';

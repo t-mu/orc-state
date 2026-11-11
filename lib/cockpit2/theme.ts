@@ -23,12 +23,12 @@ export type BadgeRole = `${StatusRole}.badge`;
 export const THEME_ROLES: readonly ThemeRole[] = [
   'chrome.border', 'chrome.borderFocus', 'chrome.title', 'chrome.titleFocus', 'chrome.meta',
   'text.primary', 'text.muted', 'text.accent', 'text.edge',
-  'row.cursor', 'button', 'button.attention', 'tab.close', 'error',
+  'row.cursor', 'button', 'button.attention', 'tab.active', 'tab.close', 'error',
   ...STATUS_ROLES.flatMap((role): ThemeRole[] => [role, `${role}.badge`]),
 ];
 export type ThemeRole = 'chrome.border' | 'chrome.borderFocus' | 'chrome.title' | 'chrome.titleFocus' | 'chrome.meta'
   | 'text.primary' | 'text.muted' | 'text.accent' | 'text.edge'
-  | 'row.cursor' | 'button' | 'button.attention' | 'tab.close' | 'error'
+  | 'row.cursor' | 'button' | 'button.attention' | 'tab.active' | 'tab.close' | 'error'
   | StatusRole | BadgeRole;
 
 /** A role's style; unset attributes are off and unset colours `default`. */
@@ -117,6 +117,7 @@ const amber: Theme = {
     'row.cursor': { fg: TEXT, bg: STATUS_BG['status.idle'], bold: true },
     'button': { fg: AMBER, underline: true },
     'button.attention': { fg: STATUS_FG['status.attention'], bg: STATUS_BG['status.attention'], bold: true },
+    'tab.active': { fg: rgb('#0a0e14'), bg: AMBER, bold: true },
     'tab.close': { fg: STATUS_FG['status.error'] },
     'error': { fg: STATUS_FG['status.error'], bold: true },
     ...statusRoles((role) => ({ fg: STATUS_FG[role] }), (role) => ({ fg: STATUS_FG[role], bg: STATUS_BG[role], bold: true })),
@@ -155,6 +156,7 @@ const classic: Theme = {
     'row.cursor': { inverse: true },
     'button': { fg: palette(6), underline: true },
     'button.attention': { fg: palette(3), bold: true, inverse: true },
+    'tab.active': { bold: true, inverse: true },
     'tab.close': { fg: palette(1) },
     'error': { fg: palette(1), bold: true },
     ...statusRoles(
@@ -184,6 +186,7 @@ const mono: Theme = {
     'row.cursor': { inverse: true },
     'button': { underline: true },
     'button.attention': { bold: true, inverse: true },
+    'tab.active': { bold: true, inverse: true },
     'tab.close': { bold: true },
     'error': { bold: true, underline: true },
     'status.active': { bold: true },
