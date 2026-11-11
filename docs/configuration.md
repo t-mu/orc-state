@@ -116,7 +116,7 @@ Example: `ORC_COCKPIT_PREFIX=C-a ORC_COCKPIT_KEYS='dashboard=F12,attention=none'
 
 ### Cockpit theme
 
-Per user, for every project, read like the cockpit keys: when a cockpit starts, and anew by a cockpit that takes over. The theme styles what the cockpit draws itself (header, sidebar, tab bar, footer, messages), not the panes it shows. A theme that cannot be used is reported as a warning (by every launch, as invalid cockpit keys are, including one that only adds the project to a running cockpit, which keeps its own theme) and the cockpit draws in `amber`; an invalid role entry, or a file field other than `base` and `roles`, is reported and skipped.
+Per user, for every project, read like the cockpit keys: when a cockpit starts, and anew by a cockpit that takes over. The theme styles what the cockpit draws itself (header, sidebar, tab bar, footer, messages), not the panes it shows. A theme that cannot be used is reported as a warning (by every launch, as invalid cockpit keys are, including one that only adds the project to a running cockpit, which keeps its own theme) and the cockpit draws in `amber`; an invalid role entry, or a file field other than `base` and `roles`, is reported and skipped. What each role styles, the built-in themes and the layout: [cockpit-design.md](cockpit-design.md).
 
 | Variable | Description | Default |
 |----------|-------------|---------|
