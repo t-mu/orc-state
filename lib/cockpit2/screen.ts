@@ -3,8 +3,12 @@
  *
  * One `@xterm/headless` emulator per pane. A viewer usually attaches after the
  * pane's program started, so the screen is first made right from tmux
- * (`restore` a `capture-pane -e` snapshot, `seedModes` from the pane's mode
+ * (`restore` the `capture-pane -e` snapshots, `seedModes` from the pane's mode
  * flags) and then kept right by the `%output` stream (`write`).
+ *
+ * Bracketed paste (2004) is not reported: tmux has no pane format for it, so a
+ * late-attached screen cannot know it. Pastes do not need it, because
+ * `paste-buffer -p` adds the brackets exactly when the app enabled the mode.
  *
  * Modes the emulator does not expose (mouse encoding, cursor visibility) are
  * tracked with parser hooks on DECSET/DECRST, so seeded and streamed changes
@@ -71,10 +75,10 @@ export interface PaneModes {
 export type MouseTracking = 'none' | 'x10' | 'vt200' | 'drag' | 'any';
 export type MouseEncoding = 'default' | 'utf8' | 'sgr';
 
+/** Modes a late-attached screen knows; bracketed paste is left out on purpose (see the file comment). */
 export interface ScreenModes {
   mouseTracking: MouseTracking;
   mouseEncoding: MouseEncoding;
-  bracketedPaste: boolean;
   applicationCursorKeys: boolean;
   cursorVisible: boolean;
   alternateScreen: boolean;
@@ -108,13 +112,28 @@ export interface Cell {
 
 export interface Cursor { x: number; y: number; visible: boolean }
 
+/**
+ * A pane's screen as tmux captures it (`capture-pane -p -e`), one entry per line.
+ * On the alternate screen `lines` is the alternate screen and `main` the main
+ * screen tmux keeps under it (`capture-pane -a`); off it `main` is absent.
+ */
+export interface Snapshot {
+  lines: readonly string[];
+  main?: readonly string[];
+}
+
 export interface Screen {
   readonly cols: number;
   readonly rows: number;
   /** Feed pane output; resolves once it is parsed. */
   write(bytes: string | Uint8Array): Promise<void>;
-  /** Clear the screen and draw a `capture-pane -e` snapshot, then place the cursor. Draws on the active buffer: seed modes first. */
-  restore(captureLines: readonly string[], cursor: { x: number; y: number }): Promise<void>;
+  /**
+   * Clear the screen and draw a snapshot, then place the cursor. With `main`,
+   * the main screen is drawn first and the alternate screen entered over it, so
+   * leaving the alternate screen (1049l) shows the main text again; without it
+   * the main screen is drawn. Then seed modes (their screen switch is a no-op).
+   */
+  restore(snapshot: Snapshot, cursor: { x: number; y: number }): Promise<void>;
   /** Set the pane's modes as tmux reports them, by writing the equivalent DECSET/DECRST sequences. */
   seedModes(modes: PaneModes): Promise<void>;
   resize(cols: number, rows: number): void;
@@ -214,8 +233,18 @@ export function createScreen({ cols, rows, scrollback }: ScreenOptions): Screen 
     get cols() { return term.cols; },
     get rows() { return term.rows; },
     write,
-    restore(captureLines, at) {
-      return write(`${ESC}[0m${ESC}[H${ESC}[2J${ESC}[3J${captureLines.join('\r\n')}${ESC}[0m${ESC}[${at.y + 1};${at.x + 1}H`);
+    restore({ lines, main }, at) {
+      const draw = (captured: readonly string[]) => `${ESC}[0m${ESC}[H${ESC}[2J${ESC}[3J${captured.join('\r\n')}${ESC}[0m`;
+      const place = (x: number, y: number) => `${ESC}[${y + 1};${x + 1}H`;
+      const leaveAlternate = term.buffer.active.type === 'alternate' ? `${ESC}[?1049l` : '';
+      if (!main) return write(`${leaveAlternate}${draw(lines)}${place(at.x, at.y)}`);
+      // tmux does not report the main screen's saved cursor. 1049h saves ours and
+      // 1049l restores it, so park it where a shell continues after the command
+      // that started the app: the line below the last non-blank one.
+      let lastText = main.length - 1;
+      while (lastText >= 0 && main[lastText].replace(/\x1b\[[0-9;:]*m/g, '').trim() === '') lastText--;
+      const mainCursorY = Math.min(lastText + 1, term.rows - 1);
+      return write(`${leaveAlternate}${draw(main)}${place(0, mainCursorY)}${ESC}[?1049h${draw(lines)}${place(at.x, at.y)}`);
     },
     seedModes(modes) {
       const alternate = term.buffer.active.type === 'alternate';
@@ -243,7 +272,6 @@ export function createScreen({ cols, rows, scrollback }: ScreenOptions): Screen 
       return {
         mouseTracking: modes.mouseTrackingMode,
         mouseEncoding,
-        bracketedPaste: modes.bracketedPasteMode,
         applicationCursorKeys: modes.applicationCursorKeysMode,
         cursorVisible,
         alternateScreen: term.buffer.active.type === 'alternate',
@@ -251,7 +279,9 @@ export function createScreen({ cols, rows, scrollback }: ScreenOptions): Screen 
     },
     cursor() {
       const buffer = term.buffer.active;
-      return { x: buffer.cursorX, y: buffer.cursorY, visible: cursorVisible };
+      // xterm reports cursorX === cols while a wrap is pending; the cursor is drawn in the last column.
+      const scrolledBack = buffer.baseY !== buffer.viewportY;
+      return { x: Math.min(buffer.cursorX, term.cols - 1), y: buffer.cursorY, visible: cursorVisible && !scrolledBack };
     },
     scroll(delta) { term.scrollLines(delta); },
     get scrollOffset() {
