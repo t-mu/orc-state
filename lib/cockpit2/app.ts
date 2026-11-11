@@ -43,10 +43,19 @@
  * The task explorer (explorer.ts) is a tab of its own: the prefix then `t`,
  * or the `tasks` entry of the tab bar, starts it for the active project in a
  * session on the cockpit's private tmux server and shows it after the
- * project's tabs; the close keys of a view-only tab (`q`, Esc, Ctrl-D, Ctrl-C,
- * Ctrl-]) or its `×` kill that session and show the active tab again, and so
- * does any tab change (a tab key, a click, the sidebar, the attention key).
- * Every other key reaches the explorer. The attention key (F11) and the
+ * project's tabs. It owns its keys: Esc, `q`, `h` and Backspace go back from
+ * a task's detail, and `q` or Esc in its list quit it, which ends its session
+ * and closes the tab. `Ctrl-]` or its `×` always close it (the session is
+ * killed), and so does any tab change (a tab key, a click, the sidebar, the
+ * attention key); the active tab is shown again. Its keys are sent one at a
+ * time, each after the one before reached the pane and a short gap: Ink reads
+ * keys that arrive together as one input, and the explorer would ignore it.
+ * Agent tabs in typing mode get their keys as they come, in order but not
+ * paced (Claude Code takes several characters in one read as typed text, and
+ * pacing would slow fast typing); a paste is never split. While the explorer
+ * shows a message instead of its screen (starting, failed), `q` or Esc close
+ * it. Any change of the shown tab (another tab or project, the explorer, an
+ * attention jump) returns the tab left to view mode. The attention key (F11) and the
  * tab bar's attention badge (`! N`, the count of agents needing a human across
  * projects) show the next of those agents (`nextAttention`).
  */
@@ -200,8 +209,6 @@ export interface AppOptions {
   terminal: TerminalSession;
   /** The tmux binary, resolved by the CLI layer. */
   tmuxBinary: string;
-  /** The cockpit lock under orc's data home, from the CLI layer (the single-instance lock comes with Step 12). */
-  lockPath: string;
   /** The view-state file (`cockpit/view-state.json` under orc's data home). */
   store: ViewStateStore;
   /** Registered projects and their status. */
@@ -223,6 +230,8 @@ export interface AppOptions {
   explorer?: ExplorerHost | undefined;
   /** The outer terminal's colour depth (color.ts `colorDepthFromEnv`, from the CLI layer; default `truecolor`). */
   colorDepth?: ColorDepth | undefined;
+  /** The pause after each key sent to the task explorer before the next one (default 4 ms). */
+  explorerKeyGapMs?: number;
 }
 
 export interface App {
@@ -231,7 +240,7 @@ export interface App {
   /** Why the last view-state save failed; null once one succeeds. The CLI reports it after the terminal is restored. */
   saveError(): string | null;
   quit(): void;
-  /** Applies a tab transition (lib/cockpitTabs.ts); Step 8 binds keys to these. A refused one changes nothing. */
+  /** Applies a tab transition (lib/cockpitTabs.ts). A refused one changes nothing. */
   apply(transition: (state: CockpitTabState) => TabTransition): TabTransition;
   /** The current tabs and projects. */
   tabs(): CockpitTabState;
@@ -270,7 +279,8 @@ function framesEqual(a: Frame, b: Frame): boolean {
 }
 
 const sameCursor = (a: Cursor, b: Cursor) => a.x === b.x && a.y === b.y && a.visible === b.visible;
-const sameTarget = (a: TmuxTarget | undefined, b: TmuxTarget) => a?.socket === b.socket && a.session === b.session;
+const sameTarget = (a: TmuxTarget | null | undefined, b: TmuxTarget | null) =>
+  a === b || (!!a && !!b && a.socket === b.socket && a.session === b.session);
 
 /** What the slot says about a tab that has no screen to show, or null when its screen is shown. */
 export interface SlotContext {
@@ -372,19 +382,31 @@ export function runApp(options: AppOptions): App {
   const sessions = new Sessions({ connect, scrollback: options.scrollback, resyncDelayMs: options.resyncDelayMs, onChange: () => { closeEndedExplorer(); scheduleRender(); } });
   const slotSize = () => ({ cols: layout.slot.cols, rows: layout.slot.rows });
 
-  /** Shows the active tab's session (the others hidden and paused); none when it has no tmux target. */
+  /** The session showActive last showed: its key and target. */
+  let lastShown: { key: string | null; target: TmuxTarget | null } | null = null;
+
+  /**
+   * Shows the active tab's session (the others hidden and paused); none when it has no tmux target.
+   * Only when the shown session changes are the selection and pending mouse motion dropped
+   * (a watcher update shows the same one), and a tab that was left returns to view mode.
+   */
   function showActive(): void {
     if (closed) return;
-    motion.cancel();
-    clearSelection();
+    const tab = shownTab(tabs);
+    const key = shownKey();
+    const target = explorer ? explorer.target : tab ? targetOf(tab) : null;
+    if (!lastShown || lastShown.key !== key || !sameTarget(lastShown.target, target)) {
+      motion.cancel();
+      clearSelection();
+    }
+    if (lastShown?.key && lastShown.key !== key) typingTabs.delete(lastShown.key);
+    lastShown = { key, target };
     if (explorer) {
       if (explorer.target) sessions.show(EXPLORER_KEY, explorer.target, true, slotSize());
       else sessions.hideAll();
       scheduleRender();
       return;
     }
-    const tab = shownTab(tabs);
-    const target = tab ? targetOf(tab) : null;
     if (!tab || !target) sessions.hideAll();
     else sessions.show(tabKey(tab), target, tab.agentId === null, slotSize());
     scheduleRender();
@@ -440,7 +462,8 @@ export function runApp(options: AppOptions): App {
   function keyContext(): DispatchContext {
     const tab = shownTab(tabs);
     // With no tab shown nothing takes keys; cockpit keys still work.
-    const context: DispatchContext = explorer ? { mode: 'view', agentTab: false, explorer: true }
+    const context: DispatchContext = explorer
+      ? { mode: 'view', agentTab: false, explorer: explorerMessage(explorer, sessions.shown(), keys) ? 'message' : 'live' }
       : tab ? inputContext(tab) : { mode: 'view', agentTab: false };
     return focus === 'slot' ? context : { ...context, sidebar: true };
   }
@@ -542,14 +565,33 @@ export function runApp(options: AppOptions): App {
     explorer = opened;
     setFocus('slot');
     showActive();
-    host.start(projectId, slotSize()).then((target) => {
+    track(host.start(projectId, slotSize()).then(async (target) => {
       // Closed (or the cockpit quit) while it started: its session goes too.
-      if (explorer !== opened || closed) { host.stop(target); return; }
+      if (explorer !== opened || closed) { await host.stop(target); return; }
       opened.target = target;
       showActive();
     }, (error: unknown) => {
       opened.error = error instanceof Error ? error.message : String(error);
       scheduleRender();
+    }));
+  }
+
+  /** Explorer starts and stops under way; quitting waits for them, so no explorer session outlives the cockpit. */
+  let explorerWork: Promise<void> = Promise.resolve();
+  function track(work: Promise<void>): void {
+    explorerWork = Promise.all([explorerWork, work]).then(() => undefined);
+  }
+
+  /** Keys queued for the explorer: each is sent once the one before it reached the pane, then a short gap. */
+  let explorerKeys: Promise<void> = Promise.resolve();
+  const explorerKeyGapMs = options.explorerKeyGapMs ?? 4;
+  function sendToExplorer(bytes: Buffer): void {
+    const shownExplorer = explorer;
+    explorerKeys = explorerKeys.then(async () => {
+      // A key typed before the explorer closed never reaches the tab shown after it.
+      if (closed || explorer !== shownExplorer) return;
+      await sessions.get(EXPLORER_KEY)?.sendBytes(bytes)?.catch(ignoreInputError);
+      await new Promise((resolve) => setTimeout(resolve, explorerKeyGapMs));
     });
   }
 
@@ -559,7 +601,7 @@ export function runApp(options: AppOptions): App {
     const { target } = explorer;
     explorer = null;
     sessions.close(EXPLORER_KEY);
-    if (target) options.explorer?.stop(target);
+    if (target && options.explorer) track(options.explorer.stop(target));
   }
 
   function closeExplorer(): void {
@@ -737,7 +779,10 @@ export function runApp(options: AppOptions): App {
     }
     const action = dispatcher.dispatch(token, keyContext());
     switch (action.type) {
-      case 'forward': sessions.shown()?.sendBytes(action.bytes)?.catch(ignoreInputError); return;
+      case 'forward':
+        if (explorer) sendToExplorer(action.bytes);
+        else sessions.shown()?.sendBytes(action.bytes)?.catch(ignoreInputError);
+        return;
       // A paste is UTF-8 text from the terminal; a byte that is not UTF-8 arrives as U+FFFD (cockpit2 runs the real terminal as UTF-8).
       case 'paste': sessions.shown()?.paste(action.data.toString('utf8'))?.catch(ignoreInputError); return;
       case 'mouse': {
@@ -816,7 +861,7 @@ export function runApp(options: AppOptions): App {
     stopExplorer();
     sessions.closeAll();
     terminal.restore();
-    void saving.then(resolveDone);
+    void Promise.all([saving, explorerWork]).then(() => resolveDone());
   }
 
   rememberMasterTargets();

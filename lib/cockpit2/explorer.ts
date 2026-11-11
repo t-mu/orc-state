@@ -5,7 +5,9 @@
  * runs in a session of the cockpit's private tmux server (`orc-cockpit2`), so
  * the cockpit shows it through the same control client, screen and slot as
  * an agent's tab. It exists only while it is shown: opening it starts the
- * session, closing it kills the session and the active tab is shown again.
+ * session, closing it kills the session and the active tab is shown again,
+ * and an explorer that quits (Esc or q in its list) ends its session, which
+ * closes the tab.
  *
  * The attention queue lists the agents needing a human across the projects
  * the watcher reports, for `nextAttention` (lib/cockpitTabs.ts): the
@@ -28,19 +30,20 @@ export function explorerSessionName(projectId: string): string {
 
 /**
  * The shell script the explorer's session runs: `command`, and when it fails
- * a line saying so, kept on screen until the cockpit closes the tab (a
- * session that ends on its own is closed by the cockpit, which would hide the error).
+ * a line saying so, kept on screen until a key is pressed (a session that
+ * ends on its own is closed by the cockpit, which would hide the error); the
+ * key ends the session, so the cockpit closes the tab.
  */
 export function explorerScript(command: string): string {
-  return `${command} || { printf '\\n[the task explorer exited with status %s; q or Esc closes this tab]\\n' "$?"; while :; do sleep 3600; done; }`;
+  return `${command} || { printf '\\n[the task explorer exited with status %s; any key closes this tab]\\n' "$?"; stty raw -echo 2>/dev/null; dd bs=1 count=1 >/dev/null 2>&1; }`;
 }
 
 /** Starts and stops explorer sessions; the CLI layer passes one in, tests a fake. */
 export interface ExplorerHost {
   /** Starts the explorer of `projectId` in a session `cols` by `rows` (replacing a leftover one) and returns its target. */
   start(projectId: string, size: { cols: number; rows: number }): Promise<TmuxTarget>;
-  /** Kills an explorer's session; errors are ignored (it may be gone already). */
-  stop(target: TmuxTarget): void;
+  /** Kills an explorer's session, resolving once tmux has; errors are ignored (it may be gone already). */
+  stop(target: TmuxTarget): Promise<void>;
 }
 
 export interface TmuxExplorerHostOptions {
@@ -74,17 +77,23 @@ export function tmuxExplorerHost(options: TmuxExplorerHostOptions): ExplorerHost
       const session = explorerSessionName(projectId);
       // A session left by a cockpit that crashed would make new-session fail.
       await tmux(['kill-session', '-t', `=${session}`]).catch(() => { /* none left */ });
-      await tmux([
-        'new-session', '-d', '-s', session, '-x', String(Math.max(1, size.cols)), '-y', String(Math.max(1, size.rows)),
-        // Run by /bin/sh, not the server's default shell (the user's $SHELL, which may not be POSIX).
-        '/bin/sh', '-c', explorerScript(options.command(projectId)),
-        // The session new-session made is the current one for the commands after it.
-        ';', 'set-option', 'status', 'off',
-      ]);
+      try {
+        await tmux([
+          'new-session', '-d', '-s', session, '-x', String(Math.max(1, size.cols)), '-y', String(Math.max(1, size.rows)),
+          // Run by /bin/sh, not the server's default shell (the user's $SHELL, which may not be POSIX).
+          '/bin/sh', '-c', explorerScript(options.command(projectId)),
+          // The session new-session made is the current one for the commands after it.
+          ';', 'set-option', 'status', 'off',
+        ]);
+      } catch (error) {
+        // new-session may have made the session before a command after it failed: no session outlives a failed start.
+        await tmux(['kill-session', '-t', `=${session}`]).catch(() => { /* none made */ });
+        throw error;
+      }
       return { socket, session };
     },
     stop(target) {
-      runTmux(options.tmuxBinary, ['-L', target.socket, 'kill-session', '-t', `=${target.session}`]).catch(() => { /* gone already */ });
+      return runTmux(options.tmuxBinary, ['-L', target.socket, 'kill-session', '-t', `=${target.session}`]).catch(() => { /* gone already */ });
     },
   };
 }
