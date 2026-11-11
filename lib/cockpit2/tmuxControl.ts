@@ -153,9 +153,13 @@ export class TmuxControlClient extends EventEmitter<TmuxControlEvents> {
       mouseUtf8, keypadCursor, cursorVisible };
   }
 
-  /** The pane's visible screen with its escape sequences (`capture-pane -p -e`), one entry per line. */
-  capture(paneId: string): Promise<string[]> {
-    return this.command(`capture-pane -p -e -t ${paneId}`);
+  /**
+   * The pane's visible screen with its escape sequences (`capture-pane -p -e`), one entry per line.
+   * With `saved`, the main screen tmux keeps while the pane is on the alternate screen
+   * (`capture-pane -a`; empty when there is none).
+   */
+  capture(paneId: string, { saved = false }: { saved?: boolean } = {}): Promise<string[]> {
+    return this.command(`capture-pane ${saved ? '-a -q ' : ''}-p -e -t ${paneId}`);
   }
 
   async pause(paneId: string): Promise<void> {

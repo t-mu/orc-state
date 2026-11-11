@@ -54,17 +54,22 @@ describe('modes from the stream', () => {
     expect(s.modes()).toMatchObject({ mouseTracking: 'any', mouseEncoding: 'sgr' });
   });
 
-  it('reports bracketed paste, DECCKM, cursor visibility and the alternate screen', async () => {
+  it('reports DECCKM, cursor visibility and the alternate screen', async () => {
     const s = screen();
     expect(s.modes()).toEqual({
-      mouseTracking: 'none', mouseEncoding: 'default', bracketedPaste: false,
-      applicationCursorKeys: false, cursorVisible: true, alternateScreen: false,
+      mouseTracking: 'none', mouseEncoding: 'default', applicationCursorKeys: false, cursorVisible: true, alternateScreen: false,
     });
-    await s.write(`${ESC}[?2004h${ESC}[?1h${ESC}[?25l${ESC}[?1049h`);
-    expect(s.modes()).toMatchObject({ bracketedPaste: true, applicationCursorKeys: true, cursorVisible: false, alternateScreen: true });
+    await s.write(`${ESC}[?1h${ESC}[?25l${ESC}[?1049h`);
+    expect(s.modes()).toMatchObject({ applicationCursorKeys: true, cursorVisible: false, alternateScreen: true });
     expect(s.cursor().visible).toBe(false);
-    await s.write(`${ESC}[?2004l${ESC}[?1l${ESC}[?25h${ESC}[?1049l`);
-    expect(s.modes()).toMatchObject({ bracketedPaste: false, applicationCursorKeys: false, cursorVisible: true, alternateScreen: false });
+    await s.write(`${ESC}[?1l${ESC}[?25h${ESC}[?1049l`);
+    expect(s.modes()).toMatchObject({ applicationCursorKeys: false, cursorVisible: true, alternateScreen: false });
+  });
+
+  it('does not report bracketed paste, which a late attach cannot learn', async () => {
+    const s = screen();
+    await s.write(`${ESC}[?2004h`);
+    expect(s.modes()).not.toHaveProperty('bracketedPaste');
   });
 
   it('RIS resets tracked modes', async () => {
@@ -85,8 +90,7 @@ describe('seeded modes (late attach)', () => {
     const s = screen();
     await s.seedModes({ ...OFF, alternateOn: true, mouseAny: true, mouseSgr: true, keypadCursor: true, cursorVisible: false });
     expect(s.modes()).toEqual({
-      mouseTracking: 'any', mouseEncoding: 'sgr', bracketedPaste: false,
-      applicationCursorKeys: true, cursorVisible: false, alternateScreen: true,
+      mouseTracking: 'any', mouseEncoding: 'sgr', applicationCursorKeys: true, cursorVisible: false, alternateScreen: true,
     });
   });
 
@@ -129,7 +133,7 @@ describe('restore', () => {
   it('reproduces styled cells and places the cursor', async () => {
     const s = screen();
     await s.write('old junk everywhere\r\nmore junk');
-    await s.restore([`${ESC}[1;31mred${ESC}[0m plain`, `${ESC}[38;2;10;20;30;48;5;200mrgb`], { x: 4, y: 1 });
+    await s.restore({ lines: [`${ESC}[1;31mred${ESC}[0m plain`, `${ESC}[38;2;10;20;30;48;5;200mrgb`] }, { x: 4, y: 1 });
     expect(text(s, 0)).toBe('red plain');
     expect(text(s, 1)).toBe('rgb');
     expect(text(s, 2)).toBe('');
@@ -142,7 +146,7 @@ describe('restore', () => {
 
   it('reports every attribute', async () => {
     const s = screen();
-    await s.restore([`${ESC}[1;2;3;4;5;7;8;9mx`], { x: 0, y: 0 });
+    await s.restore({ lines: [`${ESC}[1;2;3;4;5;7;8;9mx`] }, { x: 0, y: 0 });
     expect(s.cell(0, 0)!.style).toEqual({
       bold: true, dim: true, italic: true, underline: true, blink: true, inverse: true, invisible: true, strikethrough: true,
       fg: { type: 'default' }, bg: { type: 'default' },
@@ -151,9 +155,80 @@ describe('restore', () => {
 
   it('does not leak the snapshot style into later output', async () => {
     const s = screen();
-    await s.restore([`${ESC}[1mbold`], { x: 0, y: 1 });
+    await s.restore({ lines: [`${ESC}[1mbold`] }, { x: 0, y: 1 });
     await s.write('next');
     expect(s.cell(0, 1)!.style.bold).toBe(false);
+  });
+
+  it('late attach onto the alternate screen keeps the main screen under it', async () => {
+    const s = screen(20, 5);
+    await s.restore({ lines: ['vim text', '~'], main: [`${ESC}[1m$${ESC}[0m vim file`, '', ''] }, { x: 3, y: 0 });
+    await s.seedModes({ ...OFF, alternateOn: true });
+    expect(s.modes().alternateScreen).toBe(true);
+    expect([text(s, 0), text(s, 1)]).toEqual(['vim text', '~']);
+    expect(s.cursor()).toMatchObject({ x: 3, y: 0 });
+    await s.write(`${ESC}[?1049l`);
+    expect(s.modes().alternateScreen).toBe(false);
+    expect([text(s, 0), text(s, 1)]).toEqual(['$ vim file', '']);
+    expect(s.cell(0, 0)!.style.bold).toBe(true);
+    // The cursor comes back below the command, where a shell prints its next prompt.
+    expect(s.cursor()).toMatchObject({ x: 0, y: 1 });
+    await s.write('$ ');
+    expect(text(s, 1)).toBe('$');
+  });
+
+  it('parks the main cursor on the last row when the main screen is full', async () => {
+    const s = screen(20, 3);
+    await s.restore({ lines: ['app'], main: ['a', 'b', 'c'] }, { x: 0, y: 0 });
+    await s.write(`${ESC}[?1049l`);
+    expect([text(s, 0), text(s, 2)]).toEqual(['a', 'c']);
+    expect(s.cursor()).toMatchObject({ x: 0, y: 2 });
+  });
+
+  it('restoring a main-screen snapshot leaves an alternate screen', async () => {
+    const s = screen(20, 5);
+    await s.write(`${ESC}[?1049hold app`);
+    await s.restore({ lines: ['shell'] }, { x: 5, y: 0 });
+    expect(s.modes().alternateScreen).toBe(false);
+    expect(text(s, 0)).toBe('shell');
+    expect(s.cursor()).toMatchObject({ x: 5, y: 0 });
+  });
+
+  it('restoring an alternate snapshot again replaces both screens', async () => {
+    const s = screen(20, 5);
+    await s.restore({ lines: ['alt 1'], main: ['main 1'] }, { x: 0, y: 0 });
+    await s.restore({ lines: ['alt 2'], main: ['main 2'] }, { x: 0, y: 0 });
+    expect(text(s, 0)).toBe('alt 2');
+    await s.write(`${ESC}[?1049l`);
+    expect(text(s, 0)).toBe('main 2');
+  });
+});
+
+describe('cursor', () => {
+  it('stays in the last column while a wrap is pending', async () => {
+    const s = screen(20, 5);
+    await s.write('x'.repeat(20));
+    expect(s.cursor()).toEqual({ x: 19, y: 0, visible: true });
+    await s.write('y');
+    expect(s.cursor()).toMatchObject({ x: 1, y: 1 });
+  });
+
+  it('is hidden while scrolled back and shown again at the bottom', async () => {
+    const s = screen(20, 5, 100);
+    await s.write(Array.from({ length: 20 }, (_, i) => `line ${i}`).join('\r\n'));
+    expect(s.cursor().visible).toBe(true);
+    s.scroll(-3);
+    expect(s.cursor().visible).toBe(false);
+    s.scrollToBottom();
+    expect(s.cursor().visible).toBe(true);
+  });
+
+  it('stays hidden at the bottom when the app hid it', async () => {
+    const s = screen(20, 5, 100);
+    await s.write(`${Array.from({ length: 20 }, (_, i) => `line ${i}`).join('\r\n')}${ESC}[?25l`);
+    s.scroll(-3);
+    s.scrollToBottom();
+    expect(s.cursor().visible).toBe(false);
   });
 });
 
