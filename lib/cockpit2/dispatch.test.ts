@@ -131,10 +131,35 @@ describe('createDispatcher: view and typing modes', () => {
     expect(types(actions)).toEqual(['drop', 'paste', 'forward']);
   });
 
-  it('names the mode and its keys', () => {
-    expect(modeNotice(VIEW)).toBe('[view] i: type · q/Esc/Ctrl-D/C/]: close');
-    expect(modeNotice(TYPING)).toBe('[typing → agent] Ctrl-]: stop typing');
+  it('names the focus or the mode and its keys within the sidebar\'s 32 inner columns', () => {
+    expect(modeNotice(VIEW)).toBe('[view] i: type · q/Esc: close');
+    expect(modeNotice(TYPING)).toBe('[typing] Ctrl-]: stop typing');
     expect(modeNotice(MASTER)).toContain('master');
+    expect(modeNotice({ ...VIEW, sidebar: true })).toBe('↑↓ Tab · Enter: open · Esc: pane');
+    for (const context of [VIEW, TYPING, MASTER, { ...MASTER, sidebar: true }]) expect(modeNotice(context).length).toBeLessThanOrEqual(32);
+  });
+});
+
+describe('createDispatcher: sidebar focus', () => {
+  const SIDEBAR: DispatchContext = { ...TYPING, sidebar: true };
+
+  it('turns arrows, j/k, Tab, Shift-Tab, Enter and Esc into sidebar navigation', () => {
+    expect(run(`${ESC}[A${ESC}OBkj\t${ESC}[Z\r${ESC}`, SIDEBAR)).toEqual([
+      { type: 'sidebar', key: 'up' }, { type: 'sidebar', key: 'down' }, { type: 'sidebar', key: 'up' }, { type: 'sidebar', key: 'down' },
+      { type: 'sidebar', key: 'switchBox' }, { type: 'sidebar', key: 'switchBox' }, { type: 'sidebar', key: 'open' }, { type: 'sidebar', key: 'back' },
+    ]);
+  });
+
+  it('lets no key, paste or doubled prefix reach the pane, even from a typing tab', () => {
+    const actions = run(`xiq\x1d${ESC}[200~p${ESC}[201~${F12}${F12}`, SIDEBAR);
+    expect(actions.every((action) => action.type === 'drop')).toBe(true);
+    expect(actions.at(-1)).toEqual({ type: 'drop', reason: 'sidebar' });
+  });
+
+  it('keeps the cockpit keys and the prefix table', () => {
+    expect(run('\x11', SIDEBAR)).toEqual([{ type: 'quit' }]);
+    expect(run(`${F12}o`, SIDEBAR).at(-1)).toEqual({ type: 'switchFocus' });
+    expect(run(`${ESC}OP`, SIDEBAR)).toEqual([{ type: 'selectTab', index: 1 }]);
   });
 });
 

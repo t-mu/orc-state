@@ -1,4 +1,5 @@
 import type { ProjectConnectionState } from '../../client.ts';
+import { fitToWidth, stringWidth } from '../cellWidth.ts';
 import { buildWorkerSlotViewModels, type TuiAttention, type TuiProjectView } from './status.ts';
 import { windowStart } from './taskList.ts';
 
@@ -196,21 +197,20 @@ export function buildSidebarModel(
 
 // ── Rows ─────────────────────────────────────────────────────────────────────
 
-/** `text` cut to `width` cells, an ellipsis marking a cut. */
+/** `text` cut to `width` cells (display width: a wide character takes two), an ellipsis marking a cut. */
 export function fitText(text: string, width: number): string {
-  if (width <= 0) return '';
-  return text.length <= width ? text : `${text.slice(0, width - 1)}…`;
+  return fitToWidth(text, width);
 }
 
 /**
- * A row of exactly `width` cells: `left` (cut first), then a gap, then
+ * A row of exactly `width` cells (by display width): `left` (cut first), then a gap, then
  * `right` flush right (cut only when even it does not fit).
  */
 export function fitRow(left: string, right: string, width: number): { left: string; gap: string; right: string } {
   const shownRight = fitText(right, width);
-  const room = width - shownRight.length - (shownRight && left ? 1 : 0);
+  const room = width - stringWidth(shownRight) - (shownRight && left ? 1 : 0);
   const shownLeft = fitText(left, Math.max(0, room));
-  return { left: shownLeft, gap: ' '.repeat(Math.max(0, width - shownLeft.length - shownRight.length)), right: shownRight };
+  return { left: shownLeft, gap: ' '.repeat(Math.max(0, width - stringWidth(shownLeft) - stringWidth(shownRight))), right: shownRight };
 }
 
 /**
@@ -219,8 +219,8 @@ export function fitRow(left: string, right: string, width: number): { left: stri
  */
 export function agentRowParts(agent: SidebarAgent, width: number): { name: string; gap: string; tag: string; elapsed: string } {
   const tag = agent.attention ? ATTENTION_BADGE[agent.attention] : agent.phase;
-  const elapsed = agent.elapsed && width > agent.elapsed.length + 2 ? ` ${agent.elapsed}` : '';
-  const shownTag = fitText(tag, width - elapsed.length);
+  const elapsed = agent.elapsed && width > stringWidth(agent.elapsed) + 2 ? ` ${agent.elapsed}` : '';
+  const shownTag = fitText(tag, width - stringWidth(elapsed));
   const row = fitRow(agent.agent_id, `${shownTag}${elapsed}`, width);
   return { name: row.left, gap: row.gap, tag: shownTag, elapsed };
 }
