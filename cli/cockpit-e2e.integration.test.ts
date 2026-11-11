@@ -78,6 +78,10 @@ function tmux(socket: string, args: string[]) {
 /** The cockpit's screen as the host terminal shows it. */
 const screen = () => tmux(HOST, ['capture-pane', '-p', '-t', `=${HOST}:`]).stdout;
 const lines = () => screen().split('\n');
+/** The sidebar's rows (the left 34 columns). */
+const sidebar = () => lines().map((row) => row.slice(0, 34));
+/** The sidebar row that names `text`, or ''. */
+const sidebarRow = (text: string) => sidebar().find((row) => row.includes(text)) ?? '';
 /** What an agent has read so far, byte for byte. */
 const received = (agent: keyof typeof logs) => (existsSync(logs[agent]) ? readFileSync(logs[agent], 'latin1') : '');
 
@@ -189,32 +193,36 @@ describe.skipIf(!tmuxOk)('orc cockpit end to end, in a host tmux pane', () => {
   }, 30_000);
 
   afterAll(async () => {
-    if (tickTimer) clearInterval(tickTimer);
-    asking?.kill('SIGKILL');
-    for (const socket of [HOST, tmuxSocketName(dir), 'orc-explorer']) tmux(socket, ['kill-server']);
-    await server?.close();
-    await coordinator?.stop();
-    closeAllDatabases();
-    rmSync(temp, { recursive: true, force: true });
-    for (const [key, value] of Object.entries(saved)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
+    try {
+      if (tickTimer) clearInterval(tickTimer);
+      asking?.kill('SIGKILL');
+      // Only once TMUX_TMPDIR is private: before that these names would reach the user's servers.
+      if (process.env.TMUX_TMPDIR?.startsWith(temp ?? '\0')) {
+        for (const socket of [HOST, ...(dir ? [tmuxSocketName(dir)] : []), 'orc-explorer']) tmux(socket, ['kill-server']);
+      }
+      await server?.close();
+      await coordinator?.stop();
+      closeAllDatabases();
+      if (temp) rmSync(temp, { recursive: true, force: true });
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
     }
   });
 
   it('lists agents, badges a question, shows a worker view-only, types, pastes, ignores mouse motion and restores tabs across a project switch', async () => {
-    // The master in the slot, both projects and the worker in the sidebar.
+    // The master in the slot; the sidebar lists both projects and the worker (its agents are workers and scouts, never the master).
     await waitFor('the master in the slot', () => screen().includes('AGENT master READY'));
-    await waitFor('the sidebar to list the worker and both projects', () => {
-      const text = screen();
-      return text.includes('worker-a') && text.includes(alpha.name) && text.includes(beta.name);
-    });
-    expect(screen()).not.toContain('QUESTION');
+    await waitFor('the sidebar to list the worker and both projects', () =>
+      sidebarRow('worker-a') !== '' && sidebarRow(alpha.name) !== '' && sidebarRow(beta.name) !== '');
+    expect(sidebar().join('\n')).not.toContain('QUESTION');
 
     // The worker asks: its row gets the question badge.
     const ask = [...orc.slice(1), 'run-input-request', '--run-id=run-a', '--agent-id=worker-a', `--question=${QUESTION}`, '--poll-ms=100'];
     asking = spawn(orc[0], ask, { cwd: repoRoot, stdio: 'ignore', env: { ...process.env, ORC_STATE_DIR: dir, ORC_PROJECT_ID: alpha.id, ORC_SESSION_SECRET: 'session-a' } });
-    await waitFor('the QUESTION badge', () => screen().includes('QUESTION'));
+    await waitFor('the QUESTION badge on the worker\'s row', () => sidebarRow('worker-a').includes('QUESTION'));
 
     // A click on the worker's row shows its screen in a view-only tab: nothing typed reaches it, q closes it.
     clickSidebar('worker-a');
