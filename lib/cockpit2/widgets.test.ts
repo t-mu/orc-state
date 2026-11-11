@@ -6,9 +6,10 @@ import { CLOSE_MARKER, buildTabBarModel, layoutTabBar, tabBarClickTarget, type T
 import { computeLayout } from './app.ts';
 import { createFrame, type Frame } from './frame.ts';
 import { BUILT_IN_THEMES, attentionRole, badgeRole, styleOf } from './theme.ts';
+import { INITIAL_SIDEBAR_NAV, drawSidebarCards, sidebarCardsLayout, type SidebarNav } from './sidebarCards.ts';
 import {
-  EXPLORER_TAB, INITIAL_SIDEBAR_NAV, TYPING_MARK, VIEW_MARK, HEADER_MARK, drawFooter, drawHeader, drawSidebar, drawTabBar, headerButtonAt, headerView, navigateSidebar, sidebarClick,
-  sidebarView, tabBarView, withExplorerTab, withModeMarks, type FooterHint, type HeaderButton, type SidebarNav,
+  EXPLORER_TAB, TYPING_MARK, VIEW_MARK, HEADER_MARK, drawFooter, drawHeader, drawTabBar, headerButtonAt, headerView,
+  tabBarView, withExplorerTab, withModeMarks, type FooterHint, type HeaderButton,
 } from './widgets.ts';
 
 /** Today's look: every cell drawn as before the theme roles. */
@@ -48,139 +49,6 @@ function model(overrides: Partial<SidebarModel> = {}): SidebarModel {
 /** Row `y` of `frame` from column `x`, `cols` wide, as text (a wide grapheme's continuation cell adds nothing). */
 const rowText = (frame: Frame, y: number, x = 0, cols = frame.cols) =>
   frame.cells.slice(y * frame.cols + x, y * frame.cols + x + cols).map((cell) => cell.text).join('');
-
-function renderSidebar(cols: number, rows: number, sidebar: SidebarModel, focus: 'projects' | 'agents' | null = null, nav: SidebarNav = INITIAL_SIDEBAR_NAV) {
-  const layout = computeLayout(cols, rows);
-  const frame = createFrame(cols, rows);
-  const view = sidebarView(sidebar, layout.sidebar.rows, nav);
-  drawSidebar(frame, layout.sidebar, view, { focus, theme: CLASSIC });
-  // The sidebar's rows (row 0 is its first, below the header).
-  const lines = Array.from({ length: layout.sidebar.rows }, (_, y) => rowText(frame, layout.sidebar.y + y, 0, layout.sidebar.cols));
-  return { frame, layout, view, lines };
-}
-
-describe('drawSidebar', () => {
-  for (const [cols, rows] of [[80, 24], [200, 60]] as const) {
-    it(`draws the status, projects and agents boxes and no footer row at ${cols}x${rows}, wide names in their display width`, () => {
-      const { frame, lines, layout } = renderSidebar(cols, rows, model());
-      const width = layout.sidebar.cols;
-      expect(width).toBe(34);
-      expect(lines[0]).toBe(`╭─ Status ${'─'.repeat(width - 11)}╮`);
-      expect(lines[1]).toContain('coordinator running');
-      expect(lines[2]).toMatch(/^│workers 3\/4 +1 needs you│$/);
-      expect(lines[4]).toMatch(/^╭─ Projects ─+╮$/);
-      // `▸` marks the active project; its CJK name takes two columns a character, then state and badge flush right.
-      expect(lines[5]).toBe(`│▸ ${CJK_PROJECT}${' '.repeat(width - 4 - stringWidth(CJK_PROJECT) - 'running !1'.length)}running !1│`);
-      expect(lines[6]).toMatch(/^│ {2}p2 +stopped│$/);
-      expect(lines[8]).toContain(`╭─ Agents · ${CJK_PROJECT.slice(0, 7)}`);
-      // An agent needing attention sorts first with its badge; the emoji takes two columns.
-      expect(lines[9]).toBe(`│${EMOJI_AGENT}${' '.repeat(width - 2 - stringWidth(EMOJI_AGENT) - ' QUESTION 12m'.length)} QUESTION 12m│`);
-      expect(lines[10]).toBe('│  ? 本当に続けますか            │');
-      expect(lines[11]).toContain(CJK_AGENT);
-      // A long wide-character detail is cut with `…`, never half a character.
-      expect(lines[12]).toBe('│  日本語のテキストがとても長い… │');
-      expect(layout.sidebar.rows).toBe(rows - 2); // between the header and the footer
-      expect(lines.some((line) => line.includes('[master]'))).toBe(false); // the mode is the footer's
-      // Every box row ends on the right border and takes exactly the sidebar's width: no wide character was split or overflowed.
-      for (let y = 0; y < 16; y += 1) {
-        expect([...lines[y]].at(-1)).toMatch(/[╮│╯]/);
-        expect(stringWidth(lines[y])).toBe(width);
-        expect(frame.cells[(layout.sidebar.y + y) * cols + width].text).toBe(' '); // nothing spilled into the slot
-      }
-    });
-  }
-
-  it('marks the focused box: its title reversed, its border coloured, the cursor row reversed', () => {
-    const projectsFocused = renderSidebar(80, 24, model(), 'projects');
-    const titleCell = projectsFocused.frame.cells[5 * 80 + 3]; // `P` of `Projects`
-    expect(titleCell.text).toBe('P');
-    expect(titleCell.style.inverse).toBe(true);
-    expect(projectsFocused.frame.cells[6 * 80 + 2].style.inverse).toBe(true); // the active project's row is the cursor
-    expect(projectsFocused.frame.cells[9 * 80 + 3].style.inverse).toBe(false); // agents title
-
-    const agentsFocused = renderSidebar(80, 24, model(), 'agents', { ...INITIAL_SIDEBAR_NAV, agentKey: `p1/${CJK_AGENT}` });
-    expect(agentsFocused.frame.cells[5 * 80 + 3].style.inverse).toBe(false);
-    expect(agentsFocused.frame.cells[9 * 80 + 3].style.inverse).toBe(true);
-    expect(agentsFocused.frame.cells[12 * 80 + 1].style.inverse).toBe(true); // the cursor agent's first row
-    expect(agentsFocused.frame.cells[10 * 80 + 1].style.inverse).toBe(false);
-
-    const unfocused = renderSidebar(80, 24, model(), null);
-    expect(unfocused.frame.cells.slice(0, 80 * 24).filter((_, index) => index % 80 < 34).some((cell) => cell.style.inverse && cell.text !== ' ' && cell.text !== '')).toBe(true); // the attention badge only
-    expect(unfocused.frame.cells[5 * 80 + 3].style.inverse).toBe(false);
-  });
-
-  it('keeps a `+N more` row and the cursor in view when the agents do not fit 80x24', () => {
-    const agents = Array.from({ length: 20 }, (_, index) => agent(`w${index + 1}`));
-    const nav = { ...INITIAL_SIDEBAR_NAV, agentKey: 'p1/w15' };
-    const { lines, view } = renderSidebar(80, 24, model({ agents }), 'agents', nav);
-    expect(lines.some((line) => /\+\d+ more/.test(line))).toBe(true);
-    expect(view.layout.agents).toContain(14);
-    expect(lines.some((line) => line.includes('w15 '))).toBe(true);
-    // No footer row is kept: the agents box may end on the sidebar's last row (two-row agents leave at most one spare).
-    expect(lines.slice(-2).some((line) => /^╰─+╯$/.test(line))).toBe(true);
-  });
-
-  it('says why there are no agents', () => {
-    const stopped = model({ agents: [], projects: [project('p1', { active: true, state: 'stopped', connection: 'stopped' })] });
-    expect(renderSidebar(80, 24, stopped).lines.join('\n')).toContain('(coordinator not running)');
-    expect(renderSidebar(80, 24, model({ agents: [] })).lines.join('\n')).toContain('(no live agents)');
-  });
-});
-
-describe('sidebar navigation', () => {
-  const view = (nav: SidebarNav) => sidebarView(model(), 23, nav);
-
-  it('moves the cursor with up and down, stopping at either end', () => {
-    let nav: SidebarNav = INITIAL_SIDEBAR_NAV;
-    nav = navigateSidebar(view(nav), nav, 'up').nav;
-    expect(nav.agentKey).toBe(`p1/${EMOJI_AGENT}`);
-    for (let i = 0; i < 5; i += 1) nav = navigateSidebar(view(nav), nav, 'down').nav;
-    expect(nav.agentKey).toBe('p1/w3');
-  });
-
-  it('switches boxes with Tab, opens with Enter and returns to the pane with Esc', () => {
-    let nav: SidebarNav = INITIAL_SIDEBAR_NAV;
-    let step = navigateSidebar(view(nav), nav, 'down');
-    expect(step.command).toBeNull();
-    nav = step.nav;
-    step = navigateSidebar(view(nav), nav, 'open');
-    expect(step.command).toEqual({ type: 'openAgent', projectId: 'p1', agentId: CJK_AGENT });
-
-    step = navigateSidebar(view(nav), nav, 'switchBox');
-    expect(step.nav.box).toBe('projects');
-    nav = navigateSidebar(view(step.nav), step.nav, 'down').nav;
-    step = navigateSidebar(view(nav), nav, 'open');
-    expect(step.command).toEqual({ type: 'openProject', projectId: 'p2' });
-    expect(step.nav.agentKey).toBeNull(); // another project's agents start at the top
-
-    expect(navigateSidebar(view(nav), nav, 'back')).toEqual({ nav, command: { type: 'focusSlot' } });
-    expect(navigateSidebar(view(nav), { ...nav, box: 'projects' }, 'switchBox').nav.box).toBe('agents');
-  });
-
-  it('opens nothing in an empty box', () => {
-    const empty = sidebarView(model({ agents: [] }), 23, INITIAL_SIDEBAR_NAV);
-    expect(navigateSidebar(empty, INITIAL_SIDEBAR_NAV, 'open').command).toBeNull();
-    expect(navigateSidebar(empty, INITIAL_SIDEBAR_NAV, 'down').nav).toEqual(INITIAL_SIDEBAR_NAV);
-  });
-});
-
-describe('sidebarClick (hit-testing sidebar rows)', () => {
-  for (const [cols, rows] of [[80, 24], [200, 60]] as const) {
-    it(`opens the project or agent under a click at ${cols}x${rows}, on either of an agent's rows`, () => {
-      const { lines, view } = renderSidebar(cols, rows, model());
-      const rowOf = (part: string) => lines.findIndex((line) => line.includes(part));
-      expect(sidebarClick(view, INITIAL_SIDEBAR_NAV, rowOf(CJK_PROJECT))?.command).toEqual({ type: 'openProject', projectId: 'p1' });
-      expect(sidebarClick(view, INITIAL_SIDEBAR_NAV, rowOf('p2'))?.command).toEqual({ type: 'openProject', projectId: 'p2' });
-      const emoji = sidebarClick(view, INITIAL_SIDEBAR_NAV, rowOf(EMOJI_AGENT));
-      expect(emoji).toEqual({ nav: { box: 'agents', projectKey: null, agentKey: `p1/${EMOJI_AGENT}` }, command: { type: 'openAgent', projectId: 'p1', agentId: EMOJI_AGENT } });
-      expect(sidebarClick(view, INITIAL_SIDEBAR_NAV, rowOf(EMOJI_AGENT) + 1)?.command).toEqual(emoji?.command);
-      expect(sidebarClick(view, INITIAL_SIDEBAR_NAV, rowOf('w3 '))?.command).toEqual({ type: 'openAgent', projectId: 'p1', agentId: 'w3' });
-      expect(sidebarClick(view, INITIAL_SIDEBAR_NAV, rowOf('Projects'))).toBeNull(); // a border
-      expect(sidebarClick(view, INITIAL_SIDEBAR_NAV, 1)).toBeNull(); // the status box
-      expect(sidebarClick(view, INITIAL_SIDEBAR_NAV, rows - 3)).toBeNull(); // the last row: the agents box's border
-    });
-  }
-});
 
 // ── tab bar ──────────────────────────────────────────────────────────────────
 
@@ -503,7 +371,7 @@ describe('full-style snapshot at 80x24', () => {
   function draw(sidebar: SidebarModel, focus: 'projects' | 'agents' | null, nav: SidebarNav, activeTab: string, slotFocused: boolean, error: string | null, explorer = false): string[] {
     const layout = computeLayout(80, 24);
     const frame = createFrame(80, 24);
-    drawSidebar(frame, layout.sidebar, sidebarView(sidebar, layout.sidebar.rows, nav), { focus, theme: CLASSIC });
+    drawSidebarCards(frame, layout.sidebar, sidebarCardsLayout(sidebar, layout.sidebar.rows, nav, layout.sidebar.cols), { focus, theme: CLASSIC });
     const tabs = buildTabBarModel({ activeProject: 'p1', projects: [{ projectId: 'p1', tabs: tabAgents, active: activeTab }] }, tabAttention);
     const marked = withModeMarks(tabs, (id) => id === 'a-question');
     drawHeader(frame, layout.header, headerView(80, 'p1', explorer ? BUTTONS.slice(1) : BUTTONS), CLASSIC);
@@ -530,56 +398,5 @@ describe('full-style snapshot at 80x24', () => {
   it('no focus, a stopped coordinator with no agents; the explorer tab shown', () => {
     const sidebar = model({ projects: [project('p1', { state: 'stopped', connection: 'stopped', active: true })], agents: [], status: { coordinator: 'stopped', workers: null, attention: 0 } });
     expect(draw(sidebar, null, INITIAL_SIDEBAR_NAV, 'a-no_progress', false, null, true)).toMatchSnapshot();
-  });
-});
-
-describe('drawing with amber, the running cockpit theme', () => {
-  const AMBER = BUILT_IN_THEMES.amber;
-  /** The cell where `part` starts in `frame` (the first match, top to bottom). */
-  const cellOf = (frame: Frame, part: string) => {
-    for (let y = 0; y < frame.rows; y += 1) {
-      for (let x = 0; x < frame.cols; x += 1) {
-        if (rowText(frame, y, x).startsWith(part)) return frame.cells[y * frame.cols + x];
-      }
-    }
-    throw new Error(`${part} not drawn`);
-  };
-
-  it('draws borders, badges and counts from the amber roles', () => {
-    const layout = computeLayout(80, 24);
-    const frame = createFrame(80, 24);
-    const view = sidebarView(model(), layout.sidebar.rows, INITIAL_SIDEBAR_NAV);
-    drawSidebar(frame, layout.sidebar, view, { focus: 'projects', theme: AMBER });
-    expect(cellOf(frame, '╭─ Projects').style).toEqual(styleOf(AMBER, 'chrome.borderFocus'));
-    expect(cellOf(frame, '1 needs you').style).toEqual(styleOf(AMBER, 'status.attention.badge'));
-    expect(cellOf(frame, 'QUESTION').style).toEqual(styleOf(AMBER, 'status.attention.badge'));
-  });
-
-  it('keeps the state colours on the cursor row, the rest in row.cursor', () => {
-    const layout = computeLayout(80, 24);
-    const frame = createFrame(80, 24);
-    const view = sidebarView(model(), layout.sidebar.rows, INITIAL_SIDEBAR_NAV);
-    drawSidebar(frame, layout.sidebar, view, { focus: 'agents', theme: AMBER }); // the cursor on the question agent
-    const badge = styleOf(AMBER, 'status.attention.badge');
-    expect(cellOf(frame, 'QUESTION').style).toEqual({ ...badge, bold: true });
-    const cursor = styleOf(AMBER, 'row.cursor');
-    expect(cellOf(frame, EMOJI_AGENT).style).toMatchObject({ fg: cursor.fg, bg: cursor.bg, bold: true });
-  });
-
-  it('fills the cursor bar under a project state, which keeps its colour', () => {
-    const layout = computeLayout(80, 24);
-    const frame = createFrame(80, 24);
-    const view = sidebarView(model(), layout.sidebar.rows, INITIAL_SIDEBAR_NAV);
-    drawSidebar(frame, layout.sidebar, view, { focus: 'projects', theme: AMBER }); // the cursor on the active project
-    const y = Array.from({ length: frame.rows }, (_, row) => row).find((row) => rowText(frame, row).includes(CJK_PROJECT))!;
-    const x = rowText(frame, y).indexOf('running');
-    const cursor = styleOf(AMBER, 'row.cursor');
-    // The cell's index: rowText joins cell texts, and the CJK name's continuation cells add nothing.
-    const cells = frame.cells.slice(y * frame.cols, (y + 1) * frame.cols);
-    let seen = 0;
-    const state = cells.find((cell) => { const at = seen; seen += cell.text.length; return at === x; })!;
-    expect(state.text).toBe('r');
-    expect(state.style).toMatchObject({ fg: styleOf(AMBER, 'status.active').fg, bg: cursor.bg, bold: true });
-    expect(cellOf(frame, '1 needs you').style.bg).toEqual(styleOf(AMBER, 'status.attention.badge').bg);
   });
 });

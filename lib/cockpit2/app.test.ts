@@ -322,7 +322,7 @@ describe('runApp (fake tmux client)', () => {
     expect(clients[0].resizes).toEqual(['46x19']);
     const screen = await shown(terminal);
     expect(text(screen, 4, 34)).toBe('$ hello from orc-master');
-    expect((await sidebarRows(terminal)).some((row) => row.includes('▸ demo-project'))).toBe(true);
+    expect((await sidebarRows(terminal)).some((row) => row.includes('[ DEMO-PROJECT ]'))).toBe(true);
     expect(text(screen, 2, 34)).toContain('master');
     expect(text(screen, 2, 34)).not.toContain('quit'); // the quit key is in the footer only
     // The cursor is where the pane has it, in frame coordinates.
@@ -801,7 +801,7 @@ describe('runApp tabs and projects (fake tmux clients)', () => {
     await attached(terminal, 'orc-master-other');
     expect(clients.map((fake) => fake.target)).toEqual([MASTER_TARGET, other]);
     expect(clients[0].paused).toEqual(['%1']);
-    await waitForSidebar(terminal, '▸ other-project');
+    await waitForSidebar(terminal, '[ OTHER-PROJECT ]');
     app.apply((state) => showProject(state, 'demo'));
     await waitForSlotLine(terminal, '$ hello from orc-master');
     expect(clients[0].resumed).toEqual(['%1']);
@@ -842,7 +842,7 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
   it('draws the sidebar from the watched projects and agents, wide names included, and badges an agent needing attention', async () => {
     const { terminal } = withWorkers();
     await attached(terminal);
-    await waitForSidebar(terminal, '▸ demo-project');
+    await waitForSidebar(terminal, '[ DEMO-PROJECT ]');
     await waitForSidebar(terminal, '日本語');
     await waitForSidebar(terminal, `${WIDE_AGENT}`);
     const rows = await sidebarRows(terminal);
@@ -850,10 +850,10 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     const wide = rows.findIndex((row) => row.includes(WIDE_AGENT));
     expect(rows[wide]).toContain('QUESTION');
     expect(wide).toBeLessThan(rows.findIndex((row) => row.includes('w1 ')));
-    expect(rows[0].endsWith('╮')).toBe(true);
-    // Every box row ends on the sidebar's right border, wide names or not.
+    expect(rows[0].endsWith('┐')).toBe(true);
+    // Every card row ends on the sidebar's right border, wide names or not.
     const screen = await shown(terminal);
-    for (let y = 1; y < 15; y++) expect(screen.row(y)[SIDEBAR_COLS - 1].text).toMatch(/[╮│╯]/);
+    for (let y = 1; y < 15; y++) expect(screen.row(y)[SIDEBAR_COLS - 1].text).toMatch(/[┐│┘]/);
     expect(rows.some((row) => row.includes('[master]'))).toBe(false); // the mode is the footer's
     expect(text(screen, 23)).toContain('[master] keys go to the master');
   });
@@ -905,7 +905,7 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     terminal.type(click(5, await sidebarRow(terminal, '日本語')));
     expect(app.tabs().activeProject).toBe('other');
     await attached(terminal, 'orc-master-other');
-    await waitForSidebar(terminal, '▸ 日本語');
+    await waitForSidebar(terminal, '[ 日本語 ]');
     // Its master takes the keys right away.
     const other = clients.find((fake) => fake.target.session === 'orc-master-other')!;
     terminal.type('z');
@@ -941,7 +941,7 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     await waitForFooter(terminal, 'Enter: open');
     terminal.type('\tj\r');
     expect(app.tabs().activeProject).toBe('other');
-    await waitForSidebar(terminal, '▸ 日本語');
+    await waitForSidebar(terminal, '[ 日本語 ]');
     await waitForFooter(terminal, '[master] keys go to the master');
     await attached(terminal, 'orc-master-other');
     const other = clients.find((fake) => fake.target.session === 'orc-master-other')!;
@@ -993,11 +993,11 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     await attached(terminal);
     for (const [cols, rows] of [[200, 60], [80, 24], [120, 40]] as const) {
       terminal.resizeTo(cols, rows);
-      await waitForSidebar(terminal, '▸ demo-project');
+      await waitForSidebar(terminal, '[ DEMO-PROJECT ]');
       for (let until = Date.now() + 2_000; ; await sleep(25)) {
         const screen = await shown(terminal);
         const footer = text(screen, rows - 1, 0, SIDEBAR_COLS);
-        if (screen.row(1)[SIDEBAR_COLS - 1].text === '╮' && footer.includes('[master]') && text(screen, 3, SIDEBAR_COLS).startsWith('┘')) break;
+        if (screen.row(1)[SIDEBAR_COLS - 1].text === '┐' && footer.includes('[master]') && text(screen, 3, SIDEBAR_COLS).startsWith('┘')) break;
         if (Date.now() > until) throw new Error(`layout not redrawn at ${cols}x${rows}`);
       }
       const { slot } = computeLayout(cols, rows);

@@ -28,9 +28,10 @@
  * name, and flush right the task explorer entry and the count of agents
  * needing attention (both clickable). Its last row is the footer: the mode,
  * `project › tab` and the cockpit keys; a terminal too short drops the
- * footer, then the header, before the slot shrinks. The header, the
- * sidebar, the tab bar and the footer are drawn by widgets.ts, the sidebar
- * and the tab bar from the pure models of lib/tui. The keys belong to the slot or to a sidebar box: the dashboard key
+ * footer, then the header, before the slot shrinks. The header, the tab bar
+ * and the footer are drawn by widgets.ts, the sidebar's Project, Other
+ * projects and Agents cards by sidebarCards.ts, from the pure models of
+ * lib/tui. The keys belong to the slot or to a sidebar box: the dashboard key
  * (F10 by default) or the prefix then `o` focus the sidebar, where arrows (or
  * j/k), Tab, Enter and Esc navigate, open and return to the pane. Clicks on a
  * sidebar row open that project or agent, on a header button open the
@@ -95,9 +96,13 @@ import type { TerminalSession } from './terminal.ts';
 import { TmuxControlClient } from './tmuxControl.ts';
 import { mergeProjects, type TmuxTarget, type ViewState, type ViewStateStore } from './viewState.ts';
 import {
-  EXPLORER_LABEL, EXPLORER_TAB, INITIAL_SIDEBAR_NAV, drawFooter, drawHeader, drawSidebar, drawTabBar, headerButtonAt, headerView, navigateSidebar, sidebarClick, sidebarView, tabBarView,
-  withExplorerTab, withModeMarks, type FooterHint, type HeaderButton, type SidebarBox, type SidebarCommand, type SidebarNav, type SidebarStep,
+  EXPLORER_LABEL, EXPLORER_TAB, drawFooter, drawHeader, drawTabBar, headerButtonAt, headerView, tabBarView,
+  withExplorerTab, withModeMarks, type FooterHint, type HeaderButton,
 } from './widgets.ts';
+import {
+  INITIAL_SIDEBAR_NAV, drawSidebarCards, navigateSidebar, sidebarCardClick, sidebarCardsLayout,
+  type SidebarBox, type SidebarCommand, type SidebarNav, type SidebarStep,
+} from './sidebarCards.ts';
 
 // ── layout ────────────────────────────────────────────────────────────────────
 
@@ -530,12 +535,12 @@ export function runApp(options: AppOptions): App {
   });
 
   // ── widgets ──
-  /** The sidebar as drawn now: every registered project, the active one's agents. */
+  /** The sidebar's cards as drawn now: the active project, the other registered projects, the active one's agents. */
   function currentSidebar() {
     const model = buildSidebarModel(buildProjectViews([...watched.values()]), {
-      stateDir: '', activeProjectId: tabs.activeProject, nowMs: Date.now(), registryError,
+      stateDir: '', activeProjectId: tabs.activeProject, nowMs: Date.now(), registryError, agentDetails: true,
     });
-    return sidebarView(model, layout.sidebar.rows, nav);
+    return sidebarCardsLayout(model, layout.sidebar.rows, nav, layout.sidebar.cols);
   }
 
   /** The tab bar as drawn now: the active project's tabs, agent tabs marked with their mode and badged when they need a human. */
@@ -603,7 +608,7 @@ export function runApp(options: AppOptions): App {
     lastRender = Date.now();
     const frame = createFrame(layout.cols, layout.rows);
     drawHeader(frame, layout.header, currentHeader(), theme);
-    drawSidebar(frame, layout.sidebar, currentSidebar(), { focus: focus === 'slot' ? null : focus, theme });
+    drawSidebarCards(frame, layout.sidebar, currentSidebar(), { focus: focus === 'slot' ? null : focus, theme });
     drawTabBar(frame, layout.tabBar, currentTabBar(), {
       slotFocused: focus === 'slot',
       error: refusal ?? (lastSaveError ? `view state not saved: ${lastSaveError}` : null),
@@ -776,7 +781,7 @@ export function runApp(options: AppOptions): App {
     },
     sidebar: (event, at) => {
       if (!isClick(event)) return;
-      const step = sidebarClick(currentSidebar(), nav, at.y);
+      const step = sidebarCardClick(currentSidebar(), nav, at.x, at.y);
       if (!step) return;
       // What was clicked is shown and takes the keys, as after a tab click (and a refused open too); the sidebar cursor stays on its row.
       runSidebar(step);
