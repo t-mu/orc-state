@@ -53,7 +53,7 @@
  * in the slot keeps the mouse until its release, wherever the pointer goes.
  *
  * The task explorer (explorer.ts) is a tab of its own: the prefix then `t`,
- * or the `tasks` entry of the tab bar, starts it for the active project in a
+ * or the header's `tasks` entry, starts it for the active project in a
  * session on the cockpit's private tmux server and shows it after the
  * project's tabs. It owns its keys: Esc, `q`, `h` and Backspace go back from
  * a task's detail, and `q` or Esc in its list quit it, which ends its session
@@ -68,7 +68,7 @@
  * shows a message instead of its screen (starting, failed), `q` or Esc close
  * it. Any change of the shown tab (another tab or project, the explorer, an
  * attention jump) returns the tab left to view mode. The attention key (F11) and the
- * tab bar's attention badge (`! N`, the count of agents needing a human across
+ * header's attention badge (`! N`, the count of agents needing a human across
  * projects) show the next of those agents (`nextAttention`).
  */
 import { tmuxSessionTarget, type ProjectConnectionState, type ProjectWatchState, type ProjectWatchUpdate, type StatusView } from '../../client.ts';
