@@ -130,9 +130,15 @@ const CLASSIC_STATUS: Record<StatusRole, Color> = {
 
 /**
  * Today's cockpit styles (lib/cockpit2/widgets.ts, app.ts and frame.ts's
- * EDGE_STYLE). Attention kinds had one colour each (permission red, question
- * yellow, stalled magenta, no_progress cyan); with them mapped to status roles
- * `status.attention` takes the attention button's yellow.
+ * EDGE_STYLE): a status role is today's state colour as fg (project state,
+ * agent detail), its badge today's agent tag (bold, inverse, the colour).
+ * Where several of today's styles share one role, the frame differs:
+ * - attention kinds had one colour each (permission red, question yellow,
+ *   stalled magenta, no_progress cyan); `status.attention` takes the
+ *   attention button's yellow, stalled and no_progress their status role's;
+ * - the tab badge and the sidebar's attention count were bold without
+ *   inverse; as badges they become bold inverse;
+ * - the sidebar notice (yellow, no attribute) maps to `status.warn`.
  */
 const classic: Theme = {
   name: 'classic',
@@ -158,7 +164,11 @@ const classic: Theme = {
   },
 };
 
-/** No colour at all: states differ by attributes, and their text labels carry the meaning. */
+/**
+ * No colour at all: states differ by attributes, and their text labels carry
+ * the meaning. A status role uses bold, underline and dim, never inverse, so it
+ * stays apart from the cursor row; its badge is the same plus inverse.
+ */
 const mono: Theme = {
   name: 'mono',
   roles: {
@@ -180,10 +190,10 @@ const mono: Theme = {
     'status.active.badge': { bold: true, inverse: true },
     'status.attention': { bold: true, underline: true },
     'status.attention.badge': { bold: true, underline: true, inverse: true },
-    'status.warn': { underline: true },
-    'status.warn.badge': { underline: true, inverse: true },
-    'status.error': { inverse: true },
-    'status.error.badge': { inverse: true },
+    'status.warn': { underline: true, dim: true },
+    'status.warn.badge': { underline: true, dim: true, inverse: true },
+    'status.error': { underline: true },
+    'status.error.badge': { underline: true, inverse: true },
     'status.idle': { dim: true },
     'status.idle.badge': { dim: true, inverse: true },
   },
@@ -267,7 +277,7 @@ export function themeFromEnv(
     return fail(`${value} is not valid JSON (${(error as Error).message})`);
   }
   if (!isRecord(parsed)) return fail(`${value} must hold a JSON object with optional "base" and "roles"`);
-  const base = parsed.base ?? 'amber';
+  const base = parsed.base === undefined ? 'amber' : parsed.base;
   if (!isBuiltInName(base)) return fail(`${value}: unknown base ${JSON.stringify(base)} (built-in themes: ${Object.keys(BUILT_IN_THEMES).join(', ')})`);
   const { theme, problems } = resolveTheme(BUILT_IN_THEMES[base], parsed.roles);
   return { theme, problems: problems.map((problem) => `ORC_COCKPIT_THEME ${value}: ${problem}`) };

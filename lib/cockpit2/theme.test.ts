@@ -100,7 +100,7 @@ describe('built-in themes', () => {
       'chrome.borderFocus': cell({ bold: true, fg: palette(6) }), // FOCUS_BORDER
       'chrome.title': cell({ bold: true }), // BOLD, app.ts TITLE_STYLE
       'chrome.titleFocus': cell({ bold: true, inverse: true, fg: palette(6) }), // FOCUS_TITLE
-      'chrome.meta': cell({ dim: true }), // footer, hint, marker, rule, notice
+      'chrome.meta': cell({ dim: true }), // footer, hint, marker, rule (the notice maps to status.warn)
       'text.primary': PLAIN,
       'text.muted': cell({ dim: true }), // MUTED, app.ts MUTED_STYLE
       'text.accent': cell({ bold: true }), // names, the active project
@@ -116,7 +116,7 @@ describe('built-in themes', () => {
       'status.warn': cell({ fg: palette(3) }),
       'status.error': cell({ fg: palette(1) }),
       'status.attention': cell({ fg: palette(3) }),
-      // the agent tag: bold, inverse, the state's colour
+      // the agent tag: bold, inverse, the state's colour (the tab badge and attention count were bold only)
       'status.active.badge': cell({ bold: true, inverse: true, fg: palette(2) }),
       'status.idle.badge': cell({ bold: true, inverse: true, fg: palette(6) }),
       'status.warn.badge': cell({ bold: true, inverse: true, fg: palette(3) }),
@@ -133,12 +133,12 @@ describe('built-in themes', () => {
     }
   });
 
-  it('mono tells the status roles apart by attributes', () => {
+  it('mono tells every status role and badge apart by attributes, and from the cursor row', () => {
+    const mono = BUILT_IN_THEMES.mono;
     const statuses = ['status.active', 'status.attention', 'status.warn', 'status.error', 'status.idle'] as const;
-    const fgKeys = statuses.map((role) => JSON.stringify(styleOf(BUILT_IN_THEMES.mono, role)));
-    const badgeKeys = statuses.map((role) => JSON.stringify(styleOf(BUILT_IN_THEMES.mono, badgeRole(role))));
-    expect(new Set(fgKeys).size).toBe(statuses.length);
-    expect(new Set(badgeKeys).size).toBe(statuses.length);
+    const keys = [...statuses, ...statuses.map(badgeRole), 'row.cursor' as const].map((role) => JSON.stringify(styleOf(mono, role)));
+    expect(new Set(keys).size).toBe(keys.length);
+    for (const role of statuses) expect(styleOf(mono, badgeRole(role))).toEqual({ ...styleOf(mono, role), inverse: true });
   });
 });
 
@@ -244,6 +244,7 @@ describe('themeFromEnv', () => {
     ['invalid JSON', files({ '/t.json': '{ nope' }), /not valid JSON/],
     ['a non-object', files({ '/t.json': '[1]' }), /JSON object/],
     ['an unknown base', files({ '/t.json': '{"base":"neon"}' }), /unknown base "neon"/],
+    ['a null base', files({ '/t.json': '{"base":null}' }), /unknown base null/],
   ])('gives amber and a problem for %s', (_case, read, message) => {
     const { theme, problems } = themeFromEnv({ ORC_COCKPIT_THEME: '/t.json' }, read);
     expect(theme).toBe(BUILT_IN_THEMES.amber);
