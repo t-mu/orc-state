@@ -1,9 +1,10 @@
 /**
- * lib/cockpit2/widgets.ts — the sidebar and the tab bar drawn as cells (Plan 6 Step 9).
+ * lib/cockpit2/widgets.ts — the sidebar, the tab bar and the footer drawn as cells (Plan 6 Step 9).
  *
- * Both come from the pure view models the Ink cockpit uses: the sidebar from
- * lib/tui/sidebar.ts (status box, projects box, agents box, then one footer
- * row), the tab bar from lib/tui/tabBarModel.ts (three rows of bordered tabs).
+ * The sidebar and the tab bar come from the pure view models the Ink cockpit
+ * uses: the sidebar from lib/tui/sidebar.ts (status box, projects box, agents
+ * box), the tab bar from lib/tui/tabBarModel.ts (three rows of bordered tabs).
+ * The footer is the cockpit's last row: the mode, where you are, the keys.
  * Text is fitted by display width (lib/cellWidth.ts), so wide-character names
  * take their two columns and are never split.
  *
@@ -91,11 +92,12 @@ function indexOfKey(keys: string[], key: string | null, fallback: number): numbe
   return index >= 0 ? index : Math.max(0, Math.min(fallback, keys.length - 1));
 }
 
-/** What of `model` fits `rows` rows (the last one is the footer), the cursor kept in view. */
+/** What of `model` fits `rows` rows, the cursor kept in view. */
 export function sidebarView(model: SidebarModel, rows: number, nav: SidebarNav): SidebarView {
   const projectIndex = indexOfKey(model.projects.map((project) => project.project_id), nav.projectKey ?? model.activeProjectId, 0);
   const agentIndex = indexOfKey(model.agents.map((agent) => agent.key), nav.agentKey, 0);
-  return { model, layout: computeSidebarLayout(model, rows, { project: projectIndex, agent: agentIndex }), projectIndex, agentIndex };
+  // computeSidebarLayout keeps a last row for the Ink sidebar's footer; the cockpit's footer is its own region, so the boxes get that row.
+  return { model, layout: computeSidebarLayout(model, rows + 1, { project: projectIndex, agent: agentIndex }), projectIndex, agentIndex };
 }
 
 /** What a sidebar key or click asks the app to do. */
@@ -155,15 +157,13 @@ export function sidebarClick(view: SidebarView, nav: SidebarNav, y: number): Sid
 export interface SidebarDrawOptions {
   /** The sidebar box with the keys, or null while the slot has them. */
   focus: SidebarBox | null;
-  /** The last row: the focus or the tab's mode and its keys. */
-  footer: string;
   /** The styles the sidebar is drawn in. */
   theme: Theme;
 }
 
 /**
  * Draws the sidebar into `region`: the status box, the projects box and the
- * agents box (each sized by the layout), and the footer on the last row.
+ * agents box (each sized by the layout).
  */
 export function drawSidebar(frame: Frame, region: Region, view: SidebarView, options: SidebarDrawOptions): void {
   if (region.cols < 4 || region.rows < 1) return;
@@ -176,10 +176,10 @@ export function drawSidebar(frame: Frame, region: Region, view: SidebarView, opt
   const COUNT = role(badgeRole('status.attention'));
   const width = region.cols;
   const inner = width - 2;
-  const footerY = region.y + region.rows - 1;
-  // Rows below the footer's never hold a box: a terminal too short for the boxes cuts them.
+  const bottom = region.y + region.rows;
+  // Rows below the region never hold a box: a terminal too short for the boxes cuts them.
   const line = (y: number, runs: readonly Run[], x = region.x + 1, cols = inner) => {
-    if (y < footerY) drawRuns(frame, x, y, runs, cols);
+    if (y < bottom) drawRuns(frame, x, y, runs, cols);
   };
   const box = (top: number, body: number, title: string, focused: boolean): number => {
     const border = role(focused ? 'chrome.borderFocus' : 'chrome.border');
@@ -246,8 +246,6 @@ export function drawSidebar(frame: Frame, region: Region, view: SidebarView, opt
   });
   const hiddenAgents = model.agents.length - layout.agents.length;
   if (hiddenAgents > 0) line(y + 2 * layout.agents.length, [[`+${hiddenAgents} more`, MUTED]]);
-
-  drawText(frame, region.x, footerY, options.footer, role('chrome.meta'), width);
 }
 
 // ── tab bar ──────────────────────────────────────────────────────────────────
@@ -357,4 +355,48 @@ export function drawTabBar(frame: Frame, region: Region, view: TabBarView, optio
   if (!view.hint) return;
   const hintWidth = stringWidth(view.hint);
   drawText(frame, region.x + region.cols - hintWidth, y, view.hint, styleOf(options.theme, 'chrome.meta'), hintWidth);
+}
+
+// ── footer ───────────────────────────────────────────────────────────────────
+
+/** A key hint in the footer: `key` (a key label, e.g. `Ctrl-q` or `F12 d`) and what it does. */
+export interface FooterHint { key: string; action: string }
+
+export interface FooterDrawOptions {
+  /** The focus or the shown tab's mode and its keys (dispatch.ts `modeNotice`). */
+  mode: string;
+  /** Where the keys go: the active project's name and the shown tab's label; null with no project open. */
+  breadcrumb: { project: string; tab: string } | null;
+  /** The cockpit keys, from the resolved keys. */
+  hints: readonly FooterHint[];
+  theme: Theme;
+}
+
+const FOOTER_SEPARATOR = ' · ';
+
+/**
+ * Draws the footer into `region`'s first row: the mode, then `project › tab`,
+ * then the key hints, separated by ` · `. Segments that do not fit are left
+ * out from the right; the mode is cut (never dropped) last.
+ */
+export function drawFooter(frame: Frame, region: Region, options: FooterDrawOptions): void {
+  if (region.cols <= 0 || region.rows <= 0) return;
+  const { theme } = options;
+  const role = (name: ThemeRole) => styleOf(theme, name);
+  const muted = role('text.muted');
+  const accent = role('text.accent');
+  const segments: Run[][] = [];
+  if (options.breadcrumb) segments.push([[options.breadcrumb.project, role('text.primary')], [' › ', muted], [options.breadcrumb.tab, role('text.primary')]]);
+  for (const hint of options.hints) segments.push([[hint.key, accent], [`: ${hint.action}`, muted]]);
+  const widthOf = (runs: readonly Run[]) => runs.reduce((sum, [text]) => sum + stringWidth(text), 0);
+  const runs: Run[] = [[options.mode, accent]];
+  let used = stringWidth(options.mode);
+  for (const segment of segments) {
+    const width = stringWidth(FOOTER_SEPARATOR) + widthOf(segment);
+    if (used + width > region.cols) break;
+    runs.push([FOOTER_SEPARATOR, muted], ...segment);
+    used += width;
+  }
+  if (runs.length === 1) runs[0] = [fitText(options.mode, region.cols), accent];
+  drawRuns(frame, region.x, region.y, runs, region.cols);
 }
