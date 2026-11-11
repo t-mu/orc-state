@@ -60,8 +60,12 @@ export type TmuxControlEvent =
 
 /** Events only a parser built with `{ replies: true }` returns. */
 export type TmuxControlReplyEvent =
-  /** One `%begin` … `%end` (error false) or `%error` (error true) block; lines are UTF-8. */
-  | { type: 'reply'; lines: string[]; error: boolean }
+  /**
+   * One `%begin` … `%end` (error false) or `%error` (error true) block; lines are UTF-8. `flags` is the
+   * guard's last field: 1 for a command the control client wrote to its stdin, 0 for any other command
+   * run for this client (the attach-session on its command line).
+   */
+  | { type: 'reply'; lines: string[]; error: boolean; flags: number }
   | { type: 'sessions-changed' }
   /** Any other `%` notification line, `%layout-change` included (it also yields `resize`). */
   | { type: 'notification'; line: string };
@@ -112,11 +116,12 @@ export class TmuxControlParser<E extends TmuxControlEvent | TmuxControlReplyEven
         if (this.replies) this.body.push(Buffer.from(line));
         return [];
       }
+      const flags = Number(this.replyId.split(' ')[2]);
       this.replyId = null;
       if (!this.replies) return [];
       const lines = this.body.map((part) => part.toString('utf8'));
       this.body = [];
-      return [{ type: 'reply', lines, error }];
+      return [{ type: 'reply', lines, error, flags }];
     }
     if (text.startsWith('%begin ')) { this.replyId = text.slice(7); return []; }
     const match = OUTPUT_PREFIX.exec(text) ?? EXTENDED_OUTPUT_PREFIX.exec(text);
