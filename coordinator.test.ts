@@ -5037,8 +5037,30 @@ describe('provider-prompt input waits (coordinator/provider-prompt-input-clear)'
     expect(runEvents('input_response').map((e) => (e.payload as Record<string, unknown>).resolution)).toEqual(['prompt_gone']);
   });
 
+  function writeToolHook(minutes: number) {
+    mkdirSync(join(dir, 'pty-hook-events'), { recursive: true });
+    appendFileSync(join(dir, 'pty-hook-events', 'worker-01.ndjson'),
+      JSON.stringify({ type: 'tool', tool: 'Bash', brief: 'npm test', ts: minutesAgo(minutes) }) + '\n');
+  }
+
+  it('clears a provider-prompt wait known from a hook event once the worker\'s hooks show activity after it', async () => {
+    seedWaitingRun('provider_prompt', 61);
+    writeToolHook(5);
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ detectInputBlock: vi.fn().mockReturnValue(null) }));
+
+    await runTicks(2);
+
+    const claim = waitingClaim();
+    expect(claim.state).toBe('in_progress');
+    expect(claim.input_state).toBeNull();
+    expect(Date.parse(String(claim.lease_expires_at))).toBeGreaterThan(Date.now() + 25 * 60 * 1000);
+    expect(runEvents('claim_expired')).toEqual([]);
+    expect(runEvents('input_response').map((e) => (e.payload as Record<string, unknown>).resolution)).toEqual(['worker_activity']);
+  });
+
   it('keeps a provider-prompt wait never seen on screen (known from a hook event only)', async () => {
     seedWaitingRun('provider_prompt', 5);
+    writeToolHook(6); // the tool call that raised the prompt, before the request
     vi.doMock('./adapters/index.ts', () => makeAdapterMock({ detectInputBlock: vi.fn().mockReturnValue(null) }));
 
     await runTicks(2);

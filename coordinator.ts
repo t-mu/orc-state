@@ -43,7 +43,7 @@ import { drainHookEvents, type PermissionHookEvent, type SessionStartHookEvent }
 import { applySessionStart, isAgentSessionReady, sessionStartDecision } from './lib/sessionStartReadiness.ts';
 import { deletePendingSessionStart, listPendingSessionStarts, savePendingSessionStart, type PendingSessionStart } from './lib/pendingSessionStarts.ts';
 import { inferPhaseTransitions, phaseInferenceClaims } from './lib/phaseInference.ts';
-import { readRunActivity, writeRunActivity } from './lib/runActivityStore.ts';
+import { latestHookActivityTs, readRunActivity, writeRunActivity } from './lib/runActivityStore.ts';
 import { RunSignals, type RunHookEvents } from './lib/runSignals.ts';
 import { renderTemplate } from './lib/templateRender.ts';
 import { ACTIVE_PROJECT, assertProjectMode, ORC_PACKAGE_ROOT, STATE_DIR, EVENTS_FILE, WORKTREES_DIR, TARGET_REPO_ROOT } from './lib/paths.ts';
@@ -885,7 +885,8 @@ function recordCoordinatorInputRequest(claim: Claim, question: string, reason: s
 /**
  * Runs whose provider-prompt wait this coordinator has seen on the worker's screen. Only a
  * prompt once seen there can be seen gone: one known only from a permission hook event may
- * not be recognisable on screen, and its wait clears on worker activity instead.
+ * not be recognisable on screen, and its wait clears on worker activity instead (a lifecycle
+ * event, or hook activity after the request).
  */
 const providerPromptSeenOnScreen = new Set<string>();
 
@@ -906,6 +907,22 @@ function resolveGoneProviderPrompt(claim: Claim, agent: Agent | undefined) {
   if (!providerPromptSeenOnScreen.delete(claim.run_id)) return;
   if (resolveProviderPromptWaitSafe(claim, new Date().toISOString(), 'prompt_gone')) {
     log(`run ${claim.run_id} provider prompt resolved: no longer on screen`);
+  }
+}
+
+/**
+ * Clear a provider-prompt wait once the worker's hooks show activity (a tool call, label or
+ * turn end) after the request, the rule `orc status` uses for the PERMISSION badge. Runs as
+ * hook events are ingested, before lease expiry in the tick. A worker request wait is left alone.
+ */
+function resolveProviderPromptFromHookActivity(claim: Claim) {
+  if (claim.input_state !== 'awaiting_input' || claim.input_source !== 'provider_prompt') return;
+  const hookActivityAt = latestHookActivityTs(runSignals.hookSnapshot(claim.run_id));
+  if (!hookActivityAt || !(Date.parse(hookActivityAt) > Date.parse(claim.input_requested_at ?? ''))) return;
+  const at = new Date(Math.min(Date.parse(hookActivityAt), Date.now())).toISOString();
+  if (resolveProviderPromptWaitSafe(claim, at, 'worker_activity')) {
+    providerPromptSeenOnScreen.delete(claim.run_id);
+    log(`run ${claim.run_id} provider prompt resolved: hook activity at ${at}`);
   }
 }
 
@@ -1177,7 +1194,10 @@ function ingestHookEvents(claims: Claim[], agents: Agent[], nowMs: number = Date
       }
     }
   }
-  for (const claim of active) maybeEmitActivityNote(claim, nowMs);
+  for (const claim of active) {
+    resolveProviderPromptFromHookActivity(claim);
+    maybeEmitActivityNote(claim, nowMs);
+  }
   return hookActivity.length > 0;
 }
 
