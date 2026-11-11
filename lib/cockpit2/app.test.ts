@@ -186,9 +186,11 @@ class FakeClient extends EventEmitter {
   /** Set to hold the next capture until the test releases it. */
   gate: Promise<void> | null = null;
   size = { cols: MODES.cols, rows: MODES.rows };
+  /** Pane modes the next mode query reports, as tmux would for modes the pane's program set. */
+  modes: Partial<PaneReport> = {};
   constructor(readonly target: TmuxTarget, readonly ignoreSize: boolean, readonly paneId = '%1') { super(); }
   resize(cols: number, rows: number) { this.resizes.push(`${cols}x${rows}`); this.size = { cols, rows }; return Promise.resolve(); }
-  paneModes() { this.modeQueries++; return Promise.resolve({ ...MODES, paneId: this.paneId, ...this.size }); }
+  paneModes() { this.modeQueries++; return Promise.resolve({ ...MODES, ...this.modes, paneId: this.paneId, ...this.size }); }
   async capture() { if (this.gate) await this.gate; return this.lines; }
   sendBytes(pane: string, bytes: Buffer) { this.sent.push(`${pane} ${bytes.toString('latin1')}`); return Promise.resolve(); }
   paste(pane: string, text: string) { this.pastes.push(`${pane} ${text}`); return Promise.resolve(); }
@@ -270,6 +272,15 @@ async function waitForSlotLine(terminal: FakeTerminal, line: string, ms = 5_000)
   const until = Date.now() + ms;
   while (!(await slotRows(terminal)).includes(line)) {
     if (Date.now() > until) throw new Error(`timed out waiting for ${JSON.stringify(line)} in the slot:\n${(await slotRows(terminal)).join("\n")}`);
+    await sleep(25);
+  }
+}
+
+/** Waits until row `y` of the tab bar contains `part`. */
+async function waitForTabBar(terminal: FakeTerminal, y: number, part: string): Promise<void> {
+  const until = Date.now() + 2_000;
+  while (!text(await shown(terminal), y, SIDEBAR_COLS).includes(part)) {
+    if (Date.now() > until) throw new Error(`timed out waiting for ${JSON.stringify(part)} in tab bar row ${y}: ${text(await shown(terminal), y, SIDEBAR_COLS)}`);
     await sleep(25);
   }
 }
@@ -396,7 +407,7 @@ describe('runApp (fake tmux client)', () => {
     const { terminal, client, app } = start();
     await attached(terminal);
     terminal.type(`${F12}${F12}`);
-    terminal.type(`${F12}x`); // not in this step's prefix table: dropped
+    terminal.type(`${F12}x`); // not in the prefix table: dropped
     expect(client().sent).toEqual([`%1 ${F12}`]);
     terminal.type(`${F12}d`);
     await app.done;
@@ -547,6 +558,130 @@ describe('runApp tabs and projects (fake tmux clients)', () => {
     expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: [], active: null });
     await sleep(5);
     expect(store.state.tabs.projects[0]).toEqual({ projectId: 'demo', tabs: [], active: null });
+  });
+
+  it('opens a worker tab view-only: no key or paste reaches the worker until i; the mode and its keys are shown', async () => {
+    const { terminal, clients, app } = twoTabs();
+    await attached(terminal);
+    app.apply((state) => openAgent(state, 'demo', 'w1'));
+    await waitForSlotLine(terminal, '$ hello from orc-w1');
+    const worker = clients[1];
+    terminal.type(`hello\r${ESC}[A`);
+    terminal.type(`${ESC}[200~pasted${ESC}[201~`);
+    terminal.type(`${F12}${F12}`);
+    await sleep(40);
+    expect(worker.sent).toEqual([]);
+    expect(worker.pastes).toEqual([]);
+    expect(clients[0].sent).toEqual([]);
+    await waitForTabBar(terminal, 0, '[view] i: type · q/Esc/Ctrl-D/C/]: close');
+
+    terminal.type('i');
+    await waitForTabBar(terminal, 0, '[typing → agent] Ctrl-]: stop typing');
+    await waitForTabBar(terminal, 1, '✎ w1');
+    expect(worker.sent).toEqual([]); // i itself only starts typing
+    terminal.type(`q\x04\x03${ESC}[A`);
+    terminal.type(`${ESC}[200~pasted${ESC}[201~`);
+    expect(worker.sent).toEqual(['%2 q', '%2 \x04', '%2 \x03', `%2 ${ESC}[A`]);
+    expect(worker.pastes).toEqual(['%2 pasted']);
+
+    terminal.type('\x1d'); // Ctrl-] back to view mode
+    await waitForTabBar(terminal, 0, '[view]');
+    terminal.type('x');
+    expect(worker.sent).toHaveLength(4);
+    expect(app.tabs().projects[0].tabs).toEqual(['w1']);
+  });
+
+  it('forwards a lone Esc to a typing worker after the Esc timeout', async () => {
+    const { terminal, clients, app } = twoTabs();
+    await attached(terminal);
+    app.apply((state) => openAgent(state, 'demo', 'w1'));
+    await waitForSlotLine(terminal, '$ hello from orc-w1');
+    terminal.type('i');
+    terminal.type(ESC);
+    await waitFor(() => clients[1].sent.length === 1);
+    expect(clients[1].sent).toEqual([`%2 ${ESC}`]);
+    expect(app.tabs().projects[0].tabs).toEqual(['w1']);
+  });
+
+  for (const [name, key] of [['q', 'q'], ['Esc', ESC], ['Ctrl-D', '\x04'], ['Ctrl-C', '\x03'], ['Ctrl-]', '\x1d']] as const) {
+    it(`closes a view-mode worker tab on ${name} in one keypress, the worker untouched`, async () => {
+      const { terminal, clients, app } = twoTabs();
+      await attached(terminal);
+      app.apply((state) => openAgent(state, 'demo', 'w1'));
+      await waitForSlotLine(terminal, '$ hello from orc-w1');
+      terminal.type(key);
+      await waitFor(() => app.tabs().projects[0].tabs.length === 0);
+      await waitForSlotLine(terminal, '$ hello from orc-master');
+      expect(clients[1].sent).toEqual([]);
+      expect(clients[1].closed).toBe(1);
+      expect(clients[0].sent).toEqual([]);
+    });
+  }
+
+  it('reopens a closed worker tab view-only again, and keeps each open tab\'s mode across tab switches', async () => {
+    const { terminal, clients, app } = twoTabs();
+    await attached(terminal);
+    app.apply((state) => openAgent(state, 'demo', 'w1'));
+    await waitForSlotLine(terminal, '$ hello from orc-w1');
+    terminal.type('i');
+    terminal.type(`${F12}1`); // the master tab through the prefix table
+    await waitForSlotLine(terminal, '$ hello from orc-master');
+    terminal.type(`${F12}2`);
+    await waitForSlotLine(terminal, '$ hello from orc-w1');
+    terminal.type('a');
+    expect(clients[1].sent).toEqual(['%2 a']);
+    terminal.type('\x1dq'); // stop typing, close
+    await waitForSlotLine(terminal, '$ hello from orc-master');
+    app.apply((state) => openAgent(state, 'demo', 'w1'));
+    await waitForSlotLine(terminal, '$ hello from orc-w1');
+    terminal.type('b');
+    await sleep(20);
+    expect(clients.at(-1)!.sent).toEqual([]);
+  });
+
+  it('runs the prefix table and direct keys: tabs, closing and projects', async () => {
+    const { terminal, app } = start({ projects: [projectState('demo', { workers: [{ agent_id: 'w1', ...W1_TARGET }] }), projectState('other')] });
+    await attached(terminal);
+    app.apply((state) => openAgent(state, 'demo', 'w1'));
+    await waitForSlotLine(terminal, '$ hello from orc-w1');
+    terminal.type(`${F12}n`);
+    expect(app.tabs().projects[0].active).toBe(null);
+    terminal.type(`${F12}p`);
+    expect(app.tabs().projects[0].active).toBe('w1');
+    terminal.type(`${ESC}OP`); // F1: the master tab
+    expect(app.tabs().projects[0].active).toBe(null);
+    terminal.type(`${F12}&`); // the master tab stays open
+    expect(app.tabs().projects[0].tabs).toEqual(['w1']);
+    terminal.type(`${ESC}OQ${F12}&`); // F2, then close it
+    expect(app.tabs().projects[0].tabs).toEqual([]);
+    app.apply((state) => showProject(state, 'other'));
+    terminal.type(`${F12}N`);
+    expect(app.tabs().activeProject).toBe('demo');
+    terminal.type(`${F12}P`);
+    expect(app.tabs().activeProject).toBe('other');
+  });
+
+  it('mirrors the shown pane\'s application cursor key mode to the real terminal on tab switch and mode change', async () => {
+    const { terminal, clients, app } = twoTabs();
+    await attached(terminal);
+    const modeWrites = () => terminal.writes.join('').match(/\x1b\[\?1[hl]/g) ?? [];
+    const lastMode = () => modeWrites().at(-1) ?? 'none';
+    expect(modeWrites()).toEqual([]);
+    app.apply((state) => openAgent(state, 'demo', 'w1'));
+    await waitForSlotLine(terminal, '$ hello from orc-w1');
+    const worker = clients[1];
+    worker.modes = { keypadCursor: true }; // what tmux reports once the program set the mode
+    worker.emit('output', '%2', Buffer.from(`${ESC}[?1h`));
+    await waitFor(() => lastMode() === `${ESC}[?1h`);
+    app.apply((state) => selectTab(state, MASTER_TAB));
+    await waitFor(() => lastMode() === `${ESC}[?1l`);
+    app.apply((state) => selectTab(state, 'w1'));
+    await waitFor(() => lastMode() === `${ESC}[?1h`);
+    worker.modes = {};
+    worker.emit('output', '%2', Buffer.from(`${ESC}[?1l`));
+    await waitFor(() => lastMode() === `${ESC}[?1l`);
+    // Each write is a change: the mode never repeats.
+    expect(modeWrites().every((mode, index, all) => index === 0 || mode !== all[index - 1])).toBe(true);
   });
 
   it('saves the tabs and the running master\'s target to the view state, and reopens them on start', async () => {

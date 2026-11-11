@@ -104,7 +104,7 @@ Canonical: [contracts.md → Local Control API](contracts.md#local-control-api).
 
 ### Cockpit keys
 
-Per user, for every project: `orc start-session` reads them each time it opens or reattaches to the cockpit and applies them to the running cockpit; the `orc cockpit2` preview reads them when it starts (there the prefix has only `d`, quit, and `quit` sets its direct quit key; see [cli.md](cli.md)). Key names are tmux's (`F1`–`F12`, optional `C-`/`M-`/`S-` modifiers; `C-a` is Ctrl-a, `M-1` Alt-1). An invalid name or entry is reported as a warning and the default is kept.
+Per user, for every project: `orc start-session` reads them each time it opens or reattaches to the cockpit and applies them to the running cockpit; the `orc cockpit2` preview reads them when it starts (there `quit` also sets its direct quit key; see [cli.md](cli.md)). Key names are tmux's (`F1`–`F12`, optional `C-`/`M-`/`S-` modifiers; `C-a` is Ctrl-a, `M-1` Alt-1). An invalid name or entry is reported as a warning and the default is kept.
 
 | Variable | Description | Default |
 |----------|-------------|---------|

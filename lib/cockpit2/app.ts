@@ -15,18 +15,23 @@
  * through its last known or computed tmux target.
  *
  * Rendering happens only when something changed, at most once per frame
- * interval; an idle cockpit writes nothing. Keys typed go to the shown tab as
- * bytes, pastes through `paste()`. The quit key (`C-q` by default) or the
- * prefix then `d` ends the app; masters, workers and coordinators keep
- * running, and closing a tab only detaches its view. Sidebar and tab bar are
- * placeholders that Step 9 replaces; the prefix table comes with Step 8, mouse
- * routing with Step 10.
+ * interval; an idle cockpit writes nothing. Input goes through the
+ * dispatcher (dispatch.ts): cockpit keys and the prefix table, then the shown
+ * tab's mode. The master tab takes keys directly; worker and scout tabs open
+ * view-only and take keys only after `i`. Keys go to the pane as bytes, pastes
+ * through `paste()`. The pane's cursor key mode is mirrored to the real
+ * terminal. The quit key (`C-q` by default) or the prefix then `d` ends the
+ * app; masters, workers and coordinators keep running, and closing a tab only
+ * detaches its view. Sidebar and tab bar are placeholders that Step 9
+ * replaces (with focus switching), mouse routing comes with Step 10, the
+ * explorer and attention keys with Step 11.
  */
 import { tmuxSessionTarget, type ProjectConnectionState, type ProjectWatchState, type ProjectWatchUpdate, type StatusView } from '../../client.ts';
-import { MASTER_TAB, closedTabs, shownTab, showProject, type CockpitTabState, type OpenTab, type TabTransition } from '../cockpitTabs.ts';
+import { MASTER_TAB, closeTab, closedTabs, cycleProject, cycleTab, selectTab, shownTab, showProject, type CockpitTabState, type OpenTab, type TabTransition } from '../cockpitTabs.ts';
 import { keyLabel, type CockpitKeys } from '../cockpitKeys.ts';
 import { DEFAULT_STYLE, blitScreen, createFrame, drawText, slotCursor, type Frame, type Region } from './frame.ts';
-import { createTokenizer, keyMatcher, type Token } from './input.ts';
+import { createDispatcher, cursorKeyMirror, modeNotice, type DispatchContext } from './dispatch.ts';
+import { createTokenizer, type Token } from './input.ts';
 import { parseSgrMouse, type MouseEvent } from './mouse.ts';
 import { renderDiff, sameStyle } from './render.ts';
 import type { Cursor } from './screen.ts';
@@ -175,6 +180,7 @@ export interface App {
 
 const MUTED_STYLE = { ...DEFAULT_STYLE, dim: true };
 const TITLE_STYLE = { ...DEFAULT_STYLE, bold: true };
+const INVERSE_STYLE = { ...DEFAULT_STYLE, bold: true, inverse: true };
 
 function drawBox(frame: Frame, region: Region, title: string): void {
   if (region.cols < 2 || region.rows < 2) return;
@@ -207,21 +213,34 @@ function drawSidebar(frame: Frame, region: Region, tabs: CockpitTabState, nameOf
   });
 }
 
-/** The placeholder tab bar: the active project's tabs, the active one bold, and how to quit (Step 9 draws the real one). */
-function drawTabBar(frame: Frame, region: Region, tabs: CockpitTabState, keys: CockpitKeys, saveError: string | null): void {
+/** The mark before an agent tab in typing mode. */
+export const TYPING_MARK = '✎';
+
+/**
+ * The placeholder tab bar (Step 9 draws the real one): the shown tab's mode
+ * and its keys on the top row, then the active project's tabs, the active one
+ * bold and a typing tab marked, and how to quit. `mode` is null when no tab is shown.
+ */
+function drawTabBar(frame: Frame, region: Region, tabs: CockpitTabState, keys: CockpitKeys, saveError: string | null,
+  mode: DispatchContext | null, typing: (agentId: string) => boolean): void {
   if (region.cols === 0 || region.rows === 0) return;
   const row = region.y + Math.min(1, region.rows - 1);
+  const notice = mode ? modeNotice(mode) : null;
+  if (notice && region.rows >= 2) {
+    drawText(frame, region.x + 1, region.y, notice, mode?.agentTab && mode.mode === 'typing' ? INVERSE_STYLE : MUTED_STYLE, region.cols - 1);
+  }
   const project = tabs.projects.find((entry) => entry.projectId === tabs.activeProject);
   let x = region.x + 1;
   for (const tab of project ? [null, ...project.tabs] : []) {
-    const label = ` ${tab ?? MASTER_TAB} `;
+    const label = ` ${tab !== null && typing(tab) ? `${TYPING_MARK} ` : ''}${tab ?? MASTER_TAB} `;
     const room = region.x + region.cols - x;
     if (room <= 0) break;
     drawText(frame, x, row, label, tab === project?.active ? TITLE_STYLE : MUTED_STYLE, room);
     x += label.length + 1;
   }
   if (region.rows >= 3) drawText(frame, region.x, region.y + region.rows - 1, '─'.repeat(region.cols), MUTED_STYLE);
-  const hint = saveError ? `view state not saved: ${saveError}` : quitHint(keys);
+  // Without a row of its own (a tiny terminal) the mode takes the quit hint's place.
+  const hint = saveError ? `view state not saved: ${saveError}` : notice && region.rows < 2 ? notice : quitHint(keys);
   const room = region.x + region.cols - x;
   if (room > 0) drawText(frame, Math.max(x, region.x + region.cols - hint.length - 1), row, hint, MUTED_STYLE, room);
 }
@@ -377,9 +396,10 @@ export function runApp(options: AppOptions): App {
     if (closed) return;
     lastRender = Date.now();
     const frame = createFrame(layout.cols, layout.rows);
-    drawSidebar(frame, layout.sidebar, tabs, nameOf);
-    drawTabBar(frame, layout.tabBar, tabs, keys, lastSaveError);
     const tab = shownTab(tabs);
+    drawSidebar(frame, layout.sidebar, tabs, nameOf);
+    drawTabBar(frame, layout.tabBar, tabs, keys, lastSaveError, tab ? inputContext(tab) : null,
+      (agentId) => tabs.activeProject !== null && typingTabs.has(tabKey({ projectId: tabs.activeProject, agentId })));
     const session = sessions.shown();
     const project = tab && watched.get(tab.projectId);
     const message = slotMessage({
@@ -393,6 +413,8 @@ export function runApp(options: AppOptions): App {
       blitScreen(frame, session.screen, layout.slot);
       cursor = slotCursor(session.screen, layout.slot, focus === 'slot');
     }
+    // Arrow keys reach the pane in the form its program asked for; checked on every render, so on tab switch and mode change.
+    mirrorCursorKeys(!message && session?.screen ? session.screen.modes().applicationCursorKeys : false);
     if (prevFrame && prevCursor && framesEqual(prevFrame, frame) && sameCursor(prevCursor, cursor)) return;
     terminal.write(renderDiff(prevFrame, frame, cursor));
     prevFrame = frame;
@@ -410,7 +432,10 @@ export function runApp(options: AppOptions): App {
     const result = transition(tabs);
     if (closed || !result.ok) return result;
     // Closing a tab only detaches its view; the agent keeps running.
-    for (const tab of closedTabs(tabs, result.state)) sessions.close(tabKey(tab));
+    for (const tab of closedTabs(tabs, result.state)) {
+      sessions.close(tabKey(tab));
+      typingTabs.delete(tabKey(tab)); // a reopened tab starts view-only again
+    }
     tabs = result.state;
     save();
     showActive();
@@ -418,12 +443,18 @@ export function runApp(options: AppOptions): App {
   }
 
   // ── input ──
-  const matchQuit = keyMatcher(keys.quit ? [keys.quit] : []);
-  const matchPrefix = keyMatcher([keys.prefix]);
-  const matchDetach = keyMatcher(['d']);
-  let prefixPending = false;
+  const dispatcher = createDispatcher(keys);
+  /** Agent tabs in typing mode, by tab key; every other agent tab is view-only. */
+  const typingTabs = new Set<string>();
+  const mirrorCursorKeys = cursorKeyMirror((data) => terminal.write(data));
   /** Steps 9 and 10 fill these in: sidebar and tab bar clicks, pane mouse routing. */
   const mouseHandlers: MouseHandlers = {};
+
+  /** The shown tab's input mode: the master always types, an agent tab only after `i`. */
+  function inputContext(tab: OpenTab): DispatchContext {
+    if (tab.agentId === null) return { mode: 'typing', agentTab: false };
+    return { mode: typingTabs.has(tabKey(tab)) ? 'typing' : 'view', agentTab: true };
+  }
 
   /**
    * A failed keystroke or paste leaves the tab shown and the next input
@@ -431,31 +462,38 @@ export function runApp(options: AppOptions): App {
    * Input to a tab that is not live is dropped.
    */
   const ignoreInputError = () => { /* see above */ };
-  const forward = (bytes: Buffer) => { sessions.shown()?.sendBytes(bytes)?.catch(ignoreInputError); };
 
   function onToken(token: Token): void {
     if (closed) return;
-    // A sequence cut short is never typed into the pane as text.
-    if (token.kind === 'incomplete') return;
-    if (token.kind === 'mouse') {
-      const event = parseSgrMouse(token);
-      if (event) dispatchMouse(layout, event, mouseHandlers);
-      return;
+    const tab = shownTab(tabs);
+    // With no tab shown nothing takes keys; cockpit keys still work.
+    const context: DispatchContext = tab ? inputContext(tab) : { mode: 'view', agentTab: false };
+    const action = dispatcher.dispatch(token, context);
+    switch (action.type) {
+      case 'forward': sessions.shown()?.sendBytes(action.bytes)?.catch(ignoreInputError); return;
+      // A paste is UTF-8 text from the terminal; a byte that is not UTF-8 arrives as U+FFFD (cockpit2 runs the real terminal as UTF-8).
+      case 'paste': sessions.shown()?.paste(action.data.toString('utf8'))?.catch(ignoreInputError); return;
+      case 'mouse': {
+        const event = parseSgrMouse(action.token);
+        if (event) dispatchMouse(layout, event, mouseHandlers);
+        return;
+      }
+      case 'quit': quit(); return;
+      case 'selectTab': apply((state) => selectTab(state, action.index)); return;
+      case 'cycleTab': apply((state) => cycleTab(state, action.delta)); return;
+      case 'cycleProject': apply((state) => cycleProject(state, action.delta)); return;
+      // Refused on the master tab, which stays open.
+      case 'closeTab': apply((state) => closeTab(state)); return;
+      case 'startTyping':
+      case 'stopTyping':
+        if (!tab) return;
+        if (action.type === 'startTyping') typingTabs.add(tabKey(tab));
+        else typingTabs.delete(tabKey(tab));
+        scheduleRender();
+        return;
+      // Focus switching comes with Step 9, the explorer and attention jump with Step 11.
+      case 'switchFocus': case 'focusSidebar': case 'explorer': case 'attention': case 'drop': return;
     }
-    if (token.kind === 'paste') {
-      sessions.shown()?.paste(token.data.toString('utf8'))?.catch(ignoreInputError);
-      return;
-    }
-    if (prefixPending) {
-      prefixPending = false;
-      if (matchDetach(token)) quit();
-      else if (matchPrefix(token)) forward(token.raw); // the prefix twice reaches the pane
-      // The rest of the prefix table comes with Step 8.
-      return;
-    }
-    if (matchQuit(token)) { quit(); return; }
-    if (matchPrefix(token)) { prefixPending = true; return; }
-    forward(token.raw);
   }
 
   const tokenizer = createTokenizer({ onFlush: (tokens) => tokens.forEach(onToken) });
