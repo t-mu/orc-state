@@ -166,9 +166,8 @@ export async function runCockpit(options: CockpitOptions): Promise<CockpitResult
     process.off(WAKE_SIGNAL, wake);
     throw error;
   }
-  // An exit that skips the cleanup below still frees the lock, but SIGTERM and a crash end in an exit only
-  // once openTerminal installed its handlers: before that, and on a kill -9, the lock is left stale and the
-  // next cockpit takes it over silently.
+  // An exit that skips the cleanup below (a crash) still frees the lock; SIGTERM and SIGHUP do so only once
+  // openTerminal installed its handlers, and a kill -9 leaves it stale (the next cockpit takes it over silently).
   const release = claim.release;
   process.on('exit', release);
   const watcher = new ProjectWatcher();
