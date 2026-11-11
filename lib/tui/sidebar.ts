@@ -46,6 +46,9 @@ export interface SidebarAgent {
   detail: string | null;
   /** Shown as a badge in the phase's place; such agents sort first. */
   attention: AttentionKind | null;
+  /** The run's task (null without one) and the agent's provider (null when unknown); set only when `sidebarAgents` is asked for `details`. */
+  task_ref?: string | null;
+  provider?: string | null;
 }
 
 export interface SidebarProject {
@@ -120,8 +123,11 @@ function attentionRank(agent: SidebarAgent): number {
   return agent.attention ? ATTENTION_KINDS.indexOf(agent.attention) : ATTENTION_KINDS.length;
 }
 
-/** A project's workers and scouts as sidebar rows, attention first (by kind), then in status order. */
-export function sidebarAgents(view: TuiProjectView, nowMs: number): SidebarAgent[] {
+/**
+ * A project's workers and scouts as sidebar rows, attention first (by kind), then in status order.
+ * With `details`, each also carries its task ref and provider (the cockpit's agent cards show them).
+ */
+export function sidebarAgents(view: TuiProjectView, nowMs: number, options: { details?: boolean } = {}): SidebarAgent[] {
   if (!view.status) return [];
   const workers = buildWorkerSlotViewModels(view.status)
     .filter(slot => slot.role !== 'master')
@@ -136,6 +142,7 @@ export function sidebarAgents(view: TuiProjectView, nowMs: number): SidebarAgent
         elapsed: slot.run_state ? elapsedSince(slot.run_started_at, slot.age_seconds, nowMs) : null,
         detail: attention ? attentionDetail(attention, oneLine(slot.attention?.detail), activity) : activity ?? slot.task_ref,
         attention,
+        ...(options.details ? { task_ref: slot.task_ref, provider: slot.provider } : {}),
       };
     });
   const scouts = (view.status.scouts ?? []).map((scout): SidebarAgent => ({
@@ -146,6 +153,7 @@ export function sidebarAgents(view: TuiProjectView, nowMs: number): SidebarAgent
     elapsed: elapsedSince(scout.launched_at, null, nowMs),
     detail: 'scout',
     attention: null,
+    ...(options.details ? { task_ref: null, provider: scout.provider } : {}),
   }));
   // Array.prototype.sort is stable: equal ranks keep the status order.
   return [...workers, ...scouts].sort((a, b) => attentionRank(a) - attentionRank(b));
@@ -161,7 +169,7 @@ function attentionCount(view: TuiProjectView): number {
  */
 export function buildSidebarModel(
   views: TuiProjectView[],
-  options: { stateDir: string; activeProjectId: string | null; nowMs: number; registryError: string | null },
+  options: { stateDir: string; activeProjectId: string | null; nowMs: number; registryError: string | null; agentDetails?: boolean },
 ): SidebarModel {
   const active = views.find(view => view.project_id === options.activeProjectId)
     ?? views.find(view => view.state_dir === options.stateDir)
@@ -187,7 +195,7 @@ export function buildSidebarModel(
     },
     projects,
     activeProjectId: active?.project_id ?? null,
-    agents: active ? sidebarAgents(active, options.nowMs) : [],
+    agents: active ? sidebarAgents(active, options.nowMs, { details: options.agentDetails ?? false }) : [],
     agentsStale: active?.stale ?? false,
     notice: options.registryError
       ? `registry error: ${options.registryError}`
