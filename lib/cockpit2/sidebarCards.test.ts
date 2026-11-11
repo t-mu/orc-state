@@ -6,7 +6,7 @@ import type { SidebarAgent, SidebarModel, SidebarProject } from '../tui/sidebar.
 import { computeLayout } from './app.ts';
 import { createFrame, type Frame } from './frame.ts';
 import {
-  INITIAL_SIDEBAR_NAV, drawSidebarCards, navigateSidebar, sidebarCardClick, sidebarCardTarget, sidebarCardsLayout, sidebarCursor,
+  INITIAL_SIDEBAR_NAV, agentStatusRole, drawSidebarCards, navigateSidebar, pruneExpanded, sidebarCardClick, sidebarCardTarget, sidebarCardsLayout, sidebarCursor,
   type CardLayout, type SidebarCard, type SidebarCardsLayout, type SidebarNav,
 } from './sidebarCards.ts';
 import { BUILT_IN_THEMES, styleOf } from './theme.ts';
@@ -104,8 +104,8 @@ describe('sidebarCardsLayout', () => {
         for (let agents = 0; agents <= 8; agents += 1) {
           const sidebar = model(others, agents);
           const navs: SidebarNav[] = [
-            ...sidebar.agents.map((each) => ({ box: 'agents' as const, projectKey: null, agentKey: each.key })),
-            ...sidebar.projects.map((each) => ({ box: 'projects' as const, projectKey: each.project_id, agentKey: null })),
+            ...sidebar.agents.map((each) => ({ ...INITIAL_SIDEBAR_NAV, box: 'agents' as const, projectKey: null, agentKey: each.key })),
+            ...sidebar.projects.map((each) => ({ ...INITIAL_SIDEBAR_NAV, box: 'projects' as const, projectKey: each.project_id, agentKey: null })),
           ];
           for (const nav of navs) {
             const layout = sidebarCardsLayout(sidebar, rows, nav, COLS);
@@ -142,7 +142,7 @@ describe('sidebarCardsLayout', () => {
 
   it('drops Other projects before the Agents card loses its last body row, unless the cursor is in it', () => {
     expect(rowsOf(sidebarCardsLayout(model(5, 8), 8, INITIAL_SIDEBAR_NAV, COLS))).toEqual([3, 5]);
-    const inOthers = sidebarCardsLayout(model(5, 8), 8, { box: 'projects', projectKey: 'o4', agentKey: null }, COLS);
+    const inOthers = sidebarCardsLayout(model(5, 8), 8, { ...INITIAL_SIDEBAR_NAV, box: 'projects', projectKey: 'o4', agentKey: null }, COLS);
     expect(rowsOf(inOthers)).toEqual([3, 4, 1]);
     expect(card(inOthers, 'otherProjects')?.lines).toEqual([{ kind: 'project', index: 4 }, { kind: 'more', count: 4 }]);
   });
@@ -226,11 +226,11 @@ describe('sidebarCardTarget and sidebarCardClick', () => {
 
   it('opens what a click hits; the cursor box follows', () => {
     expect(sidebarCardClick(layout, INITIAL_SIDEBAR_NAV, 5, rowOf('coordinator'))).toEqual({
-      nav: { box: 'projects', projectKey: 'p1', agentKey: null }, command: { type: 'openProject', projectId: 'p1' },
+      nav: { ...INITIAL_SIDEBAR_NAV, box: 'projects', projectKey: 'p1', agentKey: null }, command: { type: 'openProject', projectId: 'p1' },
     });
     expect(sidebarCardClick(layout, INITIAL_SIDEBAR_NAV, 5, rowOf('o2 '))?.command).toEqual({ type: 'openProject', projectId: 'o2' });
-    expect(sidebarCardClick(layout, INITIAL_SIDEBAR_NAV, 3, rowOf('a2 '))).toEqual({
-      nav: { box: 'agents', projectKey: null, agentKey: 'p1/a2' }, command: { type: 'openAgent', projectId: 'p1', agentId: 'a2' },
+    expect(sidebarCardClick(layout, INITIAL_SIDEBAR_NAV, 8, rowOf('a2 '))).toEqual({
+      nav: { ...INITIAL_SIDEBAR_NAV, box: 'agents', projectKey: null, agentKey: 'p1/a2' }, command: { type: 'openAgent', projectId: 'p1', agentId: 'a2' },
     });
     expect(sidebarCardClick(layout, INITIAL_SIDEBAR_NAV, 5, 0)).toBeNull();
   });
@@ -301,7 +301,7 @@ describe('drawSidebarCards', () => {
     expect(onActive.frame.cells[(other - 1) * COLS].style).toEqual(styleOf(AMBER, 'chrome.border'));
     expect(onActive.frame.cells[other * COLS + 2].style.bg).toEqual({ type: 'default' });
 
-    const onOther = render(model(1, 3), { focus: 'projects', nav: { box: 'projects', projectKey: 'o1', agentKey: null }, theme: AMBER });
+    const onOther = render(model(1, 3), { focus: 'projects', nav: { ...INITIAL_SIDEBAR_NAV, box: 'projects', projectKey: 'o1', agentKey: null }, theme: AMBER });
     expect(onOther.frame.cells[0].style).toEqual(styleOf(AMBER, 'chrome.border'));
     expect(onOther.frame.cells[(other - 1) * COLS].style).toEqual(styleOf(AMBER, 'chrome.borderFocus'));
     expect(onOther.frame.cells[other * COLS + 2].style.bg).toEqual(styleOf(AMBER, 'row.cursor').bg);
@@ -310,7 +310,7 @@ describe('drawSidebarCards', () => {
     const badgeX = onOther.lines[other].indexOf('[STOPPED]');
     expect(onOther.frame.cells[other * COLS + badgeX].style).toEqual(styleOf(AMBER, 'status.warn.badge'));
 
-    const agents = render(model(1, 3), { focus: 'agents', nav: { box: 'agents', projectKey: null, agentKey: 'p1/a2' }, theme: AMBER });
+    const agents = render(model(1, 3), { focus: 'agents', nav: { ...INITIAL_SIDEBAR_NAV, box: 'agents', projectKey: null, agentKey: 'p1/a2' }, theme: AMBER });
     const a2 = agents.lines.findIndex((line) => line.includes('a2 '));
     const agentsTop = agents.lines.findIndex((line) => line.includes('AGENTS'));
     expect(agents.frame.cells[agentsTop * COLS].style).toEqual(styleOf(AMBER, 'chrome.borderFocus'));
@@ -355,6 +355,145 @@ describe('drawSidebarCards', () => {
         expect(rowText(frame, y, cols, 4)).toBe('    ');
       }
     }
+  });
+});
+
+describe('expanded agents', () => {
+  const MONO = BUILT_IN_THEMES.mono;
+  const at = (agentKey: string, expanded: string[], box: 'agents' | 'projects' = 'agents'): SidebarNav => ({ ...INITIAL_SIDEBAR_NAV, box, agentKey, expanded: new Set(expanded) });
+  /** 3 other projects; 4 agents with a task and provider, a1 asking a question long enough to wrap past two lines. */
+  const details = (others = 3) => model(others, 4, {
+    agents: model(others, 4).agents.map((each, index) => ({
+      ...each, task_ref: 'cockpit-style/foo', provider: 'claude',
+      ...(index === 0 ? { detail: '? may I run npm test and then a much longer question that wraps over more than two lines' } : {}),
+    })),
+  });
+  const blockRows = (layout: SidebarCardsLayout, index: number) =>
+    card(layout, 'agents')!.lines.slice(0, card(layout, 'agents')!.rows - 2).filter((line) => line.kind === 'block' && line.index === index);
+
+  it('toggles the cursor agent with Space, and nothing in the projects box or with no agents', () => {
+    const view = (nav: SidebarNav) => sidebarCursor(details(), nav);
+    let nav = at('p1/a2', []);
+    nav = navigateSidebar(view(nav), nav, 'toggle').nav;
+    expect([...nav.expanded]).toEqual(['p1/a2']);
+    nav = navigateSidebar(view(nav), nav, 'down').nav;
+    nav = navigateSidebar(view(nav), nav, 'toggle').nav;
+    expect([...nav.expanded].sort()).toEqual(['p1/a2', 'p1/a3']);
+    nav = navigateSidebar(view(nav), nav, 'toggle').nav;
+    expect([...nav.expanded]).toEqual(['p1/a2']);
+    expect(navigateSidebar(view(nav), nav, 'toggle').command).toBeNull();
+    const projects = at('p1/a2', ['p1/a2'], 'projects');
+    expect(navigateSidebar(view(projects), projects, 'toggle')).toEqual({ nav: projects, command: null });
+    expect(navigateSidebar(sidebarCursor(model(1, 0), INITIAL_SIDEBAR_NAV), INITIAL_SIDEBAR_NAV, 'toggle').nav).toBe(INITIAL_SIDEBAR_NAV);
+    // Opening keeps what is expanded.
+    expect([...navigateSidebar(view(nav), { ...nav, box: 'projects' }, 'open').nav.expanded]).toEqual(['p1/a2']);
+  });
+
+  it('drops the key of an agent that left the model', () => {
+    const nav = at('p1/a2', ['p1/a2', 'p1/a4']);
+    const pruned = pruneExpanded(nav, details(1));
+    expect(pruned).toBe(nav);
+    const gone = pruneExpanded(nav, { ...details(1), agents: details(1).agents.filter((each) => each.agent_id !== 'a4') });
+    expect([...gone.expanded]).toEqual(['p1/a2']);
+    expect(gone.agentKey).toBe('p1/a2');
+    expect(pruneExpanded(nav, { ...details(1), agents: [] }).expanded.size).toBe(0);
+  });
+
+  it('lays out the block: the row, task, phase and provider, at most two activity lines, the open hint', () => {
+    const layout = sidebarCardsLayout(details(0), 22, at('p1/a1', ['p1/a1']), COLS);
+    expect(blockRows(layout, 0).map((line) => (line.kind === 'block' ? line.part : ''))).toEqual(['top', 'task', 'phase', 'detail', 'detail', 'hint', 'bottom']);
+    const { lines } = render(details(0), { nav: at('p1/a1', ['p1/a1']), focus: 'agents' });
+    const top = lines.findIndex((line) => line.includes('[-] a1'));
+    expect(lines.slice(top, top + 7).map((line) => line.trimEnd())).toEqual([
+      '│┌ [-] a1 worker 12m [QUESTION] ┐│',
+      '││ task  cockpit-style/foo      ││',
+      '││ implement · claude           ││',
+      '││ ? may I run npm test and     ││',
+      '││ then a much longer question… ││',
+      '││ Enter: open tab              ││',
+      '│└──────────────────────────────┘│',
+    ]);
+    for (const line of lines) expect(stringWidth(line)).toBe(COLS);
+    // The other agents stay collapsed rows.
+    expect(lines.some((line) => line.includes('[+] a2'))).toBe(true);
+  });
+
+  for (const rows of [22, 12, 8]) {
+    it(`keeps the cursor's whole block in view at ${rows} rows with mixed expanded and collapsed agents, Other projects shrinking first`, () => {
+      for (const cursorAgent of ['a1', 'a2', 'a3', 'a4']) {
+        const nav = at(`p1/${cursorAgent}`, ['p1/a1', 'p1/a3']);
+        const layout = sidebarCardsLayout(details(), rows, nav, COLS);
+        const where = `${rows} rows, cursor ${cursorAgent}: ${JSON.stringify(rowsOf(layout))}`;
+        expect(rowsOf(layout).reduce((sum, each) => sum + each, 0), where).toBe(rows);
+        const index = layout.agentIndex;
+        const expanded = nav.expanded.has(`p1/${cursorAgent}`);
+        const height = expanded ? (cursorAgent === 'a1' ? 7 : 6) : 1; // a1's question wraps to two lines
+        // A block fits when the Agents card can hold it (and a `+N more` line) below the Project card's coordinator row.
+        const fits = rows - 3 - 2 >= height + 1;
+        const shown = expanded ? blockRows(layout, index).length : card(layout, 'agents')!.lines.filter((line) => line.kind === 'agent' && line.index === index).length;
+        expect(shown, where).toBe(fits ? height : Math.min(height, rows - 3 - 2 - 1));
+        if (expanded && fits) expect(blockRows(layout, index).map((line) => (line.kind === 'block' ? line.part : '')), where).toContain('bottom');
+        // Agents lose rows only once Other projects is down to a `+N more` line (or gone) and the Project card shrinks after it.
+        const other = card(layout, 'otherProjects');
+        const projectRows = card(layout, 'project')!.rows;
+        if (projectRows < 5) expect(other?.rows ?? 0, where).toBeLessThanOrEqual(3);
+      }
+    });
+  }
+
+  it('fits the cursor block at 12 rows by shrinking Other projects, then the Project card, then dropping Other projects', () => {
+    const layout = sidebarCardsLayout(details(), 12, at('p1/a3', ['p1/a1', 'p1/a3']), COLS);
+    expect(rowsOf(layout)).toEqual([3, 9]);
+    expect(card(layout, 'agents')!.lines.at(-1)).toEqual({ kind: 'more', count: 3 });
+    // At 22 the shrunk Other projects takes back the rows the Agents window leaves.
+    expect(rowsOf(sidebarCardsLayout(details(), 22, at('p1/a3', ['p1/a1', 'p1/a3']), COLS))).toEqual([5, 5, 12]);
+    // With the cursor collapsed, the layout is the collapsed one's.
+    expect(rowsOf(sidebarCardsLayout(details(), 12, at('p1/a2', ['p1/a1', 'p1/a3']), COLS))).toEqual(rowsOf(sidebarCardsLayout(details(), 12, at('p1/a2', []), COLS)));
+  });
+
+  it('toggles on a click on the marker, also on a block\'s top row; a click elsewhere opens the agent', () => {
+    const nav = at('p1/a1', ['p1/a3']);
+    const { layout, lines } = render(details(0), { nav });
+    const collapsed = lines.findIndex((line) => line.includes('[+] a2'));
+    const block = lines.findIndex((line) => line.includes('[-] a3'));
+    expect(lines[block].slice(3, 6)).toBe('[-]');
+    expect([2, 3, 4, 5, 6].map((x) => sidebarCardTarget(layout, x, block)?.onMarker)).toEqual([false, true, true, true, false]);
+    expect(sidebarCardClick(layout, nav, 3, block)).toEqual({ nav: { ...nav, agentKey: 'p1/a3', expanded: new Set() }, command: null });
+    expect(sidebarCardClick(layout, nav, 2, collapsed)).toEqual({ nav: { ...nav, agentKey: 'p1/a2', expanded: new Set(['p1/a3', 'p1/a2']) }, command: null });
+    for (const y of [block, block + 1, block + 3, block + 5]) {
+      expect(sidebarCardClick(layout, nav, 10, y)?.command, `row ${y}`).toEqual({ type: 'openAgent', projectId: 'p1', agentId: 'a3' });
+    }
+  });
+
+  it('frames the block in the agent\'s status role, its text the same under mono', () => {
+    const sidebar = details(0);
+    const nav = at('p1/a2', ['p1/a1', 'p1/a2']);
+    const amber = render(sidebar, { nav, theme: AMBER });
+    const mono = render(sidebar, { nav, theme: MONO });
+    expect(mono.lines).toEqual(amber.lines);
+    expect(render(sidebar, { nav, theme: CLASSIC }).lines).toEqual(amber.lines);
+    for (const [name, index] of [['a1', 0], ['a2', 1]] as const) {
+      const role = agentStatusRole(sidebar.agents[index]);
+      expect(role).toBe(name === 'a1' ? 'status.attention' : 'status.active');
+      const top = amber.lines.findIndex((line) => line.includes(`[-] ${name}`));
+      const bottom = top + blockRows(amber.layout, index).length - 1;
+      for (const [x, y] of [[1, top], [COLS - 2, top], [1, top + 1], [COLS - 2, top + 2], [1, bottom], [10, bottom]]) {
+        expect(amber.frame.cells[y * COLS + x].style, `${name} ${x},${y}`).toEqual(styleOf(AMBER, role));
+      }
+    }
+    // A stale list dims the block's border and text too.
+    const stale = render({ ...sidebar, agentsStale: true }, { nav, theme: AMBER });
+    const top = stale.lines.findIndex((line) => line.includes('[-] a2'));
+    expect(stale.frame.cells[top * COLS + 1].style).toEqual({ ...styleOf(AMBER, 'status.active'), dim: true });
+    expect(stale.frame.cells[(top + 1) * COLS + 3].style.dim).toBe(true);
+  });
+
+  it('puts the cursor bar on the block\'s top row', () => {
+    const nav = at('p1/a2', ['p1/a2']);
+    const { frame, lines } = render(details(0), { nav, focus: 'agents', theme: AMBER });
+    const top = lines.findIndex((line) => line.includes('[-] a2'));
+    expect(frame.cells[top * COLS + 3].style.bg).toEqual(styleOf(AMBER, 'row.cursor').bg);
+    expect(frame.cells[(top + 1) * COLS + 3].style.bg).not.toEqual(styleOf(AMBER, 'row.cursor').bg);
   });
 });
 
