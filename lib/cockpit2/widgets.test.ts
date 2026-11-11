@@ -88,7 +88,7 @@ describe('drawTabBar', () => {
     expect(focused.frame.cells[3 * 200 + x].text).toBe('┘');
     const label = focused.frame.cells[2 * 200 + x + 2].style;
     expect(label).toEqual(styleOf(CLASSIC, 'tab.active')); // its label in the tab's fill (classic: inverse)
-    expect(focused.frame.cells[2 * 200 + x].style).toEqual(styleOf(CLASSIC, 'tab.active')); // its border too: one block
+    expect(focused.frame.cells[2 * 200 + x].style.inverse).toBe(false); // its side border keeps the tab's outline
     expect(focused.frame.cells[3 * 200 + x].style.bold).toBe(true); // its open bottom edge in focus
     const unfocused = renderTabBar(200, 60, TABS, false);
     expect(unfocused.frame.cells[2 * 200 + x + 2].style).toEqual(label); // filled whether or not the slot has the keys
@@ -137,7 +137,8 @@ describe('tab bar roles', () => {
     expect(at(master.x + 2, 1)).toEqual(styleOf(AMBER, 'text.primary'));
     // The active tab: its top border and label row one block in `tab.active`'s fill, its open bottom edge in focus.
     const fill = styleOf(AMBER, 'tab.active');
-    expect(at(w1.x, 0)).toEqual({ ...fill, fg: fill.bg, bold: false });
+    expect(at(w1.x, 0)).toEqual(styleOf(AMBER, 'chrome.borderFocus'));
+    expect(at(w1.x, 1)).toEqual(styleOf(AMBER, 'chrome.borderFocus'));
     expect(at(w1.x, 2)).toEqual(styleOf(AMBER, 'chrome.borderFocus'));
     expect(at(w1.x + 2, 1)).toEqual(fill);
     expect(at(w1.closeX!, 1)).toEqual({ ...styleOf(AMBER, 'tab.close'), bg: fill.bg });
@@ -152,7 +153,7 @@ describe('tab bar roles', () => {
     expect(at(79, 2)).toEqual(styleOf(AMBER, 'chrome.border'));
     // Unfocused, the active tab keeps its fill.
     const unfocused = draw(AMBER, 80, false);
-    expect(unfocused.at(w1.x, 0)).toEqual({ ...fill, fg: fill.bg, bold: false });
+    expect(unfocused.at(w1.x, 0)).toEqual(styleOf(AMBER, 'chrome.border'));
     expect(unfocused.at(w1.x + 2, 1)).toEqual(fill);
   });
 

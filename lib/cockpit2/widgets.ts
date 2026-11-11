@@ -152,16 +152,15 @@ function segmentStyle(segment: TabBarSegment, model: TabBarModel, slotFocused: b
 }
 
 /**
- * A segment of the active tab inside its fill: the label in `tab.active`; the
- * borders in the fill's own colour (a solid block; with no fill colour, as in
- * `mono`, the borders take the role's attributes); badge and close mark keep
- * their colour on the fill.
+ * A segment of the active tab's label row: the label in `tab.active`, badge
+ * and close mark in their own colour on the fill (inverse with no fill colour,
+ * as in `mono`), the side borders unfilled so the tab keeps its outline.
  */
 function activeTabFill(segment: TabBarSegment, base: CellStyle, theme: Theme): CellStyle {
   const fill = styleOf(theme, 'tab.active');
   const hasFill = fill.bg.type !== 'default';
   switch (segment.kind) {
-    case 'border': return hasFill ? { ...fill, fg: fill.bg, bold: false } : fill;
+    case 'border': return base;
     case 'text': return fill;
     default: return hasFill ? { ...base, bg: fill.bg } : { ...base, inverse: true };
   }
@@ -178,8 +177,8 @@ export function drawTabBar(frame: Frame, region: Region, view: TabBarView, optio
   const [top, middle, bottom] = tabBarRows(model, layout, region.cols, options.error);
   const rows = region.rows >= 3 ? [top, middle, bottom] : region.rows === 2 ? [middle, bottom] : [middle];
   rows.forEach((segments, offset) => {
-    // The active tab's top border and label row are one filled block (`tab.active`); its bottom row stays open onto the pane.
-    const filled = segments !== bottom;
+    // The inside of the active tab's label row is filled (`tab.active`); its border lines stay as on every tab.
+    const filled = segments === middle;
     drawRuns(frame, region.x, region.y + offset, segments.map((segment): Run => {
       const base = segmentStyle(segment, model, options.slotFocused, options.theme);
       const active = segment.tab !== undefined && model.tabs[segment.tab]?.active;
