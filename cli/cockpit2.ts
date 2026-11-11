@@ -22,9 +22,10 @@ import { fdWriter, openTerminal } from '../lib/cockpit2/terminal.ts';
 import { createViewStateStore } from '../lib/cockpit2/viewState.ts';
 import { cliError, requireProjectScope } from './shared.ts';
 
-/** Where cockpit2 keeps its files under orc's data home: the single-instance lock (Plan 6 Step 12) and the view state. */
-export function cockpit2Paths(dataHome: string): { lockPath: string; viewStatePath: string } {
-  return { lockPath: join(dataHome, 'cockpit', 'cockpit2.lock'), viewStatePath: join(dataHome, 'cockpit', 'view-state.json') };
+/** Where cockpit2 keeps its files under orc's data home: the single-instance lock (Plan 6 Step 12), the view state and its write lock. */
+export function cockpit2Paths(dataHome: string): { lockPath: string; viewStatePath: string; viewStateLockPath: string } {
+  const dir = join(dataHome, 'cockpit');
+  return { lockPath: join(dir, 'cockpit2.lock'), viewStatePath: join(dir, 'view-state.json'), viewStateLockPath: join(dir, 'view-state.lock') };
 }
 
 async function main(): Promise<void> {
@@ -33,7 +34,7 @@ async function main(): Promise<void> {
   const { keys, problems } = resolveCockpitKeys();
   for (const problem of problems) console.error(`Warning: ${problem}`);
   if (!ACTIVE_PROJECT) cliError('orc cockpit2 needs a registered project; run it inside one');
-  const { lockPath, viewStatePath } = cockpit2Paths(projectDataHome());
+  const { lockPath, viewStatePath, viewStateLockPath } = cockpit2Paths(projectDataHome());
   const watcher = new ProjectWatcher();
   watcher.start();
   const terminal = openTerminal({ input: process.stdin, output: process.stdout, write: fdWriter(process.stdout.fd) });
@@ -42,12 +43,14 @@ async function main(): Promise<void> {
       terminal,
       tmuxBinary: tmuxBinary(),
       lockPath,
-      store: createViewStateStore(viewStatePath),
+      store: createViewStateStore({ path: viewStatePath, lockPath: viewStateLockPath }),
       projects: watcher,
       projectId: ACTIVE_PROJECT.id,
       keys,
     });
     await app.done;
+    const saveError = app.saveError();
+    if (saveError) console.error(`Warning: the cockpit's view state was not saved: ${saveError}`);
   } catch (error) {
     // Back on the main screen first, or the error is printed on the alternate one and lost.
     terminal.restore();

@@ -135,16 +135,21 @@ describe('slotMessage', () => {
   const ended = { state: { kind: 'ended' as const, reason: 'can\'t find session: orc-master' }, error: null, screen: null };
 
   it('shows a stopped project\'s message with its start command when its master session is gone', () => {
-    expect(slotMessage({ tab: master, keys, target, session: ended, project: { name: 'demo', repoRoot: '/repo/demo', running: false } })).toEqual([
+    expect(slotMessage({ tab: master, keys, target, session: ended, project: { name: 'demo', repoRoot: '/repo/demo', connection: 'stopped' } })).toEqual([
       'Project demo is not running.', 'Start it with: cd /repo/demo && orc start-session', 'tmux: can\'t find session: orc-master', quitHint(keys),
     ]);
-    expect(slotMessage({ tab: master, keys, target, session: ended, project: { name: 'demo', repoRoot: '/repo/demo', running: true } }))
-      .toContain('The master\'s tmux session is not running.');
+  });
+
+  it('gives no start command while the coordinator is up, connecting or unreachable', () => {
+    for (const connection of ['running', 'connecting', 'unreachable'] as const) {
+      const lines = slotMessage({ tab: master, keys, target, session: ended, project: { name: 'demo', repoRoot: '/repo/demo', connection } });
+      expect(lines).toEqual(['The master\'s tmux session is not running.', 'tmux: can\'t find session: orc-master', `Coordinator: ${connection}.`, quitHint(keys)]);
+    }
   });
 
   it('says why an agent tab or a missing project shows nothing, and that a tab is attaching', () => {
     const worker = { projectId: 'p1', agentId: 'w1' };
-    const project = { name: 'demo', repoRoot: '/repo/demo', running: true };
+    const project = { name: 'demo', repoRoot: '/repo/demo', connection: 'running' as const };
     expect(slotMessage({ tab: worker, keys, target, session: ended, project })?.[0]).toBe('w1\'s tmux session is not running.');
     expect(slotMessage({ tab: worker, keys, target: null, session: null, project })?.[0]).toBe('w1 does not run in tmux, so the cockpit cannot show it.');
     expect(slotMessage({ tab: master, keys, target: null, session: null, project: null })?.[0]).toBe('Project p1 is not registered.');
@@ -217,10 +222,15 @@ class FakeWatcher {
 }
 
 class MemoryStore implements ViewStateStore {
-  saved: ViewState[] = [];
+  /** Set to make the next updates fail. */
+  failWith: Error | null = null;
   constructor(public state: ViewState = DEFAULT_VIEW_STATE) {}
   load() { return this.state; }
-  save(state: ViewState) { this.state = structuredClone(state); this.saved.push(this.state); return Promise.resolve(); }
+  update(change: (stored: ViewState) => ViewState) {
+    if (this.failWith) return Promise.reject(this.failWith);
+    this.state = structuredClone(change(this.state));
+    return Promise.resolve(this.state);
+  }
 }
 
 const MASTER_TARGET = { socket: 'orc-sock', session: 'orc-master' };
@@ -450,6 +460,11 @@ describe('runApp (fake tmux client)', () => {
     client().capture = () => Promise.reject(new Error('capture-pane failed'));
     client().emit('resize', 46, 21);
     await waitForSlotText(terminal, 'capture-pane failed');
+    // Nothing is typed into a pane the slot does not show.
+    terminal.type('x');
+    terminal.type(`${ESC}[200~text${ESC}[201~`);
+    expect(client().sent).toEqual([]);
+    expect(client().pastes).toEqual([]);
   });
 });
 
@@ -572,6 +587,24 @@ describe('runApp tabs and projects (fake tmux clients)', () => {
     expect(clients[0].closed).toBe(1);
     await sleep(5);
     expect(store.state.masterTargets).toEqual({ demo: MASTER_TARGET });
+  });
+
+  it('keeps master targets another writer stored, and shows a failed save in the tab bar until a save succeeds', async () => {
+    const store = new MemoryStore({ ...DEFAULT_VIEW_STATE, masterTargets: { other: { socket: 'orc-o', session: 'orc-master-o' } } });
+    const { terminal, app } = start({ store });
+    await attached(terminal);
+    expect(store.state.masterTargets).toEqual({ other: { socket: 'orc-o', session: 'orc-master-o' }, demo: MASTER_TARGET });
+
+    store.failWith = new Error('EACCES: permission denied');
+    app.apply((state) => openAgent(state, 'demo', 'w1'));
+    await waitFor(() => app.saveError() === 'EACCES: permission denied');
+    for (let until = Date.now() + 4_000; !text(await shown(terminal), 1, 34).includes('view state not saved'); await sleep(25)) {
+      if (Date.now() > until) throw new Error(`no save error in the tab bar: ${text(await shown(terminal), 1, 34)}`);
+    }
+    store.failWith = null;
+    app.apply((state) => selectTab(state, MASTER_TAB));
+    await waitFor(() => app.saveError() === null);
+    expect(store.state.tabs.projects[0]).toEqual({ projectId: 'demo', tabs: ['w1'], active: null });
   });
 
   it('shows a stopped project\'s message and start command when its master is gone too', async () => {

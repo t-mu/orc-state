@@ -22,7 +22,7 @@
  * placeholders that Step 9 replaces; the prefix table comes with Step 8, mouse
  * routing with Step 10.
  */
-import { tmuxSessionTarget, type ProjectWatchState, type ProjectWatchUpdate, type StatusView } from '../../client.ts';
+import { tmuxSessionTarget, type ProjectConnectionState, type ProjectWatchState, type ProjectWatchUpdate, type StatusView } from '../../client.ts';
 import { MASTER_TAB, closedTabs, shownTab, showProject, type CockpitTabState, type OpenTab, type TabTransition } from '../cockpitTabs.ts';
 import { keyLabel, type CockpitKeys } from '../cockpitKeys.ts';
 import { DEFAULT_STYLE, blitScreen, createFrame, drawText, slotCursor, type Frame, type Region } from './frame.ts';
@@ -164,6 +164,8 @@ export interface AppOptions {
 export interface App {
   /** Resolves once the app has quit, the terminal is restored and the view state saved. */
   readonly done: Promise<void>;
+  /** Why the last view-state save failed; null once one succeeds. The CLI reports it after the terminal is restored. */
+  saveError(): string | null;
   quit(): void;
   /** Applies a tab transition (lib/cockpitTabs.ts); Step 8 binds keys to these. A refused one changes nothing. */
   apply(transition: (state: CockpitTabState) => TabTransition): TabTransition;
@@ -206,7 +208,7 @@ function drawSidebar(frame: Frame, region: Region, tabs: CockpitTabState, nameOf
 }
 
 /** The placeholder tab bar: the active project's tabs, the active one bold, and how to quit (Step 9 draws the real one). */
-function drawTabBar(frame: Frame, region: Region, tabs: CockpitTabState, keys: CockpitKeys): void {
+function drawTabBar(frame: Frame, region: Region, tabs: CockpitTabState, keys: CockpitKeys, saveError: string | null): void {
   if (region.cols === 0 || region.rows === 0) return;
   const row = region.y + Math.min(1, region.rows - 1);
   const project = tabs.projects.find((entry) => entry.projectId === tabs.activeProject);
@@ -219,7 +221,7 @@ function drawTabBar(frame: Frame, region: Region, tabs: CockpitTabState, keys: C
     x += label.length + 1;
   }
   if (region.rows >= 3) drawText(frame, region.x, region.y + region.rows - 1, '─'.repeat(region.cols), MUTED_STYLE);
-  const hint = quitHint(keys);
+  const hint = saveError ? `view state not saved: ${saveError}` : quitHint(keys);
   const room = region.x + region.cols - x;
   if (room > 0) drawText(frame, Math.max(x, region.x + region.cols - hint.length - 1), row, hint, MUTED_STYLE, room);
 }
@@ -246,8 +248,8 @@ const sameTarget = (a: TmuxTarget | undefined, b: TmuxTarget) => a?.socket === b
 /** What the slot says about a tab that has no screen to show, or null when its screen is shown. */
 export interface SlotContext {
   tab: OpenTab | null;
-  /** The project's name and repository, when the registry lists it. */
-  project: { name: string; repoRoot: string; running: boolean } | null;
+  /** The project's name, repository and coordinator connection, when the registry lists it. */
+  project: { name: string; repoRoot: string; connection: ProjectConnectionState } | null;
   target: TmuxTarget | null;
   session: Pick<PaneSession, 'state' | 'error' | 'screen'> | null;
   keys: CockpitKeys;
@@ -264,8 +266,10 @@ export function slotMessage({ tab, project, target, session, keys }: SlotContext
   const state = session?.state ?? { kind: 'attaching' as const };
   if (state.kind === 'ended') {
     if (tab.agentId !== null) return [`${who}'s tmux session is not running.`, `tmux: ${state.reason}`, quitHint(keys)];
-    if (project && !project.running) return [`Project ${project.name} is not running.`, startCommand, `tmux: ${state.reason}`, quitHint(keys)];
-    return ['The master\'s tmux session is not running.', `tmux: ${state.reason}`, startCommand, quitHint(keys)];
+    if (project?.connection === 'stopped') return [`Project ${project.name} is not running.`, startCommand, `tmux: ${state.reason}`, quitHint(keys)];
+    // The coordinator is up (or not known yet): it may be restarting the master, so no start command.
+    const coordinator = project ? `Coordinator: ${project.connection}.` : 'The project is not registered.';
+    return ['The master\'s tmux session is not running.', `tmux: ${state.reason}`, coordinator, quitHint(keys)];
   }
   if (session?.error) return [`${who} is not shown.`, session.error, quitHint(keys)];
   if (state.kind === 'attaching' || !session?.screen) return [`Attaching to ${tab.agentId === null ? 'the master' : tab.agentId} (tmux -L ${target.socket}, session ${target.session})…`];
@@ -296,9 +300,18 @@ export function runApp(options: AppOptions): App {
   let tabs = showProject(loaded.tabs, options.projectId).state;
   const masterTargets: ViewState['masterTargets'] = { ...loaded.masterTargets };
   let saving: Promise<void> = Promise.resolve();
-  /** Saves the view state after the saves before it; a failed save leaves the file as it was and the cockpit running. */
+  let lastSaveError: string | null = null;
+  /**
+   * Saves the view state after the saves before it, through the store's locked
+   * read-change-write: this cockpit's tabs replace the stored ones (Step 12
+   * merges projects added by another writer here), master targets are merged.
+   * A failed save leaves the file as it was and is shown in the tab bar; the next save retries.
+   */
   const save = () => {
-    saving = saving.then(() => store.save({ tabs, masterTargets })).catch(() => { /* kept in memory; the next save retries */ });
+    saving = saving
+      .then(() => store.update((stored) => ({ tabs, masterTargets: { ...stored.masterTargets, ...masterTargets } })))
+      .then(() => { if (lastSaveError) { lastSaveError = null; scheduleRender(); } },
+        (error: unknown) => { lastSaveError = error instanceof Error ? error.message : String(error); scheduleRender(); });
   };
 
   const watched = new Map(options.projects.projects().map((state) => [state.project.id, state]));
@@ -365,13 +378,13 @@ export function runApp(options: AppOptions): App {
     lastRender = Date.now();
     const frame = createFrame(layout.cols, layout.rows);
     drawSidebar(frame, layout.sidebar, tabs, nameOf);
-    drawTabBar(frame, layout.tabBar, tabs, keys);
+    drawTabBar(frame, layout.tabBar, tabs, keys, lastSaveError);
     const tab = shownTab(tabs);
     const session = sessions.shown();
     const project = tab && watched.get(tab.projectId);
     const message = slotMessage({
       tab, keys, session, target: tab ? targetOf(tab) : null,
-      project: project ? { name: project.project.name, repoRoot: project.project.target_repo_root, running: project.connection === 'running' } : null,
+      project: project ? { name: project.project.name, repoRoot: project.project.target_repo_root, connection: project.connection } : null,
     });
     let cursor: Cursor = { x: 0, y: 0, visible: false };
     if (message || !session?.screen) {
@@ -471,5 +484,5 @@ export function runApp(options: AppOptions): App {
   rememberMasterTargets();
   save();
   showActive();
-  return { done, quit, apply, tabs: () => tabs };
+  return { done, quit, apply, tabs: () => tabs, saveError: () => lastSaveError };
 }

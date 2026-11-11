@@ -7,13 +7,14 @@
  * tmux target, so a restarted cockpit reopens the same tabs and can show a
  * master whose coordinator is down. It never holds orchestration state.
  *
- * Saves replace the file atomically (a 0600 temp file renamed over it) while
- * holding `<path>.lock`, so concurrent saves, from this cockpit or another
- * process, never leave a torn or mixed file. A missing or corrupt file loads
- * as the defaults.
+ * Updates read, change and replace the file atomically (a 0600 temp file
+ * renamed over it) while holding a lock file the CLI layer names, so
+ * concurrent writers, in this cockpit or another process, never leave a torn
+ * file or lose each other's changes. A missing or corrupt file loads as the
+ * defaults.
  */
 import { randomBytes } from 'node:crypto';
-import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
+import { closeSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { EMPTY_COCKPIT_STATE, parseTabs, type CockpitTabState } from '../cockpitTabs.ts';
 
@@ -55,69 +56,105 @@ export function parseViewState(raw: string | null | undefined): ViewState {
 export interface ViewStateStore {
   /** The stored state, or the defaults when the file is missing or corrupt. */
   load(): ViewState;
-  /** Replaces the stored state atomically under the lock. */
-  save(state: ViewState): Promise<void>;
+  /**
+   * Reads the stored state, changes it with `change` and writes the result,
+   * all under the lock, so a change another writer made in between is seen
+   * by `change` and not lost. Resolves with what was written.
+   */
+  update(change: (stored: ViewState) => ViewState): Promise<ViewState>;
 }
 
 export interface ViewStateStoreOptions {
-  /** How long a save waits for the lock before it fails (default 5 s). */
+  /** The view-state file (`cockpit/view-state.json` under orc's data home). */
+  path: string;
+  /** The lock file held while the view state is written; passed in by the CLI layer with the path. */
+  lockPath: string;
+  /** How long an update waits for the lock before it fails (default 2 s). */
   lockTimeoutMs?: number;
   /** A lock file older than this was left by a crashed writer and is taken over (default 10 s). */
   staleLockMs?: number;
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const readToken = (lockPath: string): string | null => {
+  try { return readFileSync(lockPath, 'utf8'); } catch { return null; }
+};
 
-async function acquireLock(lockPath: string, timeoutMs: number, staleMs: number): Promise<number> {
+/**
+ * Takes the lock: creates `lockPath` exclusively with a unique token in it.
+ * A stale lock is renamed aside (only one waiter can win that rename) and,
+ * when what was moved turns out to be a fresh lock after all, put back.
+ */
+async function acquireLock(lockPath: string, timeoutMs: number, staleMs: number): Promise<string> {
+  const token = `${process.pid} ${randomBytes(8).toString('hex')}\n`;
   const until = Date.now() + timeoutMs;
   for (;;) {
     try {
       const fd = openSync(lockPath, 'wx', 0o600);
-      writeSync(fd, `${process.pid}\n`);
-      return fd;
+      try { writeSync(fd, token); } finally { closeSync(fd); }
+      return token;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
     }
-    try {
-      if (Date.now() - statSync(lockPath).mtimeMs > staleMs) { unlinkSync(lockPath); continue; }
-    } catch { continue; /* released meanwhile */ }
-    if (Date.now() > until) throw new Error(`view state is locked by another writer (${lockPath})`);
+    let stale = false;
+    try { stale = Date.now() - statSync(lockPath).mtimeMs > staleMs; } catch { continue; /* released meanwhile */ }
+    if (stale) {
+      const aside = `${lockPath}.${randomBytes(4).toString('hex')}.stale`;
+      try { renameSync(lockPath, aside); } catch { continue; /* another waiter took it over */ }
+      try {
+        // Moved a lock taken between the stat and the rename: give it back (fails when a newer one exists).
+        if (Date.now() - statSync(aside).mtimeMs <= staleMs) linkSync(aside, lockPath);
+      } catch { /* a newer lock exists, or the aside is gone */ }
+      try { unlinkSync(aside); } catch { /* gone */ }
+      continue;
+    }
+    if (Date.now() > until) throw new Error(`the view state is locked by another writer (${lockPath})`);
     await sleep(5 + Math.random() * 10);
   }
 }
 
-/** The store at `path` (`cockpit/view-state.json` under orc's data home); its directory is created 0700 on first save. */
-export function createViewStateStore(path: string, options: ViewStateStoreOptions = {}): ViewStateStore {
-  const lockPath = `${path}.lock`;
-  const timeoutMs = options.lockTimeoutMs ?? 5_000;
+/** Releases the lock only while it still holds this writer's token (it may have been taken over as stale). */
+function releaseLock(lockPath: string, token: string): void {
+  if (readToken(lockPath) !== token) return;
+  try { unlinkSync(lockPath); } catch { /* gone */ }
+}
+
+function readState(path: string): ViewState {
+  try {
+    return parseViewState(readFileSync(path, 'utf8'));
+  } catch {
+    return DEFAULT_VIEW_STATE;
+  }
+}
+
+/** The store at `options.path`; its directory is created 0700 on first write. */
+export function createViewStateStore(options: ViewStateStoreOptions): ViewStateStore {
+  const { path, lockPath } = options;
+  const timeoutMs = options.lockTimeoutMs ?? 2_000;
   const staleMs = options.staleLockMs ?? 10_000;
   return {
-    load() {
-      try {
-        return parseViewState(readFileSync(path, 'utf8'));
-      } catch {
-        return DEFAULT_VIEW_STATE;
-      }
-    },
-    async save(state) {
+    load: () => readState(path),
+    async update(change) {
       mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-      const lock = await acquireLock(lockPath, timeoutMs, staleMs);
+      mkdirSync(dirname(lockPath), { recursive: true, mode: 0o700 });
+      const token = await acquireLock(lockPath, timeoutMs, staleMs);
       const temp = `${path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
       try {
+        const next = change(readState(path));
         const fd = openSync(temp, 'wx', 0o600);
         try {
-          writeSync(fd, serializeViewState(state));
+          writeSync(fd, serializeViewState(next));
           fsyncSync(fd);
         } finally {
           closeSync(fd);
         }
         renameSync(temp, path);
+        return next;
       } catch (error) {
         try { unlinkSync(temp); } catch { /* never created */ }
         throw error;
       } finally {
-        closeSync(lock);
-        try { unlinkSync(lockPath); } catch { /* taken over as stale */ }
+        releaseLock(lockPath, token);
       }
     },
   };

@@ -6,6 +6,7 @@ describe('cockpit2Paths', () => {
     expect(cockpit2Paths('/home/u/.local/share/orc-state')).toEqual({
       lockPath: '/home/u/.local/share/orc-state/cockpit/cockpit2.lock',
       viewStatePath: '/home/u/.local/share/orc-state/cockpit/view-state.json',
+      viewStateLockPath: '/home/u/.local/share/orc-state/cockpit/view-state.lock',
     });
   });
 });

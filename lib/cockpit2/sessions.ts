@@ -131,15 +131,20 @@ export class PaneSession {
     if (this.owned && this.visible && !this.closed) this.client.resize(sizeOf(size).cols, sizeOf(size).rows).catch((error: unknown) => this.fail(error));
   }
 
-  /** Types bytes into the pane; null (nothing sent) when it is not live. */
+  /** Input reaches the pane only while its screen is shown: live, and no restore failure on display. */
+  private get typeable(): boolean {
+    return this.current.kind === 'live' && this.paneId !== null && this.failure === null;
+  }
+
+  /** Types bytes into the pane; null (nothing sent) when it is not typeable. */
   sendBytes(bytes: Buffer): Promise<void> | null {
-    if (this.current.kind !== 'live' || !this.paneId) return null;
+    if (!this.typeable || !this.paneId) return null;
     return this.client.sendBytes(this.paneId, bytes);
   }
 
-  /** Pastes text into the pane; null (nothing sent) when it is not live. */
+  /** Pastes text into the pane; null (nothing sent) when it is not typeable. */
   paste(text: string): Promise<void> | null {
-    if (this.current.kind !== 'live' || !this.paneId) return null;
+    if (!this.typeable || !this.paneId) return null;
     return this.client.paste(this.paneId, text);
   }
 
