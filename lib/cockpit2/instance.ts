@@ -1,7 +1,7 @@
 /**
  * lib/cockpit2/instance.ts — one cockpit per user.
  *
- * A running cockpit holds the instance lock (`cockpit/cockpit2.lock` under
+ * A running cockpit holds the instance lock (`cockpit/cockpit.lock` under
  * orc's data home; the CLI layer passes the path): a lock file (lockFile.ts)
  * holding its pid and process start time. A new cockpit claiming the lock:
  * - finds no lock, or a stale one (its pid is dead, or reused by another

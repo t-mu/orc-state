@@ -2,9 +2,9 @@
  * lib/cockpitKeys.ts
  *
  * The cockpit's keys as tmux key names (`F12`, `C-a`, `M-1`, `C-F10`): the
- * defaults, `ORC_COCKPIT_PREFIX` / `ORC_COCKPIT_KEYS` resolution and the hint
- * shown to the user. Pure: the tmux cockpit (adapters/tmuxCockpit.ts) binds
- * them, cockpit2 matches them against raw input (lib/cockpit2/input.ts).
+ * defaults, `ORC_COCKPIT_PREFIX` / `ORC_COCKPIT_KEYS` resolution and how a
+ * key reads in a hint. Pure: the cockpit matches them against raw input
+ * (lib/cockpit2/input.ts).
  */
 
 // ── Keys ─────────────────────────────────────────────────────────────────────
@@ -19,10 +19,7 @@ export interface CockpitKeys {
   prefix: string;
   /** Keys bound without the prefix; null leaves the action to the prefix table only. */
   direct: Record<CockpitAction, string | null>;
-  /**
-   * cockpit2's direct quit key (`quit=<key>` in `ORC_COCKPIT_KEYS`); null leaves only prefix then d.
-   * Kept out of `direct`: the tmux cockpit binds every direct key and has no quit action.
-   */
+  /** The direct quit key (`quit=<key>` in `ORC_COCKPIT_KEYS`); null leaves only prefix then d. */
   quit: string | null;
 }
 
@@ -52,7 +49,7 @@ function isDirectKeyName(key: string): boolean {
 /**
  * The cockpit keys from `ORC_COCKPIT_PREFIX` (a tmux key name) and
  * `ORC_COCKPIT_KEYS` (`action=key` pairs, comma-separated; `none` unbinds a
- * direct key; `quit=<key>` sets cockpit2's quit key). Anything invalid is
+ * direct key; `quit=<key>` sets the quit key). Anything invalid is
  * reported in `problems` and its default kept; a direct key that clashes with
  * the prefix or an earlier direct key is dropped, and so is a quit key that
  * clashes with any of them (silently when it is the default).
@@ -99,7 +96,7 @@ export function resolveCockpitKeys(env: NodeJS.ProcessEnv = process.env): { keys
     }
   }
   if (quit != null && taken.has(quit.toLowerCase())) {
-    // The default yields silently: the tmux cockpit (orc start-session) has no quit key to warn about.
+    // The default yields silently: a prefix or direct key set to C-q is not a quit key the user asked for.
     if (quitSet) problems.push(`ORC_COCKPIT_KEYS: ${quit} is already the prefix or another action's key; there is no direct quit key`);
     quit = null;
   }
@@ -109,18 +106,4 @@ export function resolveCockpitKeys(env: NodeJS.ProcessEnv = process.env): { keys
 /** How a tmux key name reads in a hint: `C-x` as `Ctrl-x`, `M-x` as `Alt-x`. */
 export function keyLabel(key: string): string {
   return key.replace(/^((?:[CMS]-)+)(?=.)/, (mods) => mods.replace(/C-/g, 'Ctrl-').replace(/M-/g, 'Alt-').replace(/S-/g, 'Shift-'));
-}
-
-/** How to get around, shown on attach and in the status line. */
-export function cockpitKeysHint(keys: CockpitKeys): string {
-  const prefix = keyLabel(keys.prefix);
-  const tabs = COCKPIT_ACTIONS.slice(0, 9).map((action) => keys.direct[action]).filter((key): key is string => key != null);
-  return [
-    ...(tabs.length > 0 ? [`${tabs.length > 1 ? `${keyLabel(tabs[0])}-${keyLabel(tabs.at(-1)!)}` : keyLabel(tabs[0])}: tab`] : []),
-    ...(keys.direct.dashboard ? [`${keyLabel(keys.direct.dashboard)}: sidebar`] : []),
-    `${prefix} o: switch pane`,
-    `${prefix} n/p: next/previous tab`,
-    `${prefix} N/P: project`,
-    `${prefix} d: detach`,
-  ].join(' | ');
 }

@@ -5,8 +5,7 @@ import { render as inkRender, type Instance } from 'ink';
 import { cleanup, render } from 'ink-testing-library';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectConnectionState, ProjectWatchState, ProjectWatchUpdate, StatusView } from '../../client.ts';
-import { App, KEYS_HINT, KEYS_HINT_STANDALONE, NO_COCKPIT_HINT, type SidebarActions } from './App.tsx';
-import { MOUSE_OFF, MOUSE_ON } from './mouse.ts';
+import { App, KEYS_HINT, NO_COCKPIT_HINT } from './App.tsx';
 import type { TuiAttention, TuiStatus, TuiWatchSource } from './status.ts';
 
 type Kind = TuiAttention['kind'];
@@ -86,14 +85,14 @@ function fakeSource(initial: ProjectWatchState[]) {
   };
 }
 
-/** The frame without colours, mouse mode sequences or trailing blanks. */
+/** The frame without colours or trailing blanks. */
 function plain(frame: string | undefined): string {
   return stripVTControlCharacters(frame ?? '').split('\n').map(line => line.trimEnd()).join('\n').trimEnd();
 }
 
-/** The last frame Ink drew (not a mouse mode sequence). */
+/** The last frame Ink drew. */
 function lastDrawn(frames: string[]): string {
-  return plain([...frames].reverse().find(frame => frame !== MOUSE_ON && frame !== MOUSE_OFF));
+  return plain(frames.at(-1));
 }
 
 /** Let mount effects and state updates settle (React schedules them on the faked timers). */
@@ -102,14 +101,6 @@ async function settle(action: () => void = () => {}): Promise<void> {
     action();
     await vi.advanceTimersByTimeAsync(0);
   });
-}
-
-function fakeActions() {
-  return {
-    selectProject: vi.fn<SidebarActions['selectProject']>(project => Promise.resolve(`Switched to project ${project.project_id}.`)),
-    openAgent: vi.fn<SidebarActions['openAgent']>(agent => Promise.resolve(`Opened ${agent.agent_id}.`)),
-    focusSlot: vi.fn<SidebarActions['focusSlot']>(),
-  };
 }
 
 const now = () => NOW;
@@ -207,80 +198,7 @@ describe('sidebar App', () => {
     expect(plain(app.lastFrame())).toMatch(/w1\s+implement 3m/);
   });
 
-  it('moves within a box with the arrows, between boxes with Tab, and runs the cockpit action on Enter', async () => {
-    const { source } = fakeSource([
-      project('alpha', 'running', status([{ id: 'a1' }, { id: 'a2' }])),
-      project('beta', 'running', status([{ id: 'b1' }])),
-    ]);
-    const actions = fakeActions();
-    const app = render(<App source={source} stateDir="/state/alpha" now={now} actions={actions} />);
-    const frame = () => plain(app.lastFrame());
-    const footer = () => frame().split('\n').at(-1);
-
-    await settle();
-    expect(footer()).toBe(KEYS_HINT);
-    // Agents have the keys first.
-    await settle(() => app.stdin.write('\u001B[B'));
-    await settle(() => app.stdin.write('\r'));
-    expect(actions.openAgent).toHaveBeenLastCalledWith(
-      expect.objectContaining({ agent_id: 'a2' }),
-      expect.objectContaining({ project_id: 'alpha', state_dir: '/state/alpha' }),
-    );
-    expect(footer()).toBe('Opened a2.');
-
-    // Tab to the projects; down to beta; Enter selects it: the cockpit action, and its agents.
-    await settle(() => app.stdin.write('\t'));
-    await settle(() => app.stdin.write('j'));
-    expect(actions.selectProject).not.toHaveBeenCalled();
-    await settle(() => app.stdin.write('\r'));
-    expect(actions.selectProject).toHaveBeenCalledWith(expect.objectContaining({ project_id: 'beta' }));
-    expect(footer()).toBe('Switched to project beta.');
-    expect(frame()).toMatch(/│▸ beta/);
-    expect(frame()).toContain('b1');
-    expect(frame()).not.toContain('a1');
-
-    // Back to the agents; Esc returns focus to the slot.
-    await settle(() => app.stdin.write('\t'));
-    await settle(() => app.stdin.write('\r'));
-    expect(actions.openAgent).toHaveBeenLastCalledWith(expect.objectContaining({ agent_id: 'b1' }), expect.objectContaining({ project_id: 'beta' }));
-    await settle(() => app.stdin.write('\u001B'));
-    expect(actions.focusSlot).toHaveBeenCalledTimes(1);
-  });
-
-  it('shows a failed action\'s error', async () => {
-    const { source } = fakeSource([project('alpha', 'running', status([{ id: 'a1' }]))]);
-    const actions = fakeActions();
-    actions.openAgent.mockRejectedValue(new Error('another cockpit action is still running'));
-    const app = render(<App source={source} stateDir="/state/alpha" now={now} actions={actions} />);
-    await settle();
-    await settle(() => app.stdin.write('\r'));
-    expect(plain(app.lastFrame()).split('\n').at(-1)).toBe('another cockpit action is still running');
-  });
-
-  it('shows why Esc could not focus the slot, and keeps a refused project from becoming active', async () => {
-    const { source } = fakeSource([
-      project('alpha', 'running', status([{ id: 'a1' }])),
-      project('beta', 'running', status([{ id: 'b1' }])),
-    ]);
-    const actions = fakeActions();
-    actions.focusSlot.mockImplementation(() => { throw new Error('tmux select-pane failed'); });
-    actions.selectProject.mockRejectedValue(new Error('unknown project beta'));
-    const app = render(<App source={source} stateDir="/state/alpha" now={now} actions={actions} />);
-    const frame = () => plain(app.lastFrame());
-    await settle();
-    await settle(() => app.stdin.write('\u001B'));
-    expect(frame().split('\n').at(-1)).toBe('tmux select-pane failed');
-
-    await settle(() => app.stdin.write('\t'));
-    await settle(() => app.stdin.write('j'));
-    await settle(() => app.stdin.write('\r'));
-    expect(frame().split('\n').at(-1)).toBe('unknown project beta');
-    expect(frame()).toMatch(/│▸ alpha/);
-    expect(frame()).toContain('a1');
-    expect(frame()).not.toContain('b1');
-  });
-
-  it('outside a cockpit selects but runs no action, and says where terminals open', async () => {
+  it('moves with the arrows and Tab, selects a project, and says where terminals open', async () => {
     const { source } = fakeSource([
       project('alpha', 'running', status([{ id: 'a1' }])),
       project('beta', 'running', status([{ id: 'b1' }])),
@@ -288,7 +206,7 @@ describe('sidebar App', () => {
     const app = render(<App source={source} stateDir="/state/alpha" now={now} />);
     const frame = () => plain(app.lastFrame());
     await settle();
-    expect(frame().split('\n').at(-1)).toBe(KEYS_HINT_STANDALONE);
+    expect(frame().split('\n').at(-1)).toBe(KEYS_HINT);
     await settle(() => app.stdin.write('\r'));
     expect(frame().split('\n').at(-1)).toBe(NO_COCKPIT_HINT);
     await settle(() => app.stdin.write('\t'));
@@ -299,53 +217,6 @@ describe('sidebar App', () => {
     // Esc has nothing to focus.
     await settle(() => app.stdin.write('\u001B'));
     expect(frame()).toContain('b1');
-  });
-
-  it('follows the cockpit\'s active project when it changes there', async () => {
-    const { source } = fakeSource([
-      project('alpha', 'running', status([{ id: 'a1' }])),
-      project('beta', 'running', status([{ id: 'b1' }])),
-    ]);
-    let active: string | null = 'alpha';
-    const app = render(<App source={source} stateDir="/state/alpha" intervalMs={1000} now={now} activeProject={() => active} />);
-    await settle();
-    expect(plain(app.lastFrame())).toContain('a1');
-    active = 'beta';
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1000);
-    });
-    expect(plain(app.lastFrame())).toMatch(/│▸ beta/);
-    expect(plain(app.lastFrame())).toContain('b1');
-  });
-
-  it('selects a project or an agent with a mouse click on its row', async () => {
-    const { source } = fakeSource([
-      project('alpha', 'running', status([{ id: 'a1', activity: 'reading' }, { id: 'a2', activity: 'testing' }])),
-      project('beta', 'running', status([])),
-    ]);
-    const actions = fakeActions();
-    const app = render(<App source={source} stateDir="/state/alpha" now={now} actions={actions} mouse />);
-    await settle();
-    expect(app.frames).toContain(MOUSE_ON);
-    const rowOf = (text: string) => lastDrawn(app.frames).split('\n').findIndex(line => line.includes(text));
-    const click = (y: number) => `\u001B[<0;5;${y + 1}M\u001B[<0;5;${y + 1}m`;
-
-    // The second row of an agent counts as the agent.
-    await settle(() => app.stdin.write(click(rowOf('testing'))));
-    expect(actions.openAgent).toHaveBeenCalledWith(expect.objectContaining({ agent_id: 'a2' }), expect.objectContaining({ project_id: 'alpha' }));
-    expect(actions.openAgent).toHaveBeenCalledTimes(1);
-
-    await settle(() => app.stdin.write(click(rowOf(' beta '))));
-    expect(actions.selectProject).toHaveBeenCalledWith(expect.objectContaining({ project_id: 'beta' }));
-    // A click on a border or the status box does nothing; nor does a right click.
-    await settle(() => app.stdin.write(click(0)));
-    await settle(() => app.stdin.write(`\u001B[<2;5;${rowOf('alpha') + 1}M`));
-    expect(actions.selectProject).toHaveBeenCalledTimes(1);
-    expect(actions.openAgent).toHaveBeenCalledTimes(1);
-
-    const before = app.frames.length;
-    await settle(() => app.unmount());
-    expect(app.frames.slice(before)).toContain(MOUSE_OFF);
   });
 });
 
@@ -406,7 +277,7 @@ describe('sidebar App in a terminal', () => {
     expect(frame).toContain('beta');
     expect(frame).toContain('incompatible');
     // Every box closes on the right edge.
-    expect(lines.filter(line => line.length > 0).every(line => /[│╮╯]$/.test(line) || line === KEYS_HINT_STANDALONE)).toBe(true);
+    expect(lines.filter(line => line.length > 0).every(line => /[│╮╯]$/.test(line) || line === KEYS_HINT)).toBe(true);
   });
 
   it.each([false, true])('stays below a short terminal, cutting agents but never one needing attention (keys read: %s)', (tty) => {
@@ -422,7 +293,7 @@ describe('sidebar App in a terminal', () => {
     expect(frame).toContain('needs-me ');
     expect(frame).toContain('needs-me-too');
     expect(frame).toMatch(/\+\d+ more/);
-    if (tty) expect(frame.split('\n').at(-1)).toBe(KEYS_HINT_STANDALONE);
+    if (tty) expect(frame.split('\n').at(-1)).toBe(KEYS_HINT);
   });
 
   it('keeps attention agents even when they alone overflow the height', () => {
@@ -461,7 +332,7 @@ describe('sidebar App in a terminal', () => {
       for (const line of lines) expect(line.length).toBeLessThanOrEqual(columns);
       expect(lines.filter(line => line.includes('master'))).toEqual([]);
       for (let i = 0; i < 1 + step; i += 1) expect(lines.filter(line => line.startsWith(`│w${i} `)).length).toBeLessThanOrEqual(1);
-      expect(lines.at(-1)).toBe(KEYS_HINT_STANDALONE);
+      expect(lines.at(-1)).toBe(KEYS_HINT);
     }
   });
 });

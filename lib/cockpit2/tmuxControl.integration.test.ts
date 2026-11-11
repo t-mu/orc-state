@@ -8,7 +8,7 @@ import { SEND_CHUNK_BYTES, TmuxControlClient } from './tmuxControl.ts';
 const hasTmux = spawnSync('tmux', ['-V'], { encoding: 'utf8' }).status === 0;
 
 describe.skipIf(!hasTmux)('TmuxControlClient (private tmux server)', () => {
-  const socket = `orc-cockpit2-test-${process.pid}-${Date.now()}`;
+  const socket = `orc-cockpit-test-${process.pid}-${Date.now()}`;
   let dir = '';
   const clients: TmuxControlClient[] = [];
   const tmux = (...args: string[]) => spawnSync('tmux', ['-L', socket, '-f', '/dev/null', ...args], { encoding: 'utf8' });

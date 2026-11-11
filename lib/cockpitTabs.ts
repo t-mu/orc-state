@@ -3,12 +3,12 @@
  *
  * The cockpit's view state and its transitions, pure: which project is active
  * and, per project, its open tabs (the master tab first, then agent tabs in
- * opening order) and its active tab. `orc cockpit` reads the state from the
- * cockpit server, applies one transition and the matching tmux side effects
- * (adapters/tmuxCockpit.ts), and stores it back.
+ * opening order) and its active tab. The cockpit (lib/cockpit2/app.ts)
+ * applies them and keeps the state in its view-state file
+ * (lib/cockpit2/viewState.ts).
  */
 
-/** The master tab's id on the command line (`orc cockpit tab master`). Agent tabs are named by agent id. */
+/** The master tab's id. Agent tabs are named by agent id. */
 export const MASTER_TAB = 'master';
 
 export interface ProjectTabs {
@@ -125,7 +125,7 @@ export function selectTab(state: CockpitTabState, tab: number | string): TabTran
   } else if (project.tabs.includes(tab)) {
     target = tab;
   } else {
-    return refused(state, `No tab for agent '${tab}' in this project; open it from the dashboard or with orc cockpit open ${tab}.`);
+    return refused(state, `No tab for agent '${tab}' in this project; open it from the sidebar.`);
   }
   return ok(withProject(state, { ...project, active: target }), `Switched to ${tabLabel(target)}.`);
 }

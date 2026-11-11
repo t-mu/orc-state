@@ -8,7 +8,7 @@ import { tmuxExplorerHost } from './explorer.ts';
 const hasTmux = spawnSync('tmux', ['-V'], { encoding: 'utf8' }).status === 0;
 
 describe.skipIf(!hasTmux)('tmuxExplorerHost (private tmux server)', () => {
-  const socket = `orc-cockpit2-explorer-test-${process.pid}-${Date.now()}`;
+  const socket = `orc-cockpit-explorer-test-${process.pid}-${Date.now()}`;
   const tmux = (...args: string[]) => spawnSync('tmux', ['-L', socket, ...args], { encoding: 'utf8' });
   afterAll(() => { tmux('kill-server'); });
 

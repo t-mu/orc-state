@@ -58,17 +58,17 @@ orc doctor
 
 ## Cockpit
 
-`orc start-session` runs the cockpit in its terminal; one runs per user, holding `cockpit/cockpit2.lock` under orc's data home (`ORC_DATA_HOME`; default `$XDG_DATA_HOME/orc-state`, `~/.local/share/orc-state`, or `~/Library/Application Support/orc-state` on macOS) with its pid and process start time. Quitting or killing a cockpit never stops a master, worker or coordinator.
+`orc start-session` (or `orc cockpit`) runs the cockpit in its terminal; one runs per user, holding `cockpit/cockpit.lock` under orc's data home (`ORC_DATA_HOME`; default `$XDG_DATA_HOME/orc-state`, `~/.local/share/orc-state`, or `~/Library/Application Support/orc-state` on macOS) with its pid and process start time. Quitting or killing a cockpit never stops a master, worker or coordinator.
 
 | Symptom | Check | Fix |
 |---------|-------|-----|
-| The cockpit hangs or its keys do nothing | `cat <data home>/cockpit/cockpit2.lock` (its `pid`) | Run `orc start-session` from another terminal: it asks the hung cockpit to exit and opens there. Or `kill <pid>`: SIGTERM and SIGHUP restore the terminal and free the lock |
+| The cockpit hangs or its keys do nothing | `cat <data home>/cockpit/cockpit.lock` (its `pid`) | Run `orc start-session` from another terminal: it asks the hung cockpit to exit and opens there. Or `kill <pid>`: SIGTERM and SIGHUP restore the terminal and free the lock |
 | `could not open the cockpit (the cockpit running as pid N did not exit within 5 s …)` | `ps -p N` | start-session attached straight to the master. `kill N` (`kill -9 N` if it stays), then `orc start-session` again |
 | A terminal left in raw mode or the alternate screen (after `kill -9`) | | `reset` in that terminal. The lock it left is stale and the next cockpit takes it over silently: no need to delete it |
-| A lock naming a dead pid, or a pid now used by another process | `cat <data home>/cockpit/cockpit2.lock`, `ps -p <pid> -o lstart=` | Nothing to do: a lock whose pid is dead or whose process start time differs is taken over silently. Never delete it while its cockpit runs |
+| A lock naming a dead pid, or a pid now used by another process | `cat <data home>/cockpit/cockpit.lock`, `ps -p <pid> -o lstart=` | Nothing to do: a lock whose pid is dead or whose process start time differs is taken over silently. Never delete it while its cockpit runs |
 | start-session from the master's shell says the project opens the next time | no cockpit runs | From inside orc's tmux servers start-session only adds the project to the cockpit's view state. Run `orc start-session` in a terminal outside them |
-| A leftover tmux-pane cockpit (`tmux -L orc-cockpit ls` lists sessions) | | `orc start-session` kills it on launch; by hand `tmux -L orc-cockpit kill-server`. It only hosts views: nothing stops |
-| An explorer session left by a cockpit that crashed | `tmux -L orc-cockpit2 ls` | `tmux -L orc-cockpit2 kill-server`; stops no agent |
+| A cockpit left running by an older orc | | Nothing to do: `orc start-session` and `orc cockpit` ask it to exit and end its tmux servers on launch. They only host views: nothing stops |
+| An explorer session left by a cockpit that crashed | `tmux -L orc-explorer ls` | `tmux -L orc-explorer kill-server`; stops no agent |
 | The cockpit opens with no tabs it had | `<data home>/cockpit/view-state.json` | A corrupt view-state file loads as the defaults and is rewritten on the next tab change; it holds only view state |
 
 ## Runs and claims

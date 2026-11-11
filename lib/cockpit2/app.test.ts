@@ -939,7 +939,7 @@ class FakeExplorerHost implements ExplorerHost {
     this.started.push(`${projectId} ${size.cols}x${size.rows}`);
     if (this.hold) await this.hold;
     if (this.failWith) throw this.failWith;
-    return { socket: 'orc-cockpit2', session: `explorer-${projectId}` };
+    return { socket: 'orc-explorer', session: `explorer-${projectId}` };
   }
   stop(target: TmuxTarget) { this.stopped.push(target); return Promise.resolve(); }
 }
@@ -983,7 +983,7 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     // Ctrl-] closes it: its session is killed and the master shown again, the tabs as they were.
     terminal.type('\x1d');
     await attached(terminal);
-    expect(host.stopped).toEqual([{ socket: 'orc-cockpit2', session: 'explorer-demo' }]);
+    expect(host.stopped).toEqual([{ socket: 'orc-explorer', session: 'explorer-demo' }]);
     expect(fake.closed).toBe(1);
     expect(app.tabs()).toEqual(before);
     expect(clients[0].sent).toEqual([]); // nothing typed reached the master
@@ -1019,7 +1019,7 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
 
   it('shows why the explorer did not start, closes when it quits on its own, and stops it when the cockpit quits', async () => {
     const host = new FakeExplorerHost();
-    host.failWith = new Error('no server running on /tmp/tmux-1000/orc-cockpit2');
+    host.failWith = new Error('no server running on /tmp/tmux-1000/orc-explorer');
     const { terminal, clients, app } = start({ explorer: host });
     await attached(terminal);
     terminal.type(`${F12}t`);
@@ -1121,7 +1121,7 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     expect(done).toBe(false);
     started();
     await app.done;
-    expect(host.stopped).toEqual([{ socket: 'orc-cockpit2', session: 'explorer-demo' }]);
+    expect(host.stopped).toEqual([{ socket: 'orc-explorer', session: 'explorer-demo' }]);
   });
 
   it('returns a typing tab to view mode when another tab, the explorer or an attention jump is shown', async () => {

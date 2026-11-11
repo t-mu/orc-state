@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { terminalHasTrueColor as adapterHasTrueColor } from '../../adapters/tmuxCockpit.ts';
 import { colorDepthFromEnv, nearestXterm256, terminalHasTrueColor } from './color.ts';
 
 describe('nearestXterm256', () => {
@@ -46,10 +45,9 @@ describe('nearestXterm256', () => {
 describe('colour depth from the environment', () => {
   const cases: Array<[string | undefined, boolean]> = [['truecolor', true], ['24bit', true], ['TrueColor', true], ['256', false], ['', false], [undefined, false]];
 
-  it.each(cases)('COLORTERM=%s → true colour %s, as the old cockpit decides', (value, expected) => {
+  it.each(cases)('COLORTERM=%s → true colour %s', (value, expected) => {
     const env = value === undefined ? {} : { COLORTERM: value };
     expect(terminalHasTrueColor(env)).toBe(expected);
-    expect(adapterHasTrueColor(env)).toBe(expected);
     expect(colorDepthFromEnv(env)).toBe(expected ? 'truecolor' : '256');
   });
 });

@@ -1,7 +1,7 @@
 /**
  * lib/cockpit2/color.ts — how many colours the outer terminal shows, and the
  * xterm-256 colour nearest an RGB one for a terminal without true colour.
- * Import-free, so the CLI layer and the old cockpit adapter share it.
+ * Import-free, so the CLI layer can use it.
  */
 
 /** `truecolor`: RGB colours are written as is; `256`: as the nearest xterm-256 index. */

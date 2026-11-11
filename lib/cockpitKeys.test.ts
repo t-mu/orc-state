@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_COCKPIT_KEYS, cockpitKeysHint, isTmuxKeyName, resolveCockpitKeys } from './cockpitKeys.ts';
+import { DEFAULT_COCKPIT_KEYS, isTmuxKeyName, resolveCockpitKeys } from './cockpitKeys.ts';
 
 describe('resolveCockpitKeys', () => {
   it('defaults to F12 and function keys, none of them Ctrl-], Alt or an AltGr character', () => {
@@ -39,7 +39,7 @@ describe('resolveCockpitKeys', () => {
   });
 });
 
-describe('the cockpit2 quit key', () => {
+describe('the cockpit quit key', () => {
   it('defaults to C-q and is set or unbound with quit=<key> in ORC_COCKPIT_KEYS', () => {
     expect(resolveCockpitKeys({}).keys.quit).toBe('C-q');
     expect(resolveCockpitKeys({ ORC_COCKPIT_KEYS: 'quit=C-x' })).toMatchObject({ keys: { quit: 'C-x' }, problems: [] });
@@ -66,18 +66,5 @@ describe('isTmuxKeyName', () => {
   it('accepts tmux key names and rejects the rest', () => {
     for (const key of ['F12', 'f5', 'C-]', 'M-x', 'C-M-Left', 'PageUp', '&']) expect(isTmuxKeyName(key)).toBe(true);
     for (const key of ['', 'F13', 'Ctrl-a', 'C-', 'ö', 'two']) expect(isTmuxKeyName(key)).toBe(false);
-  });
-});
-
-describe('cockpitKeysHint', () => {
-  it('names the default keys', () => {
-    expect(cockpitKeysHint(DEFAULT_COCKPIT_KEYS))
-      .toBe('F1-F9: tab | F10: sidebar | F12 o: switch pane | F12 n/p: next/previous tab | F12 N/P: project | F12 d: detach');
-  });
-
-  it('spells out modifiers and leaves out unbound keys', () => {
-    const direct = Object.fromEntries(Object.keys(DEFAULT_COCKPIT_KEYS.direct).map((action) => [action, null])) as typeof DEFAULT_COCKPIT_KEYS.direct;
-    expect(cockpitKeysHint({ prefix: 'C-a', direct: { ...direct, tab1: 'M-1' }, quit: null }))
-      .toBe('Alt-1: tab | Ctrl-a o: switch pane | Ctrl-a n/p: next/previous tab | Ctrl-a N/P: project | Ctrl-a d: detach');
   });
 });

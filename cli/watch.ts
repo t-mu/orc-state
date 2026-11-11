@@ -4,25 +4,22 @@
  * Usage:
  *   node cli/watch.ts [--interval-ms=5000] [--once]
  *
- * The cockpit sidebar, standalone (the cockpit's sidebar pane runs this
- * command). Every view is built from orc-state/client: a ProjectWatcher over
- * every registered project, never the state files. The project this command
+ * A standalone dashboard of every registered project: the sidebar view
+ * (lib/tui/App.tsx) on its own, without cockpit actions. Every view is built
+ * from orc-state/client: a ProjectWatcher over every registered project,
+ * never the state files. The project this command
  * runs for is listed first; without a running coordinator it is shown as stopped.
  */
-import { execFile } from 'node:child_process';
 import { basename } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { render } from 'ink';
 import { createElement } from 'react';
 import { ProjectWatcher, type ProjectListEntry, type ProjectWatchState, type ProjectWatchUpdate } from '../client.ts';
-import { UNREGISTERED_PROJECT_PREFIX, focusCockpitSlot, insideCockpit, readCockpitTabs } from '../adapters/tmuxCockpit.ts';
 import { boolFlag, intFlag } from '../lib/args.ts';
 import { renderBanner } from '../lib/banner.ts';
 import { colorFormatStatus } from '../lib/colorStatus.ts';
 import { STATE_DIR, TARGET_REPO_ROOT } from '../lib/paths.ts';
 import { describeProjects, listProjects } from '../lib/projectList.ts';
 import { cliError } from './shared.ts';
-import type { SidebarActions } from '../lib/tui/App.tsx';
 
 /** What `orc watch` reads: the client's `ProjectWatcher` (tests inject a fake). */
 export interface WatchSource {
@@ -41,14 +38,13 @@ export interface WatchOptions {
   source?: WatchSource;
   /** How long `--once` waits for the project's first connection to settle (default 5000 ms). */
   settleTimeoutMs?: number;
-  /** What selecting a project or an agent does (set inside the cockpit). */
-  actions?: SidebarActions;
-  /** The cockpit's active project (set inside the cockpit). */
-  activeProject?: () => string | null;
 }
 
 const once = boolFlag('once');
 const intervalMs = intFlag('interval-ms', 5000);
+
+/** The id prefix of a project watched by state directory alone (no registry entry). */
+export const UNREGISTERED_PROJECT_PREFIX = 'unregistered:';
 
 /**
  * The registered projects, plus `stateDir` itself when no registered project
@@ -67,29 +63,6 @@ export function watchedProjectList(stateDir: string, list: () => ProjectListEntr
 
 export function createWatchSource(stateDir: string): WatchSource {
   return new ProjectWatcher({ listProjects: watchedProjectList(stateDir) });
-}
-
-/** Runs `command` (an `orc cockpit` action); resolves to what it printed, or rejects with its error output. */
-export function runOrcCommand(command: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(command[0], command.slice(1), { encoding: 'utf8' }, (error, stdout, stderr) => {
-      if (error) reject(new Error(stderr.trim() || error.message));
-      else resolve(stdout.trim());
-    });
-  });
-}
-
-/**
- * The sidebar's actions in the cockpit, each through `orc cockpit`: a project
- * runs `project <id>`, an agent `open <agent_id> <project_id>` (its tab, opened
- * on first use); both show it in the slot and focus it. Esc focuses the slot.
- */
-export function cockpitActions(orc: string[], run: (command: string[]) => Promise<string> = runOrcCommand, focusSlot: () => void = () => { focusCockpitSlot(); }): SidebarActions {
-  return {
-    selectProject: (project) => run([...orc, 'cockpit', 'project', project.project_id]),
-    openAgent: (agent, project) => run([...orc, 'cockpit', 'open', agent.agent_id, project.project_id]),
-    focusSlot,
-  };
 }
 
 function currentProject(source: WatchSource, stateDir: string): ProjectWatchState | null {
@@ -204,14 +177,14 @@ function runtimeImportPath(relativeTsPath: string, relativeJsPath: string): stri
   return import.meta.url.endsWith('.ts') ? relativeTsPath : relativeJsPath;
 }
 
-/** The cockpit sidebar (`lib/tui/App.tsx`) on its own: the view the cockpit's sidebar pane runs. */
+/** The sidebar view (`lib/tui/App.tsx`) on its own. */
 export async function runTtyWatch(options: WatchOptions): Promise<number> {
   const { App } = await (import(runtimeImportPath('../lib/tui/App.tsx', '../lib/tui/App.js')) as Promise<typeof import('../lib/tui/App.tsx')>);
 
   const source = options.source ?? createWatchSource(options.stateDir);
   source.start();
   if (options.once) await waitForSettled(source, options.stateDir, options.settleTimeoutMs ?? 5000);
-  // Live: start from a clear screen, so nothing printed earlier in the pane
+  // Live: start from a clear screen, so nothing printed earlier in the terminal
   // (a previous run, a warning) shifts the region Ink redraws.
   else process.stdout.write('\x1b[2J\x1b[H');
 
@@ -219,10 +192,6 @@ export async function runTtyWatch(options: WatchOptions): Promise<number> {
     source,
     stateDir: options.stateDir,
     intervalMs: options.intervalMs,
-    // Clicks only live: `--once` draws one frame and leaves no mouse mode behind.
-    mouse: !options.once,
-    ...(options.actions ? { actions: options.actions } : {}),
-    ...(options.activeProject ? { activeProject: options.activeProject } : {}),
   }));
 
   if (options.once) {
@@ -251,11 +220,6 @@ export async function main(): Promise<number | null> {
   if (!process.stdout.isTTY) {
     return runFallbackWatch(options);
   }
-  if (insideCockpit()) {
-    options.actions = cockpitActions([process.execPath, fileURLToPath(new URL(runtimeImportPath('./orc.ts', './orc.js'), import.meta.url))]);
-    options.activeProject = () => readCockpitTabs().activeProject;
-  }
-
   return runTtyWatch(options);
 }
 
