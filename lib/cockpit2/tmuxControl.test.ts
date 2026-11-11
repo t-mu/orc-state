@@ -4,8 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { EventEmitter } from 'node:events';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { SEND_CHUNK_BYTES, TmuxControlClient, quoteTmuxArgument, type ControlProcess } from './tmuxControl.ts';
+import { afterAll, beforeAll, describe, expect, expectTypeOf, it } from 'vitest';
+import type { PaneModes } from './screen.ts';
+import { SEND_CHUNK_BYTES, TmuxControlClient, quoteTmuxArgument, type ControlProcess, type PaneReport } from './tmuxControl.ts';
 
 class FakeProcess extends EventEmitter implements ControlProcess {
   stdin = new PassThrough();
@@ -122,17 +123,28 @@ describe('TmuxControlClient (fake process)', () => {
     await expect(pending).rejects.toThrow('control client closed');
   });
 
-  it('decodes output and passes other notifications through', async () => {
+  it('decodes output, layout changes and session changes as typed events and passes other notifications through', async () => {
     const { proc, client } = fakeClient();
     const output: Array<[string, string]> = [];
     const notes: string[] = [];
+    const resizes: Array<[number, number]> = [];
+    let sessionsChanged = 0;
     client.on('output', (pane, bytes) => output.push([pane, bytes.toString('utf8')]));
     client.on('notification', (line) => notes.push(line));
+    client.on('resize', (cols, rows) => resizes.push([cols, rows]));
+    client.on('sessionsChanged', () => sessionsChanged++);
     proc.stdout.write(Buffer.concat([Buffer.from('%output %3 \\033[1mä'), Buffer.from('€\\015\\012\n', 'utf8')]));
-    proc.reply('%layout-change @0 aafd,120x40,0,0,0 aafd,120x40,0,0,0 *', '%sessions-changed', '%window-add @2');
+    proc.reply('%layout-change @0 aafd,120x40,0,0,0 aafd,120x40,0,0,0 *', '%sessions-changed', '%window-add @2',
+      '%layout-change @0 bbfd,80x24,0,0,0 bbfd,80x24,0,0,0 *');
     await tick();
     expect(output).toEqual([['%3', '\x1b[1mä€\r\n']]);
-    expect(notes).toEqual(['%layout-change @0 aafd,120x40,0,0,0 aafd,120x40,0,0,0 *', '%sessions-changed', '%window-add @2']);
+    expect(resizes).toEqual([[120, 40], [80, 24]]);
+    expect(sessionsChanged).toBe(1);
+    expect(notes).toEqual(['%window-add @2']);
+  });
+
+  it('reports the pane modes as a PaneReport, which is the screen model\'s PaneModes', () => {
+    expectTypeOf<PaneReport>().toMatchTypeOf<PaneModes>();
   });
 
   it('sends bytes as hex in bounded chunks, in order', async () => {

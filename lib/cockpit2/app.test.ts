@@ -1,16 +1,20 @@
 import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
-import { tmuxSessionTarget } from '../../client.ts';
+import { tmuxSessionTarget, type ProjectWatchState, type ProjectWatchUpdate } from '../../client.ts';
+import { MASTER_TAB, closeTab, openAgent, selectTab, showProject } from '../cockpitTabs.ts';
 import { DEFAULT_COCKPIT_KEYS, type CockpitKeys } from '../cockpitKeys.ts';
 import {
-  SIDEBAR_COLS, TAB_BAR_ROWS, computeLayout, dispatchMouse, hitTest, masterTarget, quitHint, resolveMasterTarget, runApp,
-  type App, type MasterTarget, type PaneClient,
+  SIDEBAR_COLS, TAB_BAR_ROWS, agentTarget, computeLayout, dispatchMouse, hitTest, masterTarget, quitHint, runApp, slotMessage,
+  type App,
 } from './app.ts';
 import type { MouseEvent } from './mouse.ts';
+import { EDGE_COLUMN, EDGE_ROW } from './frame.ts';
 import { createScreen, type Screen } from './screen.ts';
+import type { PaneClient } from './sessions.ts';
 import type { TerminalSession } from './terminal.ts';
-import type { PaneModes } from './tmuxControl.ts';
+import type { PaneReport } from './tmuxControl.ts';
+import { DEFAULT_VIEW_STATE, type TmuxTarget, type ViewState, type ViewStateStore } from './viewState.ts';
 
 const ESC = '\x1b';
 const F12 = `${ESC}[24~`;
@@ -76,22 +80,83 @@ describe('hitTest and dispatchMouse', () => {
   });
 });
 
-// ── master target ─────────────────────────────────────────────────────────────
+// ── tmux targets ──────────────────────────────────────────────────────────────
 
 describe('masterTarget', () => {
   const stateDir = '/data/projects/p1';
+  const status = (master: object | null) => ({ master, worker_capacity: { slots: [] }, scouts: [] }) as never;
+  const recorded = status({ agent_id: 'master', tmux_socket: 'orc-abc', tmux_session: 'orc-master-1' });
+  const stored = { socket: 'orc-stored', session: 'orc-master-stored' };
 
-  it('uses the status view\'s recorded target', () => {
-    const status = { master: { agent_id: 'master', tmux_socket: 'orc-abc', tmux_session: 'orc-master-1' } } as never;
-    expect(masterTarget(stateDir, status)).toEqual({ socket: 'orc-abc', session: 'orc-master-1' });
+  it('uses the status view\'s recorded target while the coordinator runs', () => {
+    expect(masterTarget({ stateDir, running: true, status: recorded }, stored)).toEqual({ socket: 'orc-abc', session: 'orc-master-1' });
   });
 
-  it('computes it from the state directory without a coordinator, or for a master with no recorded target', async () => {
-    expect(masterTarget(stateDir, null)).toEqual(tmuxSessionTarget(stateDir, 'master'));
-    const custom = { master: { agent_id: 'boss', tmux_socket: null, tmux_session: null } } as never;
-    expect(masterTarget(stateDir, custom)).toEqual(tmuxSessionTarget(stateDir, 'boss'));
-    await expect(resolveMasterTarget(stateDir, () => Promise.reject(new Error('no coordinator'))))
-      .resolves.toEqual(tmuxSessionTarget(stateDir, 'master'));
+  it('uses the stored target while the coordinator is down, even with a stale status view', () => {
+    expect(masterTarget({ stateDir, running: false, status: recorded }, stored)).toEqual(stored);
+    expect(masterTarget({ stateDir: null, running: false, status: null }, stored)).toEqual(stored);
+  });
+
+  it('computes it from the state directory as a last resort, or gives null when nothing is known', () => {
+    expect(masterTarget({ stateDir, running: false, status: null }, null)).toEqual(tmuxSessionTarget(stateDir, 'master'));
+    const custom = status({ agent_id: 'boss', tmux_socket: null, tmux_session: null });
+    expect(masterTarget({ stateDir, running: true, status: custom }, null)).toEqual(tmuxSessionTarget(stateDir, 'boss'));
+    expect(masterTarget({ stateDir: null, running: false, status: null }, null)).toBeNull();
+  });
+});
+
+describe('agentTarget', () => {
+  const stateDir = '/data/projects/p1';
+  const status = {
+    master: null,
+    worker_capacity: { slots: [
+      { agent_id: 'w1', tmux_socket: 'orc-abc', tmux_session: 'orc-w1-x', session_handle: 'tmux:orc-abc:orc-w1-x' },
+      { agent_id: 'w2', tmux_socket: null, tmux_session: null, session_handle: 'app:codex-1' },
+    ] },
+    scouts: [{ agent_id: 's1', tmux_socket: 'orc-abc', tmux_session: 'orc-s1-x', session_handle: 'tmux:orc-abc:orc-s1-x' }],
+  } as never;
+
+  it('uses the status view\'s target of a worker or scout, else computes it', () => {
+    expect(agentTarget({ stateDir, running: true, status }, 'w1')).toEqual({ socket: 'orc-abc', session: 'orc-w1-x' });
+    expect(agentTarget({ stateDir, running: true, status }, 's1')).toEqual({ socket: 'orc-abc', session: 'orc-s1-x' });
+    expect(agentTarget({ stateDir, running: false, status: null }, 'w9')).toEqual(tmuxSessionTarget(stateDir, 'w9'));
+  });
+
+  it('gives null for a session that is not on tmux, or a project with no state directory', () => {
+    expect(agentTarget({ stateDir, running: true, status }, 'w2')).toBeNull();
+    expect(agentTarget({ stateDir: null, running: false, status: null }, 'w1')).toBeNull();
+  });
+});
+
+describe('slotMessage', () => {
+  const keys = DEFAULT_COCKPIT_KEYS;
+  const target = { socket: 'orc-sock', session: 'orc-master' };
+  const master = { projectId: 'p1', agentId: null };
+  const ended = { state: { kind: 'ended' as const, reason: 'can\'t find session: orc-master' }, error: null, screen: null };
+
+  it('shows a stopped project\'s message with its start command when its master session is gone', () => {
+    expect(slotMessage({ tab: master, keys, target, session: ended, project: { name: 'demo', repoRoot: '/repo/demo', connection: 'stopped' } })).toEqual([
+      'Project demo is not running.', 'Start it with: cd /repo/demo && orc start-session', 'tmux: can\'t find session: orc-master', quitHint(keys),
+    ]);
+  });
+
+  it('gives no start command while the coordinator is up, connecting or unreachable', () => {
+    for (const connection of ['running', 'connecting', 'unreachable'] as const) {
+      const lines = slotMessage({ tab: master, keys, target, session: ended, project: { name: 'demo', repoRoot: '/repo/demo', connection } });
+      expect(lines).toEqual(['The master\'s tmux session is not running.', 'tmux: can\'t find session: orc-master', `Coordinator: ${connection}.`, quitHint(keys)]);
+    }
+  });
+
+  it('says why an agent tab or a missing project shows nothing, and that a tab is attaching', () => {
+    const worker = { projectId: 'p1', agentId: 'w1' };
+    const project = { name: 'demo', repoRoot: '/repo/demo', connection: 'running' as const };
+    expect(slotMessage({ tab: worker, keys, target, session: ended, project })?.[0]).toBe('w1\'s tmux session is not running.');
+    expect(slotMessage({ tab: worker, keys, target: null, session: null, project })?.[0]).toBe('w1 does not run in tmux, so the cockpit cannot show it.');
+    expect(slotMessage({ tab: master, keys, target: null, session: null, project: null })?.[0]).toBe('Project p1 is not registered.');
+    expect(slotMessage({ tab: null, keys, target: null, session: null, project: null })?.[0]).toBe('No project is open.');
+    expect(slotMessage({ tab: master, keys, target, session: null, project })?.[0]).toContain('Attaching to the master (tmux -L orc-sock');
+    expect(slotMessage({ tab: master, keys, target, session: { state: { kind: 'live' }, error: 'capture failed', screen: null }, project }))
+      .toEqual(['The master is not shown.', 'capture failed', quitHint(keys)]);
   });
 });
 
@@ -102,9 +167,9 @@ describe('quitHint', () => {
   });
 });
 
-// ── the app with a fake tmux client ──────────────────────────────────────────
+// ── the app with fake tmux clients ───────────────────────────────────────────
 
-const MODES: PaneModes = {
+const MODES: PaneReport = {
   paneId: '%1', cols: 46, rows: 21, cursorX: 2, cursorY: 0, alternateOn: false, mouseAny: false, mouseButton: false,
   mouseStandard: false, mouseSgr: false, mouseUtf8: false, keypadCursor: false, cursorVisible: true,
 };
@@ -113,17 +178,22 @@ class FakeClient extends EventEmitter {
   resizes: string[] = [];
   sent: string[] = [];
   pastes: string[] = [];
+  paused: string[] = [];
+  resumed: string[] = [];
   closed = 0;
   modeQueries = 0;
   lines = ['$ hello'];
   /** Set to hold the next capture until the test releases it. */
   gate: Promise<void> | null = null;
   size = { cols: MODES.cols, rows: MODES.rows };
+  constructor(readonly target: TmuxTarget, readonly ignoreSize: boolean, readonly paneId = '%1') { super(); }
   resize(cols: number, rows: number) { this.resizes.push(`${cols}x${rows}`); this.size = { cols, rows }; return Promise.resolve(); }
-  paneModes() { this.modeQueries++; return Promise.resolve({ ...MODES, ...this.size }); }
+  paneModes() { this.modeQueries++; return Promise.resolve({ ...MODES, paneId: this.paneId, ...this.size }); }
   async capture() { if (this.gate) await this.gate; return this.lines; }
   sendBytes(pane: string, bytes: Buffer) { this.sent.push(`${pane} ${bytes.toString('latin1')}`); return Promise.resolve(); }
   paste(pane: string, text: string) { this.pastes.push(`${pane} ${text}`); return Promise.resolve(); }
+  pause(pane: string) { this.paused.push(pane); return Promise.resolve(); }
+  resume(pane: string) { this.resumed.push(pane); return Promise.resolve(); }
   close() { this.closed++; }
 }
 
@@ -141,6 +211,44 @@ class FakeTerminal implements TerminalSession {
   restore() { this.restored++; }
   type(text: string) { for (const listener of this.input) listener(Buffer.from(text, 'latin1')); }
   resizeTo(cols: number, rows: number) { this.cols = cols; this.rows = rows; for (const listener of this.resizes) listener(); }
+}
+
+class FakeWatcher {
+  private listeners = new Set<(update: ProjectWatchUpdate) => void>();
+  constructor(public states: ProjectWatchState[]) {}
+  projects() { return this.states; }
+  onUpdate(listener: (update: ProjectWatchUpdate) => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
+  emit(update: ProjectWatchUpdate) { for (const listener of this.listeners) listener(update); }
+}
+
+class MemoryStore implements ViewStateStore {
+  /** Set to make the next updates fail. */
+  failWith: Error | null = null;
+  constructor(public state: ViewState = DEFAULT_VIEW_STATE) {}
+  load() { return this.state; }
+  update(change: (stored: ViewState) => ViewState) {
+    if (this.failWith) return Promise.reject(this.failWith);
+    this.state = structuredClone(change(this.state));
+    return Promise.resolve(this.state);
+  }
+}
+
+const MASTER_TARGET = { socket: 'orc-sock', session: 'orc-master' };
+const W1_TARGET = { socket: 'orc-sock', session: 'orc-w1' };
+
+function projectState(id: string, options: { running?: boolean; master?: TmuxTarget | null; workers?: Array<{ agent_id: string } & TmuxTarget> } = {}): ProjectWatchState {
+  const { running = true, master = MASTER_TARGET, workers = [] } = options;
+  return {
+    project: { id, name: `${id}-project`, target_repo_root: `/repo/${id}`, state_dir: `/state/${id}`, repo_present: true, control_socket: null, coordinator_running: running },
+    connection: running ? 'running' : 'stopped',
+    error: null,
+    status: {
+      master: { agent_id: 'master', tmux_socket: master?.socket ?? null, tmux_session: master?.session ?? null },
+      worker_capacity: { slots: workers.map((worker) => ({ ...worker, tmux_socket: worker.socket, tmux_session: worker.session, session_handle: `tmux:${worker.socket}:${worker.session}` })) },
+      scouts: [],
+    } as never,
+    cursor: null,
+  };
 }
 
 /** The real terminal as a user would see it: every write replayed into an emulator. */
@@ -166,36 +274,52 @@ async function waitForSlotLine(terminal: FakeTerminal, line: string, ms = 5_000)
   }
 }
 
+/** Waits until some slot row contains `part` (messages are drawn indented). */
+async function waitForSlotText(terminal: FakeTerminal, part: string): Promise<void> {
+  const until = Date.now() + 5_000;
+  while (!(await slotRows(terminal)).some((row) => row.includes(part))) {
+    if (Date.now() > until) throw new Error(`timed out waiting for ${JSON.stringify(part)} in the slot:\n${(await slotRows(terminal)).join('\n')}`);
+    await sleep(25);
+  }
+}
+
 const apps: App[] = [];
 afterEach(() => { for (const app of apps.splice(0)) app.quit(); });
 
-function start(keys: CockpitKeys = DEFAULT_COCKPIT_KEYS) {
+interface StartOptions { keys?: CockpitKeys; projects?: ProjectWatchState[]; store?: MemoryStore; projectId?: string }
+
+function start({ keys = DEFAULT_COCKPIT_KEYS, projects = [projectState('demo')], store = new MemoryStore(), projectId = 'demo' }: StartOptions = {}) {
   const terminal = new FakeTerminal();
-  const client = new FakeClient();
-  const targets: MasterTarget[] = [];
+  const watcher = new FakeWatcher(projects);
+  const clients: FakeClient[] = [];
   const app = runApp({
-    terminal, keys, tmuxBinary: 'tmux', dataHome: '/data', lockPath: '/data/cockpit/cockpit2.lock',
-    projectName: 'demo-project', target: { socket: 'orc-sock', session: 'orc-master' },
-    connect: (target) => { targets.push(target); return client as unknown as PaneClient; },
+    terminal, keys, tmuxBinary: 'tmux', lockPath: '/data/cockpit/cockpit2.lock', store, projects: watcher, projectId,
+    connect: (target, { ignoreSize }) => {
+      const fake = new FakeClient(target, ignoreSize, `%${clients.length + 1}`);
+      fake.lines = [`$ hello from ${target.session}`];
+      clients.push(fake);
+      return fake as unknown as PaneClient;
+    },
     resyncDelayMs: 5,
   });
   apps.push(app);
-  return { terminal, client, app, targets };
+  const client = () => clients[0];
+  return { terminal, clients, client, app, store, watcher };
 }
 
-/** Waits until the master's capture is on the real terminal. */
-async function attached(terminal: FakeTerminal): Promise<void> {
-  await waitFor(() => terminal.writes.join('').includes('hello'));
+/** Waits until a session's capture is shown in the slot. */
+async function attached(terminal: FakeTerminal, session = 'orc-master'): Promise<void> {
+  await waitForSlotLine(terminal, `$ hello from ${session}`);
 }
 
 describe('runApp (fake tmux client)', () => {
   it('shows the master in the slot next to the placeholder sidebar and tab bar, its window sized to the slot', async () => {
-    const { terminal, client, targets } = start();
+    const { terminal, clients } = start();
     await attached(terminal);
-    expect(targets).toEqual([{ socket: 'orc-sock', session: 'orc-master' }]);
-    expect(client.resizes).toEqual(['46x21']);
+    expect(clients.map((fake) => [fake.target, fake.ignoreSize])).toEqual([[MASTER_TARGET, false]]);
+    expect(clients[0].resizes).toEqual(['46x21']);
     const screen = await shown(terminal);
-    expect(text(screen, 3, 34)).toBe('$ hello');
+    expect(text(screen, 3, 34)).toBe('$ hello from orc-master');
     expect(text(screen, 0, 0, 34)).toContain('demo-project');
     expect(text(screen, 1, 34)).toContain('master');
     expect(text(screen, 1, 34)).toContain('Ctrl-q: quit · F12 d: quit');
@@ -210,7 +334,7 @@ describe('runApp (fake tmux client)', () => {
     const settled = terminal.writes.length;
     await sleep(150);
     expect(terminal.writes.length).toBe(settled);
-    for (let i = 0; i < 50; i++) client.emit('output', '%1', Buffer.from(`x${i} `));
+    for (let i = 0; i < 50; i++) client().emit('output', '%1', Buffer.from(`x${i} `));
     await waitFor(() => terminal.writes.join('').includes('x49'));
     await sleep(50);
     expect(terminal.writes.length - settled).toBeLessThanOrEqual(3);
@@ -224,7 +348,7 @@ describe('runApp (fake tmux client)', () => {
     await attached(terminal);
     await sleep(30);
     const settled = terminal.writes.length;
-    client.emit('output', '%9', Buffer.from('elsewhere'));
+    client().emit('output', '%9', Buffer.from('elsewhere'));
     await sleep(60);
     expect(terminal.writes.length).toBe(settled);
   });
@@ -232,14 +356,14 @@ describe('runApp (fake tmux client)', () => {
   it('drops output the capture already shows and keeps what arrives after it', async () => {
     const { terminal, client } = start();
     let release!: () => void;
-    client.gate = new Promise((resolve) => { release = resolve; });
-    await waitFor(() => client.modeQueries === 1);
+    client().gate = new Promise((resolve) => { release = resolve; });
+    await waitFor(() => client().modeQueries === 1);
     await sleep(5);
-    client.emit('output', '%1', Buffer.from('BEFORE')); // in the capture already
+    client().emit('output', '%1', Buffer.from('BEFORE')); // in the capture already
     release();
-    client.gate = null;
+    client().gate = null;
     await attached(terminal);
-    client.emit('output', '%1', Buffer.from('AFTER'));
+    client().emit('output', '%1', Buffer.from('AFTER'));
     await waitFor(() => terminal.writes.join('').includes('AFTER'));
     expect(terminal.writes.join('')).not.toContain('BEFORE');
   });
@@ -250,8 +374,8 @@ describe('runApp (fake tmux client)', () => {
     terminal.type('ls -l\r');
     terminal.type(`${ESC}[A`);
     terminal.type(`${ESC}[200~one\ntwo${ESC}[201~`);
-    expect(client.sent).toEqual(['%1 l', '%1 s', '%1  ', '%1 -', '%1 l', '%1 \r', `%1 ${ESC}[A`]);
-    expect(client.pastes).toEqual(['%1 one\ntwo']);
+    expect(client().sent).toEqual(['%1 l', '%1 s', '%1  ', '%1 -', '%1 l', '%1 \r', `%1 ${ESC}[A`]);
+    expect(client().pastes).toEqual(['%1 one\ntwo']);
   });
 
   it('quits on Ctrl-q: the terminal is restored and the control client closed, nothing sent to the master', async () => {
@@ -260,10 +384,10 @@ describe('runApp (fake tmux client)', () => {
     terminal.type('\x11');
     await app.done;
     expect(terminal.restored).toBe(1);
-    expect(client.closed).toBe(1);
-    expect(client.sent).toEqual([]);
+    expect(client().closed).toBe(1);
+    expect(client().sent).toEqual([]);
     const writes = terminal.writes.length;
-    client.emit('output', '%1', Buffer.from('more'));
+    client().emit('output', '%1', Buffer.from('more'));
     await sleep(40);
     expect(terminal.writes.length).toBe(writes);
   });
@@ -273,17 +397,17 @@ describe('runApp (fake tmux client)', () => {
     await attached(terminal);
     terminal.type(`${F12}${F12}`);
     terminal.type(`${F12}x`); // not in this step's prefix table: dropped
-    expect(client.sent).toEqual([`%1 ${F12}`]);
+    expect(client().sent).toEqual([`%1 ${F12}`]);
     terminal.type(`${F12}d`);
     await app.done;
-    expect(client.closed).toBe(1);
+    expect(client().closed).toBe(1);
   });
 
   it('takes the quit key from the keys setting', async () => {
-    const { terminal, client, app } = start({ ...DEFAULT_COCKPIT_KEYS, prefix: 'C-a', quit: 'C-x' });
+    const { terminal, client, app } = start({ keys: { ...DEFAULT_COCKPIT_KEYS, prefix: 'C-a', quit: 'C-x' } });
     await attached(terminal);
     terminal.type('\x11');
-    expect(client.sent).toEqual(['%1 \x11']);
+    expect(client().sent).toEqual(['%1 \x11']);
     terminal.type('\x18');
     await app.done;
     expect(terminal.restored).toBe(1);
@@ -293,9 +417,9 @@ describe('runApp (fake tmux client)', () => {
     const { terminal, client } = start();
     await attached(terminal);
     terminal.resizeTo(200, 60);
-    await waitFor(() => client.resizes.includes('166x57'));
-    client.lines = ['$ resized'];
-    client.emit('notification', '%layout-change @1 abcd,166x57,0,0,1 abcd,166x57,0,0,1 *');
+    await waitFor(() => client().resizes.includes('166x57'));
+    client().lines = ['$ resized'];
+    client().emit('resize', 166, 57);
     await waitForSlotLine(terminal, '$ resized');
     const screen = await shown(terminal);
     expect(text(screen, 3, 34)).toBe('$ resized');
@@ -305,28 +429,207 @@ describe('runApp (fake tmux client)', () => {
   it('keeps showing the master and taking input after a keystroke or paste fails', async () => {
     const { terminal, client } = start();
     await attached(terminal);
-    const sendBytes = client.sendBytes.bind(client);
-    const paste = client.paste.bind(client);
-    client.sendBytes = () => { client.sendBytes = sendBytes; return Promise.reject(new Error('send-keys failed')); };
-    client.paste = () => { client.paste = paste; return Promise.reject(new Error('set-buffer failed')); };
+    const fake = client();
+    const sendBytes = fake.sendBytes.bind(fake);
+    const paste = fake.paste.bind(fake);
+    fake.sendBytes = () => { fake.sendBytes = sendBytes; return Promise.reject(new Error('send-keys failed')); };
+    fake.paste = () => { fake.paste = paste; return Promise.reject(new Error('set-buffer failed')); };
     terminal.type('a');
     terminal.type(`${ESC}[200~big${ESC}[201~`);
     await sleep(30);
     terminal.type('b');
     terminal.type(`${ESC}[200~next${ESC}[201~`);
-    expect(client.sent).toEqual(['%1 b']);
-    expect(client.pastes).toEqual(['%1 next']);
+    expect(fake.sent).toEqual(['%1 b']);
+    expect(fake.pastes).toEqual(['%1 next']);
     const screen = await shown(terminal);
-    expect(text(screen, 3, 34)).toBe('$ hello');
+    expect(text(screen, 3, 34)).toBe('$ hello from orc-master');
   });
 
   it('says so when the master\'s session ends and stops typing into it', async () => {
     const { terminal, client } = start();
     await attached(terminal);
-    client.emit('exit', 'session closed');
+    client().emit('exit', 'session closed');
     await waitFor(() => terminal.writes.join('').includes('not running'));
     terminal.type('x');
-    expect(client.sent).toEqual([]);
+    expect(client().sent).toEqual([]);
+  });
+
+  it('keeps a restore failure shown instead of a half-restored screen', async () => {
+    const { terminal, client } = start();
+    await attached(terminal);
+    client().capture = () => Promise.reject(new Error('capture-pane failed'));
+    client().emit('resize', 46, 21);
+    await waitForSlotText(terminal, 'capture-pane failed');
+    // Nothing is typed into a pane the slot does not show.
+    terminal.type('x');
+    terminal.type(`${ESC}[200~text${ESC}[201~`);
+    expect(client().sent).toEqual([]);
+    expect(client().pastes).toEqual([]);
+  });
+});
+
+describe('runApp tabs and projects (fake tmux clients)', () => {
+  const twoTabs = () => start({ projects: [projectState('demo', { workers: [{ agent_id: 'w1', ...W1_TARGET }] })] });
+
+  it('opens a worker tab as an ignore-size view and switches between tabs, each shown correctly', async () => {
+    const { terminal, clients, app } = twoTabs();
+    await attached(terminal);
+    expect(app.apply((state) => openAgent(state, 'demo', 'w1')).ok).toBe(true);
+    await attached(terminal, 'orc-w1');
+    await waitForSlotLine(terminal, '$ hello from orc-w1');
+    const [master, worker] = clients;
+    expect([worker.target, worker.ignoreSize]).toEqual([W1_TARGET, true]);
+    expect(worker.resizes).toEqual([]); // a view never sizes the worker's window
+    expect(text(await shown(terminal), 1, 34)).toContain('w1');
+
+    expect(app.apply((state) => selectTab(state, 1)).ok).toBe(true);
+    await waitForSlotLine(terminal, '$ hello from orc-master');
+    expect(clients).toHaveLength(2); // the master's client was kept
+    expect(master.closed).toBe(0);
+    terminal.type('x');
+    expect(master.sent).toEqual(['%1 x']);
+    expect(worker.sent).toEqual([]);
+  });
+
+  it('pauses a hidden tab\'s output and restores it from a fresh capture when shown again', async () => {
+    const { terminal, clients, app } = twoTabs();
+    await attached(terminal);
+    const master = clients[0];
+    app.apply((state) => openAgent(state, 'demo', 'w1'));
+    await waitForSlotLine(terminal, '$ hello from orc-w1');
+    expect(master.paused).toEqual(['%1']);
+    const queries = master.modeQueries;
+
+    // Output arriving while hidden (in flight before the pause) is not applied; the capture on return shows the pane.
+    master.emit('output', '%1', Buffer.from('\r\nHIDDEN-STALE'));
+    master.lines = ['$ hello from orc-master', '$ written while hidden'];
+    app.apply((state) => selectTab(state, MASTER_TAB));
+    await waitForSlotLine(terminal, '$ written while hidden');
+    expect(master.resumed).toEqual(['%1']);
+    expect(master.modeQueries).toBe(queries + 1);
+    expect(clients[1].paused).toEqual(['%2']);
+    expect((await slotRows(terminal)).join('\n')).not.toContain('HIDDEN-STALE');
+
+    master.emit('output', '%1', Buffer.from('\x1b[5;1Hlive again'));
+    await waitForSlotLine(terminal, 'live again');
+  });
+
+  it('pads a smaller worker screen into the slot with the edge marker, and crops a larger one', async () => {
+    const { terminal, clients, app } = twoTabs();
+    await attached(terminal);
+    app.apply((state) => openAgent(state, 'demo', 'w1'));
+    await waitForSlotLine(terminal, '$ hello from orc-w1');
+    const worker = clients[1];
+    worker.size = { cols: 20, rows: 5 };
+    worker.emit('resize', 20, 5); // the worker's window changed size (not through the cockpit)
+    await waitForSlotLine(terminal, `$ hello from orc-w1 ${EDGE_COLUMN}`);
+    const rows = await slotRows(terminal);
+    expect(rows[5]).toBe(EDGE_ROW.repeat(20));
+    expect(rows[6]).toBe('');
+
+    worker.size = { cols: 60, rows: 30 };
+    worker.lines = [`$ ${'x'.repeat(58)}`];
+    worker.emit('resize', 60, 30);
+    await waitForSlotLine(terminal, `$ ${'x'.repeat(44)}`);
+    expect(worker.resizes).toEqual([]);
+  });
+
+  it('closing a tab only detaches its view', async () => {
+    const { terminal, clients, app, store } = twoTabs();
+    await attached(terminal);
+    app.apply((state) => openAgent(state, 'demo', 'w1'));
+    await waitForSlotLine(terminal, '$ hello from orc-w1');
+    const result = app.apply((state) => closeTab(state));
+    expect(result.ok).toBe(true);
+    expect(clients[1].closed).toBe(1);
+    expect(clients[1].sent).toEqual([]);
+    await waitForSlotLine(terminal, '$ hello from orc-master');
+    expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: [], active: null });
+    await sleep(5);
+    expect(store.state.tabs.projects[0]).toEqual({ projectId: 'demo', tabs: [], active: null });
+  });
+
+  it('saves the tabs and the running master\'s target to the view state, and reopens them on start', async () => {
+    const store = new MemoryStore();
+    const first = start({ store, projects: [projectState('demo', { workers: [{ agent_id: 'w1', ...W1_TARGET }] })] });
+    await attached(first.terminal);
+    first.app.apply((state) => openAgent(state, 'demo', 'w1'));
+    first.app.quit();
+    await first.app.done;
+    expect(store.state).toEqual({
+      tabs: { activeProject: 'demo', projects: [{ projectId: 'demo', tabs: ['w1'], active: 'w1' }] },
+      masterTargets: { demo: MASTER_TARGET },
+    });
+
+    const second = start({ store, projects: [projectState('demo', { workers: [{ agent_id: 'w1', ...W1_TARGET }] })] });
+    await attached(second.terminal, 'orc-w1');
+    expect(second.clients.map((fake) => fake.target)).toEqual([W1_TARGET]); // only the shown tab attaches
+  });
+
+  it('shows the master from the stored target while the coordinator is down', async () => {
+    const stored = { socket: 'orc-old', session: 'orc-master-stored' };
+    const store = new MemoryStore({ tabs: { activeProject: 'demo', projects: [{ projectId: 'demo', tabs: [], active: null }] }, masterTargets: { demo: stored } });
+    // A stale status view still names another target; the coordinator is down, so the stored one wins.
+    const { terminal, clients } = start({ store, projects: [projectState('demo', { running: false, master: MASTER_TARGET })] });
+    await attached(terminal, 'orc-master-stored');
+    expect(clients.map((fake) => [fake.target, fake.ignoreSize])).toEqual([[stored, false]]);
+    expect(store.state.masterTargets).toEqual({ demo: stored });
+  });
+
+  it('follows a running coordinator\'s master target and stores it', async () => {
+    const stored = { socket: 'orc-old', session: 'orc-master-stored' };
+    const store = new MemoryStore({ tabs: { activeProject: 'demo', projects: [{ projectId: 'demo', tabs: [], active: null }] }, masterTargets: { demo: stored } });
+    const { terminal, clients, watcher } = start({ store, projects: [projectState('demo', { running: false })] });
+    await attached(terminal, 'orc-master-stored');
+    watcher.emit({ type: 'connection', project_id: 'demo', connection: 'running', error: null });
+    await attached(terminal, 'orc-master');
+    expect(clients.map((fake) => fake.target)).toEqual([stored, MASTER_TARGET]);
+    expect(clients[0].closed).toBe(1);
+    await sleep(5);
+    expect(store.state.masterTargets).toEqual({ demo: MASTER_TARGET });
+  });
+
+  it('keeps master targets another writer stored, and shows a failed save in the tab bar until a save succeeds', async () => {
+    const store = new MemoryStore({ ...DEFAULT_VIEW_STATE, masterTargets: { other: { socket: 'orc-o', session: 'orc-master-o' } } });
+    const { terminal, app } = start({ store });
+    await attached(terminal);
+    expect(store.state.masterTargets).toEqual({ other: { socket: 'orc-o', session: 'orc-master-o' }, demo: MASTER_TARGET });
+
+    store.failWith = new Error('EACCES: permission denied');
+    app.apply((state) => openAgent(state, 'demo', 'w1'));
+    await waitFor(() => app.saveError() === 'EACCES: permission denied');
+    for (let until = Date.now() + 4_000; !text(await shown(terminal), 1, 34).includes('view state not saved'); await sleep(25)) {
+      if (Date.now() > until) throw new Error(`no save error in the tab bar: ${text(await shown(terminal), 1, 34)}`);
+    }
+    store.failWith = null;
+    app.apply((state) => selectTab(state, MASTER_TAB));
+    await waitFor(() => app.saveError() === null);
+    expect(store.state.tabs.projects[0]).toEqual({ projectId: 'demo', tabs: ['w1'], active: null });
+  });
+
+  it('shows a stopped project\'s message and start command when its master is gone too', async () => {
+    // No stored target and the coordinator down: the computed one is tried.
+    const { terminal, client } = start({ projects: [projectState('demo', { running: false })] });
+    await attached(terminal, tmuxSessionTarget('/state/demo', 'master').session);
+    terminal.resizeTo(120, 30);
+    client().emit('exit', 'can\'t find session: orc-master');
+    await waitForSlotText(terminal, 'Project demo-project is not running.');
+    await waitForSlotText(terminal, 'Start it with: cd /repo/demo && orc start-session');
+  });
+
+  it('switches projects: each keeps its own tabs and master', async () => {
+    const other = { socket: 'orc-other', session: 'orc-master-other' };
+    const { terminal, clients, app } = start({ projects: [projectState('demo'), projectState('other', { master: other })] });
+    await attached(terminal);
+    app.apply((state) => showProject(state, 'other'));
+    await attached(terminal, 'orc-master-other');
+    expect(clients.map((fake) => fake.target)).toEqual([MASTER_TARGET, other]);
+    expect(clients[0].paused).toEqual(['%1']);
+    expect(text(await shown(terminal), 0, 0, 34)).toContain('other-project');
+    app.apply((state) => showProject(state, 'demo'));
+    await waitForSlotLine(terminal, '$ hello from orc-master');
+    expect(clients[0].resumed).toEqual(['%1']);
+    expect(app.tabs().projects.map((project) => project.projectId)).toEqual(['demo', 'other']);
   });
 });
 
@@ -338,20 +641,25 @@ describe.skipIf(!hasTmux)('runApp (private tmux server)', () => {
   const socket = `orc-cockpit2-app-test-${process.pid}-${Date.now()}`;
   const tmux = (...args: string[]) => spawnSync('tmux', ['-L', socket, '-f', '/dev/null', ...args], { encoding: 'utf8' });
   afterAll(() => { tmux('kill-server'); });
+  const windowSize = (session: string) => tmux('display-message', '-p', '-t', `=${session}:`, '#{window_width}x#{window_height}').stdout.trim();
+
+  function startReal(projects: ProjectWatchState[]) {
+    const terminal = new FakeTerminal();
+    const app = runApp({
+      terminal, keys: DEFAULT_COCKPIT_KEYS, tmuxBinary: 'tmux', lockPath: '/unused/lock', store: new MemoryStore(),
+      projects: new FakeWatcher(projects), projectId: 'fake',
+    });
+    apps.push(app);
+    return { terminal, app };
+  }
 
   it('shows the master\'s shell, types into it, follows a resize and leaves the session running on quit', async () => {
     const session = 'orc-master-fake';
     const created = tmux('new-session', '-d', '-s', session, '-x', '100', '-y', '30',
       'env -i TERM=tmux-256color PS1="$ " LANG=C.UTF-8 sh');
     expect(created.status, created.stderr).toBe(0);
-    const terminal = new FakeTerminal();
-    const app = runApp({
-      terminal, keys: DEFAULT_COCKPIT_KEYS, tmuxBinary: 'tmux', dataHome: '/unused', lockPath: '/unused/lock',
-      projectName: 'fake', target: { socket, session },
-    });
-    apps.push(app);
-    const windowSize = () => tmux('display-message', '-p', '-t', `=${session}:`, '#{window_width}x#{window_height}').stdout.trim();
-    await waitFor(() => windowSize() === '46x21');
+    const { terminal, app } = startReal([projectState('fake', { master: { socket, session } })]);
+    await waitFor(() => windowSize(session) === '46x21');
 
     // Typed bytes arrive and the output appears in the slot.
     await waitForSlotLine(terminal, '$');
@@ -360,7 +668,7 @@ describe.skipIf(!hasTmux)('runApp (private tmux server)', () => {
 
     // A resize re-lays out: the window follows the slot and the shell sees the new size.
     terminal.resizeTo(120, 40);
-    await waitFor(() => windowSize() === '86x37');
+    await waitFor(() => windowSize(session) === '86x37');
     // tmux applies the pane's new tty size a moment after the window's: ask again until the shell sees it.
     await waitFor(() => tmux('display-message', '-p', '-t', `=${session}:`, '#{pane_width}x#{pane_height}').stdout.trim() === '86x37');
     for (let attempt = 0; ; attempt++) {
@@ -379,16 +687,51 @@ describe.skipIf(!hasTmux)('runApp (private tmux server)', () => {
     const session = 'orc-master-prefix';
     const created = tmux('new-session', '-d', '-s', session, '-x', '100', '-y', '30', 'env -i PS1="$ " sh');
     expect(created.status, created.stderr).toBe(0);
-    const terminal = new FakeTerminal();
-    const app = runApp({
-      terminal, keys: DEFAULT_COCKPIT_KEYS, tmuxBinary: 'tmux', dataHome: '/unused', lockPath: '/unused/lock',
-      projectName: 'fake', target: { socket, session },
-    });
-    apps.push(app);
+    const { terminal, app } = startReal([projectState('fake', { master: { socket, session } })]);
     await waitForSlotLine(terminal, '$');
     terminal.type(`${F12}d`);
     await app.done;
     expect(terminal.restored).toBe(1);
     expect(tmux('has-session', '-t', `=${session}`).status).toBe(0);
   }, 20_000);
+
+  it('switches between master and worker tabs without resizing the worker, and shows output written while a tab was hidden', async () => {
+    const master = 'orc-master-tabs';
+    const worker = 'orc-w1-tabs';
+    for (const [session, size] of [[master, ['100', '30']], [worker, ['70', '15']]] as const) {
+      const created = tmux('new-session', '-d', '-s', session, '-x', size[0], '-y', size[1], 'env -i TERM=tmux-256color PS1="$ " LANG=C.UTF-8 sh');
+      expect(created.status, created.stderr).toBe(0);
+    }
+    const before = windowSize(worker);
+    expect(before).toBe('70x15');
+    const { terminal, app } = startReal([projectState('fake', { master: { socket, session: master }, workers: [{ agent_id: 'w1', socket, session: worker }] })]);
+    await waitFor(() => windowSize(master) === '46x21');
+    await waitForSlotLine(terminal, '$');
+
+    // The worker's tab: its screen keeps the worker's size inside the slot, the window is untouched.
+    tmux('send-keys', '-t', `=${worker}:`, 'echo worker-$((6*7))', 'Enter');
+    app.apply((state) => openAgent(state, 'fake', 'w1'));
+    await waitForSlotLine(terminal, 'worker-42');
+    expect(windowSize(worker)).toBe(before);
+    const workerRows = await slotRows(terminal);
+    expect(workerRows[0].length).toBeLessThanOrEqual(46);
+    expect(workerRows[15]).toBe(EDGE_ROW.repeat(46)); // the edge marker row under the 15-row screen
+
+    // Output written to the master while its tab is hidden is shown after switching back, as capture-pane has it.
+    tmux('send-keys', '-t', `=${master}:`, 'clear; for i in 1 2 3; do echo hidden-$i; done', 'Enter');
+    await waitFor(() => tmux('capture-pane', '-p', '-t', `=${master}:`).stdout.includes('hidden-3'));
+    app.apply((state) => selectTab(state, MASTER_TAB));
+    await waitForSlotLine(terminal, 'hidden-3');
+    const captured = tmux('capture-pane', '-p', '-t', `=${master}:`).stdout.split('\n').slice(0, 21).map((line) => line.trimEnd());
+    expect(await slotRows(terminal)).toEqual(captured);
+
+    // Back to the worker and once more: its window still has its own size.
+    app.apply((state) => selectTab(state, 'w1'));
+    await waitForSlotLine(terminal, 'worker-42');
+    expect(windowSize(worker)).toBe(before);
+    app.apply((state) => closeTab(state));
+    await waitForSlotLine(terminal, 'hidden-3');
+    expect(tmux('has-session', '-t', `=${worker}`).status).toBe(0);
+    expect(windowSize(worker)).toBe(before);
+  }, 30_000);
 });
