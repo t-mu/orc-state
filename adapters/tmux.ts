@@ -243,19 +243,42 @@ function inspect(agentId: string): SessionInspection {
  */
 const EXIT_STATUS_WAIT_MS = 2_000;
 const EXIT_STATUS_POLL_MS = 50;
+const DEAD_PANE_FORMAT = '#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}|#{pid}';
 
-/** A dead pane kept by `remain-on-exit`: its exit code or killing signal. */
+/**
+ * Pure: a `DEAD_PANE_FORMAT` line. `status` is null until tmux has reaped the pane's process;
+ * `serverPid` is the tmux server's pid.
+ */
+export function parseDeadPane(line: string): { dead: boolean; status: SessionExitStatus | null; serverPid: number | null } {
+  const [dead, statusText, signalText, serverText] = line.trim().split('|');
+  const server = Number(serverText);
+  const serverPid = Number.isSafeInteger(server) && server > 0 ? server : null;
+  if (dead !== '1' || (!statusText && !signalText)) return { dead: dead === '1', status: null, serverPid };
+  const code = statusText ? Number(statusText) : Number.NaN;
+  const sig = signalText ? Number(signalText) : Number.NaN;
+  return {
+    dead: true, serverPid,
+    status: { code: Number.isInteger(code) ? code : null, signal: Number.isInteger(sig) ? sig : (signalText || null) },
+  };
+}
+
+/**
+ * A dead pane kept by `remain-on-exit`: its exit code or killing signal.
+ * tmux 3.3a under load can miss the SIGCHLD of a pane's process and leave it an unreaped zombie,
+ * so the dead pane never gets a status. tmux reaps every exited child on any SIGCHLD, so while the
+ * status is missing each poll sends the server one.
+ */
 function exitStatus(agentId: string): SessionExitStatus | null {
   const deadline = Date.now() + EXIT_STATUS_WAIT_MS;
   for (;;) {
-    const result = tmux(['display-message', '-p', '-t', target(agentId), '#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}']);
+    const result = tmux(['display-message', '-p', '-t', target(agentId), DEAD_PANE_FORMAT]);
     if (result.error || result.status !== 0) return null;
-    const [dead, status, signal] = result.stdout.trim().split('|');
-    if (dead !== '1') return null;
-    if (status || signal || Date.now() >= deadline) {
-      const code = status ? Number(status) : Number.NaN;
-      const sig = signal ? Number(signal) : Number.NaN;
-      return { code: Number.isInteger(code) ? code : null, signal: Number.isInteger(sig) ? sig : (signal || null) };
+    const pane = parseDeadPane(result.stdout);
+    if (!pane.dead) return null;
+    if (pane.status) return pane.status;
+    if (Date.now() >= deadline) return { code: null, signal: null };
+    if (pane.serverPid != null) {
+      try { process.kill(pane.serverPid, 'SIGCHLD'); } catch { /* the server is gone; the next poll says so */ }
     }
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, EXIT_STATUS_POLL_MS);
   }

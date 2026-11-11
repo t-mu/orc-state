@@ -90,8 +90,12 @@ export class TmuxControlClient extends EventEmitter<TmuxControlEvents> {
   private readonly proc: ControlProcess;
   private readonly parser = new TmuxControlParser<TmuxControlEvent | TmuxControlReplyEvent>({ replies: true });
   private readonly pending: Pending[] = [];
-  /** tmux answers the attach itself with one reply block before any command of ours. */
-  private skipAttachReply = true;
+  /**
+   * tmux answers the attach itself with one reply block, but can run a command already written to
+   * stdin before the attach (then on no session, and its reply comes first). So commands wait here
+   * until the attach reply.
+   */
+  private unattached: string[] | null = [];
   private exited: string | null = null;
 
   constructor(options: TmuxControlOptions) {
@@ -110,7 +114,8 @@ export class TmuxControlClient extends EventEmitter<TmuxControlEvents> {
     if (this.exited !== null) return Promise.reject(new Error(`tmux control client exited: ${this.exited}`));
     return new Promise((resolve, reject) => {
       this.pending.push({ resolve, reject });
-      this.proc.stdin.write(`${line}\n`);
+      if (this.unattached) this.unattached.push(line);
+      else this.proc.stdin.write(`${line}\n`);
     });
   }
 
@@ -194,7 +199,12 @@ export class TmuxControlClient extends EventEmitter<TmuxControlEvents> {
   }
 
   private onReply(lines: string[], error: boolean): void {
-    if (this.skipAttachReply) { this.skipAttachReply = false; return; }
+    if (this.unattached) {
+      // A failed attach ends the client with %exit; its 'exit' rejects the held commands.
+      if (!error) for (const line of this.unattached) this.proc.stdin.write(`${line}\n`);
+      this.unattached = null;
+      return;
+    }
     const waiter = this.pending.shift();
     if (!waiter) return;
     if (error) waiter.reject(new Error(lines.join('\n') || 'tmux command failed'));
