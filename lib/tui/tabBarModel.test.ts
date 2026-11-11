@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { stringWidth } from '../cellWidth.ts';
 import type { TuiProjectView, TuiStatus } from './status.ts';
 import {
-  NO_PROJECT_NOTICE, buildTabBarModel, layoutTabBar, tabAttention, tabBarClickTarget, tabBarRows, tabBarText, tabWidth,
+  NO_PROJECT_NOTICE, TAB_GAP, buildTabBarModel, layoutTabBar, tabAttention, tabBarClickTarget, tabBarRows, tabBarText, tabWidth,
   type TabBarState,
 } from './tabBarModel.ts';
 
@@ -58,9 +58,9 @@ describe('tab bar rows', () => {
     const model = buildTabBarModel(state(['w1'], 'w1'), new Map([['w1', 'question']]));
     const layout = layoutTabBar(model, 40);
     expect(tabBarText(tabBarRows(model, layout, 40))).toEqual([
-      '┌──────────┐┌───────────────────┐',
-      '│ 1 master ││ 2 w1 ! QUESTION × │',
-      `┴──────────┴┘                   └${'─'.repeat(7)}`,
+      '┌──────────┐ ┌───────────────────┐',
+      '│ 1 master │ │ 2 w1 ! QUESTION × │',
+      `┴──────────┴─┘                   └${'─'.repeat(6)}`,
     ]);
   });
 
@@ -69,6 +69,20 @@ describe('tab bar rows', () => {
     expect(tabBarText(tabBarRows(none, layoutTabBar(none, 20), 20))).toEqual(['', 'No project is open;…', '─'.repeat(20)]);
     const model = buildTabBarModel(state([], null));
     expect(tabBarText(tabBarRows(model, layoutTabBar(model, 30), 30, 'tmux select-pane failed'))[2]).toBe('tmux select-pane failed');
+  });
+});
+
+describe('layoutTabBar gaps', () => {
+  it('puts TAB_GAP columns between tabs and counts them when fitting', () => {
+    const model = buildTabBarModel(state(['w1', 'w2'], null));
+    const layout = layoutTabBar(model, 200);
+    const [a, b, c] = layout.cells;
+    expect(b.x).toBe(a.x + a.width + TAB_GAP);
+    expect(c.x).toBe(b.x + b.width + TAB_GAP);
+    const exact = c.x + c.width;
+    expect(layoutTabBar(model, exact).cells).toHaveLength(3);
+    expect(layoutTabBar(model, exact - 1).cells.length).toBeLessThan(3);
+    for (let x = a.x + a.width; x < b.x; x += 1) expect(tabBarClickTarget(model, layout, x)).toBeNull();
   });
 });
 
@@ -121,8 +135,8 @@ describe('wide-character tab names', () => {
     expect(tabWidth(model.tabs[1])).toBe(2 + stringWidth(' 2 作業者') + ' ! QUESTION'.length + ' × '.length);
     const layout = layoutTabBar(model, 80);
     const rows = tabBarText(tabBarRows(model, layout, 80));
-    expect(rows.map(row => stringWidth(row))).toEqual([53, 53, 80]); // the rule under the tabs runs to the right edge
-    expect(rows[1]).toBe('│ 1 master ││ 2 作業者 ! QUESTION × ││ 3 agent-🚀 × │');
+    expect(rows.map(row => stringWidth(row))).toEqual([55, 55, 80]); // the rule under the tabs runs to the right edge
+    expect(rows[1]).toBe('│ 1 master │ │ 2 作業者 ! QUESTION × │ │ 3 agent-🚀 × │');
     for (const cell of layout.cells.slice(1)) {
       expect(tabBarClickTarget(model, layout, cell.closeX!)?.kind).toBe('close');
       expect(tabBarClickTarget(model, layout, cell.closeX! - 2)?.kind).toBe('select');

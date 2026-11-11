@@ -13,7 +13,6 @@
 import { stringWidth } from '../cellWidth.ts';
 import { fitText } from '../tui/sidebar.ts';
 import { drawText, type Frame, type Region } from './frame.ts';
-import type { CellStyle } from './screen.ts';
 import { badgeRole, styleOf, type StatusRole, type Theme, type ThemeRole } from './theme.ts';
 
 export interface BoxOptions {
@@ -106,16 +105,48 @@ export function collapseMarker(expanded: boolean): string {
   return expanded ? '[-]' : '[+]';
 }
 
-/** The box around the slot: `region` is the slot with its frame. */
-export function drawPaneFrame(frame: Frame, region: Region, style: CellStyle): void {
-  if (region.cols < 2 || region.rows < 2) return;
-  const left = region.x;
+/** What the pane's top border says about the shown tab: a title, a few facts, and a status badge flush right. */
+export interface PaneHeader {
+  title: string;
+  parts: string[];
+  badge: { label: string; role: StatusRole } | null;
+}
+
+/**
+ * The box around the slot with the shown tab's header on its top border:
+ * `[ TITLE ]`, then the parts joined by ` · ` (whole parts only, while they
+ * fit), then the badge flush right when a `─` still separates it from the
+ * title. `region` is the slot with its frame.
+ */
+export function drawPaneBox(frame: Frame, region: Region, header: PaneHeader | null, focused: boolean, theme: Theme): void {
+  if (region.cols < 4 || region.rows < 2) return;
+  drawBox(frame, region, { title: header?.title ?? '', focused, theme });
+  if (!header) return;
   const right = region.x + region.cols - 1;
-  const bottom = region.y + region.rows - 1;
-  drawText(frame, left, region.y, `┌${'─'.repeat(region.cols - 2)}┐`, style, region.cols);
-  for (let y = region.y + 1; y < bottom; y += 1) {
-    drawText(frame, left, y, '│', style, 1);
-    drawText(frame, right, y, '│', style, 1);
+  const border = styleOf(theme, focused ? 'chrome.borderFocus' : 'chrome.border');
+  const titleWidth = header.title ? stringWidth(`[ ${header.title.toUpperCase()} ]`) : 0;
+  const start = region.x + 3 + titleWidth;
+  // Columns left of the badge (or of the corner's `─`) the parts may use.
+  let limit = right - 1;
+  if (header.badge) {
+    const width = stringWidth(`[${header.badge.label.toUpperCase()}]`);
+    const badgeX = right - 2 - width;
+    // The badge only when a `─` still separates it from the title.
+    if (badgeX - 1 > start + 1) {
+      drawText(frame, badgeX - 1, region.y, ' ', border, 1);
+      drawBadge(frame, badgeX, region.y, header.badge.label, header.badge.role, theme);
+      drawText(frame, badgeX + width, region.y, ' ', border, 1);
+      limit = badgeX - 2;
+    }
   }
-  drawText(frame, left, bottom, `└${'─'.repeat(region.cols - 2)}┘`, style, region.cols);
+  // Whole parts only, in order, while they fit with a space each side.
+  const room = limit - start - 2;
+  let text = '';
+  for (const part of header.parts.filter(Boolean)) {
+    const next = text ? `${text} · ${part}` : part;
+    if (stringWidth(next) > room) break;
+    text = next;
+  }
+  if (!text) return;
+  drawText(frame, start, region.y, ` ${text} `, styleOf(theme, 'text.muted'), room + 2);
 }

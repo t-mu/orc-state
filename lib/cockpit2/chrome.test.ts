@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { collapseMarker, drawBadge, drawBox, drawPaneFrame, type BoxOptions } from './chrome.ts';
+import { collapseMarker, drawBadge, drawBox, drawPaneBox, type BoxOptions, type PaneHeader } from './chrome.ts';
 import { cellAt, createFrame, DEFAULT_STYLE, drawText, type Frame, type Region } from './frame.ts';
-import { BUILT_IN_THEMES, STATUS_ROLES, styleOf, type BuiltInThemeName } from './theme.ts';
+import { BUILT_IN_THEMES, STATUS_ROLES, badgeRole, styleOf, type BuiltInThemeName } from './theme.ts';
 
 const THEMES = Object.keys(BUILT_IN_THEMES) as BuiltInThemeName[];
 
@@ -211,34 +211,70 @@ describe('collapseMarker', () => {
   });
 });
 
-describe('drawPaneFrame', () => {
-  const BORDER = styleOf(BUILT_IN_THEMES.amber, 'chrome.borderFocus');
+describe('drawPaneBox', () => {
+  const theme = BUILT_IN_THEMES.amber;
+  const header = (parts: string[], badge: PaneHeader['badge'] = null): PaneHeader => ({ title: 'w1', parts, badge });
 
-  it('draws a plain box around the region in its style, leaving the inside and the rows outside alone', () => {
+  it('draws a full box with the title on its top border, leaving the inside and the rows outside alone', () => {
     const frame = createFrame(12, 6);
     drawText(frame, 0, 0, 'tab strip', DEFAULT_STYLE, 12);
-    drawPaneFrame(frame, { x: 0, y: 1, cols: 12, rows: 5 }, BORDER);
+    drawPaneBox(frame, { x: 0, y: 1, cols: 12, rows: 5 }, { title: 'w1', parts: [], badge: null }, true, theme);
     expect(frameText(frame)).toEqual([
       'tab strip   ',
-      `┌${'─'.repeat(10)}┐`,
+      '┌─ [ W1 ] ─┐',
       `│${' '.repeat(10)}│`,
       `│${' '.repeat(10)}│`,
       `│${' '.repeat(10)}│`,
       `└${'─'.repeat(10)}┘`,
     ]);
-    for (const [x, y] of [[0, 1], [5, 1], [11, 1], [0, 2], [11, 4], [0, 5], [5, 5], [11, 5]]) expect(cellAt(frame, x, y)!.style, `${x},${y}`).toEqual(BORDER);
+    for (const [x, y] of [[0, 1], [11, 1], [0, 2], [11, 4], [0, 5], [11, 5]]) expect(cellAt(frame, x, y)!.style, `${x},${y}`).toEqual(styleOf(theme, 'chrome.borderFocus'));
     expect(cellAt(frame, 5, 3)!.style).toBe(DEFAULT_STYLE);
   });
 
-  it('draws only a top and a bottom row for a two-row region and nothing for a smaller one', () => {
-    const two = createFrame(4, 2);
-    drawPaneFrame(two, { x: 0, y: 0, cols: 4, rows: 2 }, BORDER);
-    expect(frameText(two)).toEqual(['┌──┐', '└──┘']);
+  it('draws a plain box without a header', () => {
+    const frame = createFrame(6, 3);
+    drawPaneBox(frame, { x: 0, y: 0, cols: 6, rows: 3 }, null, false, theme);
+    expect(frameText(frame)).toEqual(['┌────┐', '│    │', '└────┘']);
+    expect(cellAt(frame, 0, 0)!.style).toEqual(styleOf(theme, 'chrome.border'));
+  });
+
+  it('joins the parts with ` · ` after the title in text.muted, and puts the badge flush right', () => {
+    const frame = createFrame(50, 3);
+    drawPaneBox(frame, { x: 0, y: 0, cols: 50, rows: 3 }, header(['task-1', 'implement'], { label: 'question', role: 'status.attention' }), false, theme);
+    expect(rowText(frame, 0)).toBe(`┌─ [ W1 ] task-1 · implement ${'─'.repeat(7)} [QUESTION] ─┐`);
+    expect(cellAt(frame, 10, 0)!.style).toEqual(styleOf(theme, 'text.muted'));
+    expect(cellAt(frame, 37, 0)!.style).toEqual(styleOf(theme, badgeRole('status.attention')));
+  });
+
+  it('shows whole parts only, skipping empty ones, and stops at the first that does not fit', () => {
+    const frame = createFrame(34, 3);
+    drawPaneBox(frame, { x: 0, y: 0, cols: 34, rows: 3 }, header(['task-1', '', 'implement', 'x']), false, theme);
+    expect(rowText(frame, 0)).toBe(`┌─ [ W1 ] task-1 · implement ${'─'.repeat(4)}┐`);
+    const narrow = createFrame(30, 3);
+    drawPaneBox(narrow, { x: 0, y: 0, cols: 30, rows: 3 }, header(['task-1', 'implement', 'x']), false, theme);
+    expect(rowText(narrow, 0)).toBe(`┌─ [ W1 ] task-1 ${'─'.repeat(12)}┐`);
+    expect(rowText(narrow, 0)).not.toContain('…');
+  });
+
+  it('keeps at least one `─` between the parts and the badge, and drops the badge before it meets the title', () => {
+    const frame = createFrame(32, 3);
+    const stalled = { label: 'stalled', role: 'status.warn' } as const;
+    drawPaneBox(frame, { x: 0, y: 0, cols: 32, rows: 3 }, header(['task-1', 'implement'], stalled), false, theme);
+    expect(rowText(frame, 0)).toBe('┌─ [ W1 ] task-1 ── [STALLED] ─┐');
+    const tight = createFrame(18, 3);
+    drawPaneBox(tight, { x: 0, y: 0, cols: 18, rows: 3 }, header(['task-1'], stalled), false, theme);
+    expect(rowText(tight, 0)).toBe(`┌─ [ W1 ] ${'─'.repeat(7)}┐`);
+    const long = createFrame(36, 3);
+    drawPaneBox(long, { x: 0, y: 0, cols: 36, rows: 3 }, { title: 'worker-agent-long', parts: [], badge: stalled }, false, theme);
+    expect(rowText(long, 0)).toBe(`┌─ [ WORKER-AGENT-LONG ] ${'─'.repeat(10)}┐`);
+  });
+
+  it('draws nothing for a region too small for a box', () => {
     const one = createFrame(4, 1);
-    drawPaneFrame(one, { x: 0, y: 0, cols: 4, rows: 1 }, BORDER);
+    drawPaneBox(one, { x: 0, y: 0, cols: 4, rows: 1 }, header(['a']), false, theme);
     expect(rowText(one, 0)).toBe('    ');
-    const narrow = createFrame(1, 3);
-    drawPaneFrame(narrow, { x: 0, y: 0, cols: 1, rows: 3 }, BORDER);
-    expect(frameText(narrow)).toEqual([' ', ' ', ' ']);
+    const narrow = createFrame(3, 3);
+    drawPaneBox(narrow, { x: 0, y: 0, cols: 3, rows: 3 }, header(['a']), false, theme);
+    expect(frameText(narrow)).toEqual(['   ', '   ', '   ']);
   });
 });
