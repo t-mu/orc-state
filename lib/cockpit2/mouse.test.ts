@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createTokenizer, type Token } from './input.ts';
-import { appWants, encodeMouse, parseSgrMouse, type MouseButton, type MouseEvent, type MouseMode } from './mouse.ts';
+import { appWants, createMotionCoalescer, encodeMouse, parseSgrMouse, routeSlotMouse, type MouseButton, type MouseEvent } from './mouse.ts';
+import type { MouseTracking } from './screen.ts';
 
 const token = (text: string): Token => {
   const tokens = createTokenizer().push(Buffer.from(text, 'latin1'));
@@ -52,7 +53,7 @@ describe('appWants', () => {
     move: event({ button: 'none', motion: true }),
     pressNone: event({ button: 'none' }),
   };
-  const EXPECTED: Record<MouseMode, string[]> = {
+  const EXPECTED: Record<MouseTracking, string[]> = {
     none: [],
     x10: ['press', 'wheel'],
     vt200: ['press', 'wheel', 'release'],
@@ -60,14 +61,14 @@ describe('appWants', () => {
     any: ['press', 'wheel', 'release', 'drag', 'move'],
   };
 
-  it.each(Object.keys(EXPECTED) as MouseMode[])('mode %s gets the events xterm sends in it', (mode) => {
+  it.each(Object.keys(EXPECTED) as MouseTracking[])('mode %s gets the events xterm sends in it', (mode) => {
     const wanted = Object.entries(EVENTS).filter(([, value]) => appWants(value, mode)).map(([name]) => name);
     expect(wanted).toEqual(EXPECTED[mode]);
   });
 });
 
 describe('encodeMouse', () => {
-  const pane = { x: 10, y: 5, width: 80, height: 24 };
+  const pane = { x: 10, y: 5, cols: 80, rows: 24 };
   const latin1 = (buffer: Buffer) => buffer.toString('latin1');
 
   it('encodes SGR relative to the pane, keeping the button on release', () => {
@@ -81,7 +82,7 @@ describe('encodeMouse', () => {
   it('round-trips every button through parseSgrMouse', () => {
     for (const [button] of BUTTON_CODES) {
       const original = event({ button, shift: true, motion: true, x: 15, y: 9 });
-      const encoded = encodeMouse(original, 'sgr', { x: 0, y: 0, width: 100, height: 50 });
+      const encoded = encodeMouse(original, 'sgr', { x: 0, y: 0, cols: 100, rows: 50 });
       expect(parseSgrMouse(token(latin1(encoded)))).toEqual(original);
     }
   });
@@ -96,13 +97,13 @@ describe('encodeMouse', () => {
     expect([...encodeMouse(event({ button: 'right', release: true, ctrl: true, x: 10, y: 5 }), 'default', pane)]).toEqual([0x1b, 0x5b, 0x4d, 32 + 3 + 16, 33, 33]);
     expect([...encodeMouse(event({ button: 'wheelUp', x: 10, y: 5 }), 'default', pane)]).toEqual([0x1b, 0x5b, 0x4d, 32 + 64, 33, 33]);
     expect([...encodeMouse(event({ button: 'left', motion: true, x: 10, y: 5 }), 'default', pane)]).toEqual([0x1b, 0x5b, 0x4d, 32 + 32, 33, 33]);
-    const wide = { x: 0, y: 0, width: 400, height: 300 };
+    const wide = { x: 0, y: 0, cols: 400, rows: 300 };
     expect([...encodeMouse(event({ x: 222, y: 221 }), 'default', wide)]).toEqual([0x1b, 0x5b, 0x4d, 32, 255, 254]);
     expect([...encodeMouse(event({ x: 350, y: 299 }), 'default', wide)]).toEqual([0x1b, 0x5b, 0x4d, 32, 255, 255]);
   });
 
   it('encodes UTF-8 (1005) values above 127 as two bytes and caps coordinates at 2015', () => {
-    const wide = { x: 0, y: 0, width: 3000, height: 3000 };
+    const wide = { x: 0, y: 0, cols: 3000, rows: 3000 };
     expect([...encodeMouse(event({ x: 9, y: 4 }), 'utf8', wide)]).toEqual([0x1b, 0x5b, 0x4d, 32, 42, 37]);
     // x 200 (1-based 201) → value 233 → C3 A9.
     expect([...encodeMouse(event({ x: 200, y: 0 }), 'utf8', wide)]).toEqual([0x1b, 0x5b, 0x4d, 32, 0xc3, 0xa9, 33]);
@@ -116,5 +117,78 @@ describe('encodeMouse', () => {
     expect(latin1(encodeMouse(modified, 'sgr', pane, 'x10'))).toBe('\x1b[<0;1;1M');
     expect([...encodeMouse(modified, 'default', pane, 'x10')]).toEqual([0x1b, 0x5b, 0x4d, 32, 33, 33]);
     expect(latin1(encodeMouse(modified, 'sgr', pane))).toBe('\x1b[<28;1;1M');
+  });
+});
+
+describe('routeSlotMouse', () => {
+  const app = (tracking: MouseTracking, extra: Partial<{ viewOnly: boolean; selecting: boolean }> = {}) =>
+    ({ tracking, viewOnly: false, selecting: false, ...extra });
+  const press = event({});
+  const drag = event({ motion: true });
+  const release = event({ release: true });
+  const wheelUp = event({ button: 'wheelUp' });
+  const wheelDown = event({ button: 'wheelDown' });
+  const move = event({ button: 'none', motion: true });
+
+  it('forwards what the app\'s mode wants and drops the rest while the app has the mouse', () => {
+    expect([press, drag, release, wheelUp, move].map((e) => routeSlotMouse(e, app('any')))).toEqual(['forward', 'forward', 'forward', 'forward', 'forward']);
+    expect([press, drag, release, wheelUp, move].map((e) => routeSlotMouse(e, app('drag')))).toEqual(['forward', 'forward', 'forward', 'forward', 'drop']);
+    expect([press, drag, release, wheelUp, move].map((e) => routeSlotMouse(e, app('vt200')))).toEqual(['forward', 'drop', 'forward', 'forward', 'drop']);
+    expect([press, drag, release, wheelUp, move].map((e) => routeSlotMouse(e, app('x10')))).toEqual(['forward', 'drop', 'drop', 'forward', 'drop']);
+  });
+
+  it('gives the wheel to the cockpit scrollback and a left drag to the selection when the app did not ask for the mouse', () => {
+    expect([wheelUp, wheelDown, press, drag, release, move].map((e) => routeSlotMouse(e, app('none'))))
+      .toEqual(['scrollUp', 'scrollDown', 'selectStart', 'drop', 'drop', 'drop']);
+    expect(routeSlotMouse(event({ button: 'right' }), app('none'))).toBe('drop');
+    expect(routeSlotMouse(event({ button: 'wheelUp', release: true }), app('none'))).toBe('drop');
+  });
+
+  it('keeps a selection drag\'s motion and release with the cockpit', () => {
+    expect(routeSlotMouse(drag, app('none', { selecting: true }))).toBe('selectExtend');
+    expect(routeSlotMouse(release, app('none', { selecting: true }))).toBe('selectEnd');
+    // Even when the app turned its mouse mode on, or Shift was let go, mid-drag.
+    expect(routeSlotMouse(drag, app('any', { selecting: true }))).toBe('selectExtend');
+    expect(routeSlotMouse(release, app('any', { selecting: true }))).toBe('selectEnd');
+  });
+
+  it('gives Shift-held events to the cockpit even when the app wants the mouse', () => {
+    const shifted = (e: MouseEvent) => ({ ...e, shift: true });
+    expect([press, wheelUp, wheelDown, move].map((e) => routeSlotMouse(shifted(e), app('any')))).toEqual(['selectStart', 'scrollUp', 'scrollDown', 'drop']);
+  });
+
+  it('forwards nothing from a view-only tab: the cockpit scrolls and selects there', () => {
+    for (const tracking of ['x10', 'vt200', 'drag', 'any'] as const) {
+      expect([press, drag, release, wheelUp, move].map((e) => routeSlotMouse(e, app(tracking, { viewOnly: true })))).not.toContain('forward');
+    }
+    expect(routeSlotMouse(wheelUp, app('any', { viewOnly: true }))).toBe('scrollUp');
+    expect(routeSlotMouse(press, app('any', { viewOnly: true }))).toBe('selectStart');
+  });
+});
+
+describe('createMotionCoalescer', () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('sends at most one motion per interval, the latest, and flushes it before a press or release', () => {
+    vi.useFakeTimers();
+    const sent: string[] = [];
+    const coalescer = createMotionCoalescer((bytes) => sent.push(bytes.toString()), 16);
+    coalescer.push(Buffer.from('m1'), true);
+    coalescer.push(Buffer.from('m2'), true);
+    coalescer.push(Buffer.from('m3'), true);
+    expect(sent).toEqual([]);
+    vi.advanceTimersByTime(16);
+    expect(sent).toEqual(['m3']);
+    coalescer.push(Buffer.from('m4'), true);
+    coalescer.push(Buffer.from('release'), false);
+    expect(sent).toEqual(['m3', 'm4', 'release']);
+    vi.advanceTimersByTime(50);
+    expect(sent).toEqual(['m3', 'm4', 'release']);
+    coalescer.push(Buffer.from('press'), false);
+    expect(sent.at(-1)).toBe('press');
+    coalescer.push(Buffer.from('m5'), true);
+    coalescer.cancel();
+    vi.advanceTimersByTime(50);
+    expect(sent).toEqual(['m3', 'm4', 'release', 'press']);
   });
 });

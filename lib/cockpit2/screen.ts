@@ -128,7 +128,8 @@ export interface Screen {
   /** Feed pane output; resolves once it is parsed. */
   write(bytes: string | Uint8Array): Promise<void>;
   /**
-   * Clear the screen and draw a snapshot, then place the cursor. With `main`,
+   * Clear the screen and its scrollback and draw a snapshot, then place the
+   * cursor. Lines above the last `rows` (pane history) go to the scrollback. With `main`,
    * the main screen is drawn first and the alternate screen entered over it, so
    * leaving the alternate screen (1049l) shows the main text again; without it
    * the main screen is drawn. Then seed modes (their screen switch is a no-op).
@@ -141,6 +142,8 @@ export interface Screen {
   cell(x: number, y: number): Cell | undefined;
   /** Every cell of viewport row y (honours the scroll offset); [] outside the viewport. */
   row(y: number): Cell[];
+  /** Whether viewport row y continues the row above it (a soft wrap); false outside the viewport. */
+  wrapped(y: number): boolean;
   modes(): ScreenModes;
   cursor(): Cursor;
   /** Move the viewport: negative goes back into scrollback, positive towards the bottom. */
@@ -267,6 +270,7 @@ export function createScreen({ cols, rows, scrollback }: ScreenOptions): Screen 
       }
       return cells;
     },
+    wrapped(y) { return viewportLine(y)?.isWrapped ?? false; },
     modes() {
       const { modes } = term;
       return {

@@ -199,12 +199,13 @@ describe('TmuxControlClient (fake process)', () => {
     await expect(next).resolves.toEqual(['%0']);
   });
 
-  it('builds resize, paneModes, capture (live and saved), pause and resume commands', async () => {
+  it('builds resize, paneModes, capture (live, saved and with history), pause and resume commands', async () => {
     const { proc, client } = fakeClient();
     const resized = client.resize(120, 40);
     const modes = client.paneModes('%4');
     const captured = client.capture('%4');
     const saved = client.capture('%4', { saved: true });
+    const history = client.capture('%4', { history: 1000 });
     const paused = client.pause('%4');
     const resumed = client.resume('%4');
     proc.attached();
@@ -216,16 +217,18 @@ describe('TmuxControlClient (fake process)', () => {
         + "#{keypad_cursor_flag} #{cursor_flag}'",
       'capture-pane -p -e -t %4',
       'capture-pane -a -q -p -e -t %4',
+      'capture-pane -p -e -S -1000 -t %4',
       "refresh-client -A '%4:pause'",
       "refresh-client -A '%4:continue'",
     ]);
-    proc.ok(); proc.ok('%4 100 30 5 7 1 0 1 0 1 0 1 0'); proc.ok('line 1', '\x1b[1mline 2'); proc.ok('main'); proc.ok(); proc.ok();
+    proc.ok(); proc.ok('%4 100 30 5 7 1 0 1 0 1 0 1 0'); proc.ok('line 1', '\x1b[1mline 2'); proc.ok('main'); proc.ok('old', 'line 1'); proc.ok(); proc.ok();
     await resized;
     await expect(modes).resolves.toEqual({ paneId: '%4', cols: 100, rows: 30, cursorX: 5, cursorY: 7, alternateOn: true,
       mouseAny: false, mouseButton: true, mouseStandard: false, mouseSgr: true, mouseUtf8: false, keypadCursor: true,
       cursorVisible: false });
     await expect(captured).resolves.toEqual(['line 1', '\x1b[1mline 2']);
     await expect(saved).resolves.toEqual(['main']);
+    await expect(history).resolves.toEqual(['old', 'line 1']);
     await paused;
     await resumed;
   });
