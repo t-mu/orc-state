@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  checkTmux, checkTmuxVersion, createTmuxAdapter, failedInspection, parseTmuxVersion, tmuxAttachCommand, tmuxSessionName,
+  checkTmux, checkTmuxVersion, createTmuxAdapter, failedInspection, parseDeadPane, parseTmuxVersion, tmuxAttachCommand, tmuxSessionName,
   tmuxSocketName, tmuxSocketPath,
 } from './tmux.ts';
 
@@ -91,6 +91,16 @@ describe('checkTmuxVersion', () => {
   it('checkTmux reports a binary that cannot run as missing', () => {
     process.env.ORC_TMUX_BIN = '/nonexistent/tmux';
     expect(checkTmux()).toMatchObject({ ok: false, version: null });
+  });
+});
+
+describe('parseDeadPane', () => {
+  it('reads a live pane, an unreaped dead pane, an exit code and a killing signal, with the server pid', () => {
+    expect(parseDeadPane('0|||812\n')).toEqual({ dead: false, status: null, serverPid: 812 });
+    expect(parseDeadPane('1|||812\n')).toEqual({ dead: true, status: null, serverPid: 812 });
+    expect(parseDeadPane('1|0||812\n')).toEqual({ dead: true, status: { code: 0, signal: null }, serverPid: 812 });
+    expect(parseDeadPane('1||9|812\n')).toEqual({ dead: true, status: { code: null, signal: 9 }, serverPid: 812 });
+    expect(parseDeadPane('1||KILL|\n')).toEqual({ dead: true, status: { code: null, signal: 'KILL' }, serverPid: null });
   });
 });
 

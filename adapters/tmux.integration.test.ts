@@ -151,19 +151,19 @@ describe.skipIf(!hasTmux)('tmux session transport', () => {
     const clean = await adapter.start('worker-1', { working_directory: dir });
     expect(adapter.exitStatus(clean.session_handle)).toBeNull();
     await adapter.send(clean.session_handle, 'EXIT');
-    // A loaded host can take longer than exitStatus's own wait to reap the process.
+    // Recorded: tmux has reaped the process (exitStatus's own wait gives up with no code and no signal).
     const recorded = (handle: string) => { const status = adapter.exitStatus(handle); return status != null && (status.code != null || status.signal != null); };
-    await waitFor(() => !adapter.inspectSession(clean.session_handle).alive && recorded(clean.session_handle), 30_000);
+    await waitFor(() => recorded(clean.session_handle));
     expect(adapter.exitStatus(clean.session_handle)).toEqual({ code: 0, signal: null });
 
     const killed = await adapter.start('worker-2', { working_directory: dir });
     process.kill((killed.provider_ref as { pid: number }).pid, 'SIGKILL');
-    await waitFor(() => !adapter.inspectSession(killed.session_handle).alive && recorded(killed.session_handle), 30_000);
+    await waitFor(() => recorded(killed.session_handle));
     expect(adapter.exitStatus(killed.session_handle)).toEqual({ code: null, signal: 9 });
 
     await adapter.stop(killed.session_handle);
     expect(adapter.exitStatus(killed.session_handle)).toBeNull();
-  }, 75_000);
+  }, 30_000);
 
   it('gives each session its own env without leaking it through the shared server', async () => {
     const { adapter } = await loadAdapter();

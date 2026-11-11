@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -48,10 +48,13 @@ describe('TmuxControlClient (fake process)', () => {
     expect(fakeClient(true).calls[0].args).toEqual(['-L', 'sock', '-C', 'attach-session', '-f', 'ignore-size', '-t', '=master']);
   });
 
-  it('skips the attach reply and resolves commands in FIFO order', async () => {
+  it('holds commands until the attach reply, skips it and resolves commands in FIFO order', async () => {
     const { proc, client } = fakeClient();
     const first = client.command('list-panes');
     const second = client.command('list-windows');
+    await tick();
+    // tmux may run a command written before the attach first, on no session, and answer it first.
+    expect(proc.written).toEqual([]);
     proc.ok('attach body');
     proc.ok('pane line 1', 'pane line 2');
     proc.ok('window ä');
@@ -109,12 +112,13 @@ describe('TmuxControlClient (fake process)', () => {
     const bytes = Buffer.alloc(SEND_CHUNK_BYTES * 2 + 3, 0);
     for (let i = 0; i < bytes.length; i++) bytes[i] = i % 256;
     const sent = client.sendBytes('%1', bytes);
+    proc.ok();
     await tick();
     expect(proc.written).toHaveLength(3);
     for (const line of proc.written) expect(line.length).toBeLessThan(2048);
     const echoed = Buffer.from(proc.written.map((line) => line.replace(/^send-keys -t %1 -H /, '').replaceAll(' ', '')).join(''), 'hex');
     expect(echoed.equals(bytes)).toBe(true);
-    proc.ok(); proc.ok(); proc.ok(); proc.ok();
+    proc.ok(); proc.ok(); proc.ok();
     await expect(sent).resolves.toBeUndefined();
     await expect(client.sendBytes('%1', Buffer.alloc(0))).resolves.toBeUndefined();
   });
@@ -123,13 +127,14 @@ describe('TmuxControlClient (fake process)', () => {
     const { proc, client } = fakeClient();
     const pasted = client.paste('%2', '$HOME ~ "x" \\ \x1b\nä');
     void client.paste('%2', 'again');
+    proc.ok();
     await tick();
     const [set, paste, set2] = proc.written;
     const name = /^set-buffer -b (\S+) /.exec(set)![1];
     expect(set).toBe(`set-buffer -b ${name} "\\$HOME \\~ \\"x\\" \\\\ \\033\\012ä"`);
     expect(paste).toBe(`paste-buffer -p -d -b ${name} -t %2`);
     expect(/^set-buffer -b (\S+) /.exec(set2)![1]).not.toBe(name);
-    proc.ok(); proc.ok(); proc.ok();
+    proc.ok(); proc.ok();
     await expect(pasted).resolves.toBeUndefined();
   });
 
@@ -162,6 +167,7 @@ describe('TmuxControlClient (fake process)', () => {
     const saved = client.capture('%4', { saved: true });
     const paused = client.pause('%4');
     const resumed = client.resume('%4');
+    proc.ok();
     await tick();
     expect(proc.written).toEqual([
       'refresh-client -C 120x40',
@@ -173,7 +179,7 @@ describe('TmuxControlClient (fake process)', () => {
       "refresh-client -A '%4:pause'",
       "refresh-client -A '%4:continue'",
     ]);
-    proc.ok(); proc.ok(); proc.ok('%4 100 30 5 7 1 0 1 0 1 0 1 0'); proc.ok('line 1', '\x1b[1mline 2'); proc.ok('main'); proc.ok(); proc.ok();
+    proc.ok(); proc.ok('%4 100 30 5 7 1 0 1 0 1 0 1 0'); proc.ok('line 1', '\x1b[1mline 2'); proc.ok('main'); proc.ok(); proc.ok();
     await resized;
     await expect(modes).resolves.toEqual({ paneId: '%4', cols: 100, rows: 30, cursorX: 5, cursorY: 7, alternateOn: true,
       mouseAny: false, mouseButton: true, mouseStandard: false, mouseSgr: true, mouseUtf8: false, keypadCursor: true,
@@ -233,10 +239,14 @@ describe.skipIf(!hasTmux)('TmuxControlClient (private tmux server)', () => {
   });
 
   it('streams pane output as decoded bytes', async () => {
-    session('echo', 'sleep 0.5; printf "hi \\033[1mthere \\303\\244\\n"; sleep 30');
+    // The output starts only once the client is attached, so none of it predates the client.
+    const go = join(dir, 'echo.go');
+    session('echo', `while [ ! -e ${go} ]; do sleep 0.05; done; printf "hi \\033[1mthere \\303\\244\\n"; sleep 30`);
     const client = connect('echo', true);
     const seen: Buffer[] = [];
     client.on('output', (_pane, bytes) => seen.push(bytes));
+    await client.command('refresh-client');
+    writeFileSync(go, '');
     await waitFor(() => Buffer.concat(seen).toString('utf8').includes('hi \x1b[1mthere ä\r\n'));
   }, 20_000);
 
@@ -286,7 +296,8 @@ describe.skipIf(!hasTmux)('TmuxControlClient (private tmux server)', () => {
 
   it('paneModes reports a mode the app set before the client attached', async () => {
     session('modes', 'printf "\\033[?1000h\\033[?1006h\\033[?1049h"; sleep 30');
-    await waitFor(() => tmux('display-message', '-p', '-t', '=modes:', '#{alternate_on}').stdout.trim() === '1');
+    const flags = '#{alternate_on}#{mouse_standard_flag}#{mouse_sgr_flag}#{mouse_any_flag}';
+    await waitFor(() => tmux('display-message', '-p', '-t', '=modes:', flags).stdout.trim() === '1111');
     const client = connect('modes', true);
     const modes = await client.paneModes('=modes:');
     const [cols, rows] = windowSize('modes').split('x').map(Number);
