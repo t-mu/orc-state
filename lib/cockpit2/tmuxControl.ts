@@ -2,9 +2,10 @@
  * lib/cockpit2/tmuxControl.ts — a tmux control-mode client for one session.
  *
  * `tmux -C attach-session` speaks a line protocol (docs/terminal-streaming.md):
- * each command gets one reply block in FIFO order, the first block answering
- * the attach itself; `%output` carries pane bytes; other `%` lines are
- * notifications. The client turns that into a promise per command and events.
+ * each command written to stdin gets one reply block in FIFO order, its
+ * `%begin` flags 1; the attach itself is answered by a block with flags 0;
+ * `%output` carries pane bytes; other `%` lines are notifications. The
+ * client turns that into a promise per command and events.
  *
  * Sizing: an owned client (`ignoreSize: false`) sizes its window with
  * `resize()`; an `ignoreSize` client attaches with `-f ignore-size` and never
@@ -91,9 +92,8 @@ export class TmuxControlClient extends EventEmitter<TmuxControlEvents> {
   private readonly parser = new TmuxControlParser<TmuxControlEvent | TmuxControlReplyEvent>({ replies: true });
   private readonly pending: Pending[] = [];
   /**
-   * tmux answers the attach itself with one reply block, but can run a command already written to
-   * stdin before the attach (then on no session, and its reply comes first). So commands wait here
-   * until the attach reply.
+   * tmux can run a command already written to stdin before the attach-session (then on no session),
+   * so commands wait here until the attach reply: the first block whose `%begin` flags are 0.
    */
   private unattached: string[] | null = [];
   private exited: string | null = null;
@@ -188,7 +188,7 @@ export class TmuxControlClient extends EventEmitter<TmuxControlEvents> {
     for (const event of this.parser.push(chunk)) {
       if (this.exited !== null) return;
       switch (event.type) {
-        case 'reply': this.onReply(event.lines, event.error); break;
+        case 'reply': this.onReply(event.lines, event.error, event.flags); break;
         case 'output': this.emit('output', event.pane, event.data); break;
         case 'exit': this.end(event.reason); break;
         case 'sessions-changed': this.emit('notification', '%sessions-changed'); break;
@@ -198,17 +198,25 @@ export class TmuxControlClient extends EventEmitter<TmuxControlEvents> {
     }
   }
 
-  private onReply(lines: string[], error: boolean): void {
+  /**
+   * Only blocks flagged 1 answer commands from stdin (tmux cmd-queue.c: the guard's flags are
+   * CMDQ_STATE_CONTROL); a block flagged 0 is the attach, or another command tmux ran for this
+   * client, and never consumes a pending command.
+   */
+  private onReply(lines: string[], error: boolean, flags: number): void {
+    if (flags === 1) {
+      if (this.unattached) return; // nothing written yet, so not ours
+      const waiter = this.pending.shift();
+      if (!waiter) return;
+      if (error) waiter.reject(new Error(lines.join('\n') || 'tmux command failed'));
+      else waiter.resolve(lines);
+      return;
+    }
     if (this.unattached) {
       // A failed attach ends the client with %exit; its 'exit' rejects the held commands.
       if (!error) for (const line of this.unattached) this.proc.stdin.write(`${line}\n`);
       this.unattached = null;
-      return;
     }
-    const waiter = this.pending.shift();
-    if (!waiter) return;
-    if (error) waiter.reject(new Error(lines.join('\n') || 'tmux command failed'));
-    else waiter.resolve(lines);
   }
 
   /** Fires `exit` once and rejects every pending command. */

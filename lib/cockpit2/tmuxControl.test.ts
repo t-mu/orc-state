@@ -20,7 +20,10 @@ class FakeProcess extends EventEmitter implements ControlProcess {
   kill(): boolean { this.killed = true; return true; }
   /** tmux writes `lines` to the client's stdout. */
   reply(...lines: string[]): void { this.stdout.write(Buffer.from(lines.map((line) => `${line}\n`).join(''))); }
+  /** A reply to a command from stdin (`%begin` flags 1). */
   ok(...body: string[]): void { this.reply('%begin 1 1 1', ...body, '%end 1 1 1'); }
+  /** The attach-session's own reply (`%begin` flags 0). */
+  attached(): void { this.reply('%begin 1 0 0', '%end 1 0 0'); }
 }
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
@@ -53,9 +56,9 @@ describe('TmuxControlClient (fake process)', () => {
     const first = client.command('list-panes');
     const second = client.command('list-windows');
     await tick();
-    // tmux may run a command written before the attach first, on no session, and answer it first.
+    // tmux may run a command written before the attach first, on no session, so nothing is written yet.
     expect(proc.written).toEqual([]);
-    proc.ok('attach body');
+    proc.attached();
     proc.ok('pane line 1', 'pane line 2');
     proc.ok('window ä');
     await expect(first).resolves.toEqual(['pane line 1', 'pane line 2']);
@@ -63,11 +66,36 @@ describe('TmuxControlClient (fake process)', () => {
     expect(proc.written).toEqual(['list-panes', 'list-windows']);
   });
 
+  it('matches replies by %begin flags, whatever order the attach reply, notifications and other blocks arrive in', async () => {
+    const { proc, client } = fakeClient();
+    const output: string[] = [];
+    client.on('output', (_pane, bytes) => output.push(bytes.toString('utf8')));
+    const modes = client.paneModes('=busy:');
+    const next = client.command('list-panes');
+    // Output, notifications and a flags-1 block (not ours: nothing is written yet) before the attach reply.
+    proc.reply('%output %0 \\033[H1234', '%session-changed $0 busy');
+    proc.ok('%9 1 1 0 0 0 0 0 0 0 0 0 0');
+    await tick();
+    expect(proc.written).toEqual([]);
+    // The attach reply split across chunks, with output in between.
+    proc.stdout.write('%begin 7 3 0\n%en');
+    proc.stdout.write('d 7 3 0\n%output %0 \\033[H5678\n');
+    await tick();
+    expect(proc.written).toHaveLength(2);
+    // Another flags-0 block tmux runs for this client must not take the first command's place.
+    proc.reply('%begin 8 4 0', 'hook output', '%end 8 4 0', '%layout-change @0 aafd,100x30,0,0,0 aafd,100x30,0,0,0 *');
+    proc.reply('%begin 9 5 1', '%0 100 30 0 0 0 0 0 0 0 0 0 1', '%end 9 5 1');
+    proc.reply('%begin 9 6 1', '%0', '%end 9 6 1');
+    await expect(modes).resolves.toMatchObject({ paneId: '%0', cols: 100, rows: 30, cursorVisible: true });
+    await expect(next).resolves.toEqual(['%0']);
+    expect(output).toEqual(['\x1b[H1234', '\x1b[H5678']);
+  });
+
   it('rejects a command answered with %error and keeps the next one in order', async () => {
     const { proc, client } = fakeClient();
     const bad = client.command('bogus');
     const good = client.command('list-panes');
-    proc.ok();
+    proc.attached();
     proc.reply('%begin 2 2 1', 'parse error: unknown command: bogus', '%error 2 2 1');
     proc.ok('%0');
     await expect(bad).rejects.toThrow('parse error: unknown command: bogus');
@@ -79,7 +107,7 @@ describe('TmuxControlClient (fake process)', () => {
     const exits: string[] = [];
     client.on('exit', (reason) => exits.push(reason));
     const pending = client.command('list-panes');
-    proc.ok();
+    proc.attached();
     proc.reply('%exit');
     proc.emit('close');
     await expect(pending).rejects.toThrow('exited: terminal exited');
@@ -112,7 +140,7 @@ describe('TmuxControlClient (fake process)', () => {
     const bytes = Buffer.alloc(SEND_CHUNK_BYTES * 2 + 3, 0);
     for (let i = 0; i < bytes.length; i++) bytes[i] = i % 256;
     const sent = client.sendBytes('%1', bytes);
-    proc.ok();
+    proc.attached();
     await tick();
     expect(proc.written).toHaveLength(3);
     for (const line of proc.written) expect(line.length).toBeLessThan(2048);
@@ -127,7 +155,7 @@ describe('TmuxControlClient (fake process)', () => {
     const { proc, client } = fakeClient();
     const pasted = client.paste('%2', '$HOME ~ "x" \\ \x1b\nä');
     void client.paste('%2', 'again');
-    proc.ok();
+    proc.attached();
     await tick();
     const [set, paste, set2] = proc.written;
     const name = /^set-buffer -b (\S+) /.exec(set)![1];
@@ -150,7 +178,7 @@ describe('TmuxControlClient (fake process)', () => {
     const capture = client.capture('%1');
     const failing = expect(client.command('bogus')).rejects.toThrow('%end 5 2 1\nunknown command');
     const next = client.command('list-panes');
-    proc.ok();
+    proc.attached();
     proc.reply('%begin 5 2 1', 'foo', '%end of story', '%error 5 2 0', '%begin 6 3 1', 'bar', '%end 5 2 1');
     proc.reply('%begin 5 3 1', '%end 5 2 1', 'unknown command', '%error 5 3 1');
     proc.reply('%begin 5 4 1', '%0', '%end 5 4 1');
@@ -167,7 +195,7 @@ describe('TmuxControlClient (fake process)', () => {
     const saved = client.capture('%4', { saved: true });
     const paused = client.pause('%4');
     const resumed = client.resume('%4');
-    proc.ok();
+    proc.attached();
     await tick();
     expect(proc.written).toEqual([
       'refresh-client -C 120x40',
@@ -304,6 +332,17 @@ describe.skipIf(!hasTmux)('TmuxControlClient (private tmux server)', () => {
     expect(modes).toMatchObject({ cols, rows, alternateOn: true, mouseStandard: true, mouseSgr: true, mouseAny: true });
     expect(modes.paneId).toMatch(/^%\d+$/);
   }, 20_000);
+
+  it('every client\'s first paneModes on a continuously redrawing pane gets its own reply', async () => {
+    session('busy', 'while :; do printf "\\033[H%s" "$RANDOM"; done');
+    const [cols, rows] = windowSize('busy').split('x').map(Number);
+    for (let batch = 0; batch < 3; batch++) {
+      const batchClients = Array.from({ length: 20 }, (_, index) => connect('busy', index % 2 === 0));
+      const results = await Promise.all(batchClients.map((client) => client.paneModes('=busy:')));
+      for (const modes of results) expect(modes).toMatchObject({ paneId: expect.stringMatching(/^%\d+$/), cols, rows });
+      for (const client of batchClients) client.close();
+    }
+  }, 10_000);
 
   it('emits exit when the session is killed', async () => {
     session('doomed', 'sleep 30');

@@ -45,7 +45,7 @@ describe('TmuxControlParser', () => {
 });
 
 describe('TmuxControlParser with replies', () => {
-  it('returns reply blocks with body lines and an error flag', () => {
+  it('returns reply blocks with body lines, an error flag and the %begin flags', () => {
     const parser = new TmuxControlParser<TmuxControlEvent | TmuxControlReplyEvent>({ replies: true });
     const events = parser.push(Buffer.from([
       '%begin 1 1 0', '%end 1 1 0',
@@ -54,9 +54,9 @@ describe('TmuxControlParser with replies', () => {
       '',
     ].join('\n'), 'utf8'));
     expect(events).toEqual([
-      { type: 'reply', lines: [], error: false },
-      { type: 'reply', lines: ['%0 100 30', 'caf\u00e9'], error: false },
-      { type: 'reply', lines: ['parse error: unknown command: x'], error: true },
+      { type: 'reply', lines: [], error: false, flags: 0 },
+      { type: 'reply', lines: ['%0 100 30', 'caf\u00e9'], error: false, flags: 1 },
+      { type: 'reply', lines: ['parse error: unknown command: x'], error: true, flags: 1 },
     ]);
   });
 
@@ -90,10 +90,10 @@ describe('TmuxControlParser with replies', () => {
       '',
     ].join('\n')));
     expect(events.map((event) => event.type === 'output' ? event.type : event)).toEqual([
-      { type: 'reply', lines: ['foo', '%end of story', '%error at line 3', '%begin 1 1 1', '%end 10 5 0', '%error 11 5 1', 'bar'], error: false },
-      { type: 'reply', lines: ['%end 10 6 1 trailing'], error: false },
+      { type: 'reply', lines: ['foo', '%end of story', '%error at line 3', '%begin 1 1 1', '%end 10 5 0', '%error 11 5 1', 'bar'], error: false, flags: 1 },
+      { type: 'reply', lines: ['%end 10 6 1 trailing'], error: false, flags: 1 },
       { type: 'notification', line: '%error 10 6 1' },
-      { type: 'reply', lines: ['boom'], error: true },
+      { type: 'reply', lines: ['boom'], error: true, flags: 1 },
       'output',
     ]);
   });
