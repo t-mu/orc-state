@@ -4,10 +4,14 @@ import type { SidebarAgent, SidebarModel, SidebarProject } from '../tui/sidebar.
 import { CLOSE_MARKER, buildTabBarModel, tabBarClickTarget, type TabBarState } from '../tui/tabBarModel.ts';
 import { computeLayout } from './app.ts';
 import { createFrame, type Frame } from './frame.ts';
+import { BUILT_IN_THEMES, styleOf } from './theme.ts';
 import {
   EXPLORER_TAB, INITIAL_SIDEBAR_NAV, TYPING_MARK, VIEW_MARK, drawSidebar, drawTabBar, navigateSidebar, sidebarClick, sidebarView, tabBarButtonAt,
   tabBarView, withExplorerTab, withModeMarks, type SidebarNav, type TabBarButton,
 } from './widgets.ts';
+
+/** Today's look: every cell drawn as before the theme roles. */
+const CLASSIC = BUILT_IN_THEMES.classic;
 
 const CJK_PROJECT = '日本語プロジェクト';
 const EMOJI_AGENT = 'agent-🚀-rocket';
@@ -48,7 +52,7 @@ function renderSidebar(cols: number, rows: number, sidebar: SidebarModel, focus:
   const layout = computeLayout(cols, rows);
   const frame = createFrame(cols, rows);
   const view = sidebarView(sidebar, layout.sidebar.rows, nav);
-  drawSidebar(frame, layout.sidebar, view, { focus, footer: '[master] keys go to the master' });
+  drawSidebar(frame, layout.sidebar, view, { focus, footer: '[master] keys go to the master', theme: CLASSIC });
   const lines = Array.from({ length: rows }, (_, y) => rowText(frame, y, 0, layout.sidebar.cols));
   return { frame, layout, view, lines };
 }
@@ -182,7 +186,7 @@ function renderTabBar(cols: number, rows: number, state: TabBarState = TABS, slo
   const layout = computeLayout(cols, rows);
   const frame = createFrame(cols, rows);
   const bar = tabBarView(withModeMarks(buildTabBarModel(state, new Map([['w3', 'permission_prompt' as const]])), (id) => typing.has(id)), layout.tabBar.cols, 'Ctrl-q: quit');
-  drawTabBar(frame, layout.tabBar, bar, { slotFocused, error: null });
+  drawTabBar(frame, layout.tabBar, bar, { slotFocused, error: null, theme: CLASSIC });
   const lines = [0, 1, 2].map((y) => rowText(frame, y, layout.tabBar.x, layout.tabBar.cols));
   return { frame, layout, bar, lines };
 }
@@ -232,10 +236,10 @@ describe('drawTabBar', () => {
   it('shows the error on the bottom row and a notice without tabs', () => {
     const layout = computeLayout(80, 24);
     const frame = createFrame(80, 24);
-    drawTabBar(frame, layout.tabBar, tabBarView(buildTabBarModel(TABS), 46), { slotFocused: true, error: 'The master tab stays open.' });
+    drawTabBar(frame, layout.tabBar, tabBarView(buildTabBarModel(TABS), 46), { slotFocused: true, error: 'The master tab stays open.', theme: CLASSIC });
     expect(rowText(frame, 2, 34, 46).trimEnd()).toBe('The master tab stays open.');
     const empty = createFrame(80, 24);
-    drawTabBar(empty, layout.tabBar, tabBarView(buildTabBarModel({ activeProject: null, projects: [] }), 46, 'x'), { slotFocused: true, error: null });
+    drawTabBar(empty, layout.tabBar, tabBarView(buildTabBarModel({ activeProject: null, projects: [] }), 46, 'x'), { slotFocused: true, error: null, theme: CLASSIC });
     expect(rowText(empty, 1, 34, 46)).toContain('No project is open');
   });
 });
@@ -248,7 +252,7 @@ describe('tab bar buttons and the explorer tab', () => {
       const layout = computeLayout(cols, rows);
       const frame = createFrame(cols, rows);
       const bar = tabBarView(buildTabBarModel(TABS), layout.tabBar.cols, 'Ctrl-q: quit', BUTTONS);
-      drawTabBar(frame, layout.tabBar, bar, { slotFocused: true, error: null });
+      drawTabBar(frame, layout.tabBar, bar, { slotFocused: true, error: null, theme: CLASSIC });
       const line = rowText(frame, 1, layout.tabBar.x, layout.tabBar.cols);
       expect(line.endsWith(' tasks ! 2 Ctrl-q: quit')).toBe(true);
       expect(stringWidth(line)).toBe(layout.tabBar.cols);
@@ -310,3 +314,101 @@ function columnOf(line: string, x: number): string | null {
   }
   return null;
 }
+
+// ── full-style snapshot ──────────────────────────────────────────────────────
+
+/** A cell style as a short key: attribute letters, then fg and bg (`p<index>`, `#rrggbb`, empty for default). */
+function styleKey(style: Frame['cells'][number]['style']): string {
+  const flags = (['bold', 'dim', 'italic', 'underline', 'blink', 'inverse', 'invisible', 'strikethrough'] as const)
+    .filter((name) => style[name]).map((name) => name[0] + name[1]).join('');
+  const color = (value: typeof style.fg) => value.type === 'palette' ? `p${value.index}`
+    : value.type === 'rgb' ? `#${[value.r, value.g, value.b].map((n) => n.toString(16).padStart(2, '0')).join('')}` : '';
+  return `${flags}/${color(style.fg)}/${color(style.bg)}`;
+}
+
+/** Every row of `frame` as runs of one style: `{style}text`, a wide grapheme's continuation cell kept as `·` so widths show. */
+const serialiseFrame = (frame: Frame): string[] => Array.from({ length: frame.rows }, (_, y) => {
+  let out = '';
+  let last: string | null = null;
+  for (const cell of frame.cells.slice(y * frame.cols, (y + 1) * frame.cols)) {
+    const key = styleKey(cell.style);
+    if (key !== last) out += `{${key}}`;
+    last = key;
+    out += cell.width === 0 ? '·' : cell.text;
+  }
+  return out;
+});
+
+describe('full-style snapshot at 80x24', () => {
+  const STATES = ['running', 'connecting', 'stopped', 'stale', 'incompatible'] as const;
+  const KINDS = ['permission_prompt', 'question', 'stalled', 'no_progress'] as const;
+  const projects = STATES.map((state, index) => project(`p${index + 1}`, { state, active: index === 0, attention: index === 0 ? 4 : index === 2 ? 1 : 0 }));
+  const agents = [...KINDS.map((kind) => agent(`a-${kind}`, { attention: kind, detail: `${kind} detail` })), agent('plain', { elapsed: null, detail: null })];
+  const tabAgents = KINDS.map((kind) => `a-${kind}`);
+  const tabAttention = new Map(KINDS.map((kind) => [`a-${kind}`, kind]));
+  const BUTTONS: TabBarButton[] = [{ action: 'explorer', text: 'tasks' }, { action: 'attention', text: '! 4' }];
+
+  function draw(sidebar: SidebarModel, focus: 'projects' | 'agents' | null, nav: SidebarNav, activeTab: string, slotFocused: boolean, error: string | null, explorer = false): string[] {
+    const layout = computeLayout(80, 24);
+    const frame = createFrame(80, 24);
+    drawSidebar(frame, layout.sidebar, sidebarView(sidebar, layout.sidebar.rows, nav), { focus, footer: '[sidebar] ↑↓ move · Enter open', theme: CLASSIC });
+    const tabs = buildTabBarModel({ activeProject: 'p1', projects: [{ projectId: 'p1', tabs: tabAgents, active: activeTab }] }, tabAttention);
+    const marked = withModeMarks(tabs, (id) => id === 'a-question');
+    drawTabBar(frame, layout.tabBar, tabBarView(explorer ? withExplorerTab(marked) : marked, layout.tabBar.cols, 'Ctrl-q: quit', BUTTONS), { slotFocused, error, theme: CLASSIC });
+    return serialiseFrame(frame);
+  }
+
+  it('projects focused: every project state, the cursor row, a notice; a permission tab active with the slot unfocused', () => {
+    const sidebar = model({ projects, agents, notice: 'coordinator restarting', status: { coordinator: 'connecting', workers: null, attention: 4 } });
+    expect(draw(sidebar, 'projects', { box: 'projects', projectKey: 'p5', agentKey: null }, 'a-permission_prompt', false, null)).toMatchSnapshot();
+  });
+
+  it('agents focused: every attention kind, the cursor on an attention agent; a question tab active and focused', () => {
+    const sidebar = model({ projects: projects.slice(0, 2), agents, status: { coordinator: 'stale', workers: { used: 4, total: 4 }, attention: 1 } });
+    expect(draw(sidebar, 'agents', { box: 'agents', projectKey: null, agentKey: 'p1/a-stalled' }, 'a-question', true, null)).toMatchSnapshot();
+  });
+
+  it('a stale agent list with the cursor on a plain agent; stalled and no-progress tabs with an error line', () => {
+    const sidebar = model({ projects: projects.slice(0, 1), agents: [agents[4], agents[2], agents[3]], agentsStale: true, status: { coordinator: 'incompatible', workers: { used: 0, total: 2 }, attention: 0 } });
+    expect(draw(sidebar, 'agents', { box: 'agents', projectKey: null, agentKey: 'p1/plain' }, 'a-stalled', true, 'The master tab stays open.')).toMatchSnapshot();
+  });
+
+  it('no focus, a stopped coordinator with no agents; the explorer tab shown', () => {
+    const sidebar = model({ projects: [project('p1', { state: 'stopped', connection: 'stopped', active: true })], agents: [], status: { coordinator: 'stopped', workers: null, attention: 0 } });
+    expect(draw(sidebar, null, INITIAL_SIDEBAR_NAV, 'a-no_progress', false, null, true)).toMatchSnapshot();
+  });
+});
+
+describe('drawing with amber, the running cockpit theme', () => {
+  const AMBER = BUILT_IN_THEMES.amber;
+  /** The cell where `part` starts in `frame` (the first match, top to bottom). */
+  const cellOf = (frame: Frame, part: string) => {
+    for (let y = 0; y < frame.rows; y += 1) {
+      for (let x = 0; x < frame.cols; x += 1) {
+        if (rowText(frame, y, x).startsWith(part)) return frame.cells[y * frame.cols + x];
+      }
+    }
+    throw new Error(`${part} not drawn`);
+  };
+
+  it('draws borders, badges and counts from the amber roles', () => {
+    const layout = computeLayout(80, 24);
+    const frame = createFrame(80, 24);
+    const view = sidebarView(model(), layout.sidebar.rows, INITIAL_SIDEBAR_NAV);
+    drawSidebar(frame, layout.sidebar, view, { focus: 'projects', footer: 'f', theme: AMBER });
+    expect(cellOf(frame, '╭─ Projects').style).toEqual(styleOf(AMBER, 'chrome.borderFocus'));
+    expect(cellOf(frame, '1 needs you').style).toEqual(styleOf(AMBER, 'status.attention.badge'));
+    expect(cellOf(frame, 'QUESTION').style).toEqual(styleOf(AMBER, 'status.attention.badge'));
+  });
+
+  it('keeps the state colours on the cursor row, the rest in row.cursor', () => {
+    const layout = computeLayout(80, 24);
+    const frame = createFrame(80, 24);
+    const view = sidebarView(model(), layout.sidebar.rows, INITIAL_SIDEBAR_NAV);
+    drawSidebar(frame, layout.sidebar, view, { focus: 'agents', footer: 'f', theme: AMBER }); // the cursor on the question agent
+    const badge = styleOf(AMBER, 'status.attention.badge');
+    expect(cellOf(frame, 'QUESTION').style).toEqual({ ...badge, bold: true });
+    const cursor = styleOf(AMBER, 'row.cursor');
+    expect(cellOf(frame, EMOJI_AGENT).style).toMatchObject({ fg: cursor.fg, bg: cursor.bg, bold: true });
+  });
+});

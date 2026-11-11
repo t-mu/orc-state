@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { blitScreen, cellAt, createFrame, DEFAULT_STYLE, drawText, EDGE_COLUMN, EDGE_ROW, EDGE_STYLE, fillRect, slotCursor, type Frame } from './frame.ts';
+import { blitScreen, cellAt, createFrame, DEFAULT_STYLE, drawText, EDGE_COLUMN, EDGE_ROW, fillRect, slotCursor, type Frame } from './frame.ts';
 import { createScreen, type Cell, type CellStyle } from './screen.ts';
+import { BUILT_IN_THEMES, DEFAULT_THEME, styleOf } from './theme.ts';
 
 const BOLD: CellStyle = { ...DEFAULT_STYLE, bold: true };
 
@@ -118,9 +119,15 @@ describe('blitScreen', () => {
     expect([0, 1, 2, 3].map((y) => rowText(frame, y))).toEqual([
       `ab${EDGE_COLUMN} x`, `cd${EDGE_COLUMN} x`, `${EDGE_ROW}${EDGE_ROW}  x`, '    x',
     ]);
-    expect(cellAt(frame, 2, 0)!.style).toEqual(EDGE_STYLE);
-    expect(cellAt(frame, 0, 2)!.style).toEqual(EDGE_STYLE);
+    expect(cellAt(frame, 2, 0)!.style).toEqual(styleOf(DEFAULT_THEME, 'text.edge'));
+    expect(cellAt(frame, 0, 2)!.style).toEqual(styleOf(DEFAULT_THEME, 'text.edge'));
     expect(cellAt(frame, 3, 3)!.style).toEqual(DEFAULT_STYLE);
+  });
+
+  it('draws the edge marker in the given theme', () => {
+    const frame = createFrame(3, 1);
+    blitScreen(frame, fakeScreen(['a'], 1), { x: 0, y: 0, cols: 3, rows: 1 }, { theme: BUILT_IN_THEMES.classic });
+    expect(cellAt(frame, 1, 0)!.style).toEqual({ ...DEFAULT_STYLE, dim: true });
   });
 
   it('pads without markers when edge is off', () => {

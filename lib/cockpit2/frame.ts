@@ -8,6 +8,7 @@
  */
 import { graphemes, graphemeWidth, fitToWidth } from '../cellWidth.ts';
 import type { Cell, CellStyle, Cursor, Screen } from './screen.ts';
+import { DEFAULT_THEME, styleOf, type Theme } from './theme.ts';
 
 export interface Frame {
   readonly cols: number;
@@ -23,8 +24,6 @@ export const DEFAULT_STYLE: CellStyle = Object.freeze({
   inverse: false, invisible: false, strikethrough: false,
   fg: Object.freeze({ type: 'default' as const }), bg: Object.freeze({ type: 'default' as const }),
 });
-/** The style of the edge marker drawn where a smaller pane ends inside its region. */
-export const EDGE_STYLE: CellStyle = Object.freeze({ ...DEFAULT_STYLE, dim: true });
 export const EDGE_COLUMN = '┊';
 export const EDGE_ROW = '┈';
 
@@ -87,6 +86,8 @@ export function fillRect(frame: Frame, region: Region, style: CellStyle = DEFAUL
 export interface BlitOptions {
   /** Draw a dim edge marker column/row where the screen ends inside the region (default true). */
   edge?: boolean;
+  /** The theme the edge marker is drawn in (its `text.edge` role); default the default theme. */
+  theme?: Theme;
 }
 
 /**
@@ -97,6 +98,7 @@ export interface BlitOptions {
  */
 export function blitScreen(frame: Frame, screen: Pick<Screen, 'cols' | 'rows' | 'row'>, region: Region, options: BlitOptions = {}): void {
   const edge = options.edge ?? true;
+  const edgeStyle = styleOf(options.theme ?? DEFAULT_THEME, 'text.edge');
   for (let y = 0; y < region.rows; y++) {
     const cells = y < screen.rows ? screen.row(y) : [];
     for (let x = 0; x < region.cols; x++) {
@@ -110,8 +112,8 @@ export function blitScreen(frame: Frame, screen: Pick<Screen, 'cols' | 'rows' | 
         else put(frame, fx, fy, ' ', 1, cell.style);
         continue;
       }
-      if (edge && x === screen.cols && y < screen.rows) put(frame, fx, fy, EDGE_COLUMN, 1, EDGE_STYLE);
-      else if (edge && y === screen.rows && x < screen.cols) put(frame, fx, fy, EDGE_ROW, 1, EDGE_STYLE);
+      if (edge && x === screen.cols && y < screen.rows) put(frame, fx, fy, EDGE_COLUMN, 1, edgeStyle);
+      else if (edge && y === screen.rows && x < screen.cols) put(frame, fx, fy, EDGE_ROW, 1, edgeStyle);
       else put(frame, fx, fy, ' ', 1, DEFAULT_STYLE);
     }
   }

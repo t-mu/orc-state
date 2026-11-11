@@ -74,7 +74,7 @@ import { keyLabel, type CockpitKeys } from '../cockpitKeys.ts';
 import { buildSidebarModel } from '../tui/sidebar.ts';
 import { buildProjectViews } from '../tui/status.ts';
 import { buildTabBarModel, tabAttention, tabBarClickTarget } from '../tui/tabBarModel.ts';
-import { DEFAULT_STYLE, blitScreen, createFrame, drawText, slotCursor, type Frame, type Region } from './frame.ts';
+import { blitScreen, createFrame, drawText, slotCursor, type Frame, type Region } from './frame.ts';
 import { createDispatcher, cursorKeyMirror, modeNotice, type DispatchContext } from './dispatch.ts';
 import type { ColorDepth } from './color.ts';
 import { attentionQueue, type ExplorerHost } from './explorer.ts';
@@ -82,6 +82,7 @@ import { createTokenizer, type Token } from './input.ts';
 import { createMotionCoalescer, encodeMouse, parseSgrMouse, routeSlotMouse, type MouseEvent } from './mouse.ts';
 import { renderDiff, sameStyle } from './render.ts';
 import type { Cursor, Screen } from './screen.ts';
+import { BUILT_IN_THEMES, styleOf } from './theme.ts';
 import { highlightSelection, osc52, selectionText, type CellPoint, type Selection } from './selection.ts';
 import { Sessions, type ConnectPane, type PaneSession } from './sessions.ts';
 import type { TerminalSession } from './terminal.ts';
@@ -262,8 +263,8 @@ export interface App {
   tabs(): CockpitTabState;
 }
 
-const MUTED_STYLE = { ...DEFAULT_STYLE, dim: true };
-const TITLE_STYLE = { ...DEFAULT_STYLE, bold: true };
+/** The theme the cockpit draws in. */
+const THEME = BUILT_IN_THEMES.amber;
 
 /** How to quit, as the slot's messages show it. */
 export function quitHint(keys: CockpitKeys): string {
@@ -280,7 +281,7 @@ export type Focus = 'slot' | SidebarBox;
 
 function drawMessage(frame: Frame, region: Region, lines: string[]): void {
   lines.forEach((line, index) => {
-    if (index + 1 < region.rows) drawText(frame, region.x + 1, region.y + 1 + index, line, index === 0 ? TITLE_STYLE : MUTED_STYLE, region.cols - 2);
+    if (index + 1 < region.rows) drawText(frame, region.x + 1, region.y + 1 + index, line, styleOf(THEME, index === 0 ? 'chrome.title' : 'text.muted'), region.cols - 2);
   });
 }
 
@@ -543,17 +544,18 @@ export function runApp(options: AppOptions): App {
     if (closed) return;
     lastRender = Date.now();
     const frame = createFrame(layout.cols, layout.rows);
-    drawSidebar(frame, layout.sidebar, currentSidebar(), { focus: focus === 'slot' ? null : focus, footer: modeNotice(keyContext()) });
+    drawSidebar(frame, layout.sidebar, currentSidebar(), { focus: focus === 'slot' ? null : focus, footer: modeNotice(keyContext()), theme: THEME });
     drawTabBar(frame, layout.tabBar, currentTabBar(), {
       slotFocused: focus === 'slot',
       error: refusal ?? (lastSaveError ? `view state not saved: ${lastSaveError}` : null),
+      theme: THEME,
     });
     const { message, screen } = slotContent();
     let cursor: Cursor = { x: 0, y: 0, visible: false };
     if (!screen) {
       drawMessage(frame, layout.slot, message ?? []);
     } else {
-      blitScreen(frame, screen, layout.slot);
+      blitScreen(frame, screen, layout.slot, { theme: THEME });
       if (selection?.moved && selection.key === shownKey()) highlightSelection(frame, layout.slot, screen, selection);
       cursor = slotCursor(screen, layout.slot, focus === 'slot');
     }
