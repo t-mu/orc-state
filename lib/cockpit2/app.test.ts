@@ -8,6 +8,7 @@ import {
   SIDEBAR_COLS, TAB_BAR_ROWS, agentTarget, computeLayout, dispatchMouse, hitTest, masterTarget, quitHint, runApp, shortQuitHint, slotMessage,
   type App,
 } from './app.ts';
+import type { ColorDepth } from './color.ts';
 import { tmuxExplorerHost, type ExplorerHost } from './explorer.ts';
 import type { MouseEvent } from './mouse.ts';
 import { EDGE_COLUMN, EDGE_ROW } from './frame.ts';
@@ -329,9 +330,10 @@ interface StartOptions {
   /** Adjusts each fake client as it is created (before its first mode query). */
   setup?: (fake: FakeClient) => void;
   explorer?: ExplorerHost;
+  colorDepth?: ColorDepth;
 }
 
-function start({ keys = DEFAULT_COCKPIT_KEYS, projects = [projectState('demo')], store = new MemoryStore(), projectId = 'demo', setup, explorer }: StartOptions = {}) {
+function start({ keys = DEFAULT_COCKPIT_KEYS, projects = [projectState('demo')], store = new MemoryStore(), projectId = 'demo', setup, explorer, colorDepth }: StartOptions = {}) {
   const terminal = new FakeTerminal();
   const watcher = new FakeWatcher(projects);
   const clients: FakeClient[] = [];
@@ -346,6 +348,7 @@ function start({ keys = DEFAULT_COCKPIT_KEYS, projects = [projectState('demo')],
     },
     resyncDelayMs: 5,
     explorer,
+    colorDepth,
   });
   apps.push(app);
   const client = () => clients[0];
@@ -358,6 +361,18 @@ async function attached(terminal: FakeTerminal, session = 'orc-master'): Promise
 }
 
 describe('runApp (fake tmux client)', () => {
+  it('draws a pane\'s RGB colours as is by default and as xterm-256 indices with colorDepth 256', async () => {
+    const rgbLine = (fake: FakeClient) => { fake.lines = [`${ESC}[38;2;255;0;0;48;2;0;0;255m$ hello from ${fake.target.session}${ESC}[0m`]; };
+    const truecolor = start({ setup: rgbLine });
+    await attached(truecolor.terminal);
+    expect(truecolor.terminal.writes.join('')).toContain('38;2;255;0;0;48;2;0;0;255m');
+    const reduced = start({ setup: rgbLine, colorDepth: '256' });
+    await attached(reduced.terminal);
+    const out = reduced.terminal.writes.join('');
+    expect(out).toContain('38;5;196;48;5;21m');
+    expect(out).not.toMatch(/[34]8;2;/);
+  });
+
   it('shows the master in the slot next to the sidebar and tab bar, its window sized to the slot', async () => {
     const { terminal, clients } = start();
     await attached(terminal);

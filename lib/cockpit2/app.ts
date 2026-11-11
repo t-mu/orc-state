@@ -222,7 +222,7 @@ export interface AppOptions {
   /** Starts and stops the task explorer's sessions (explorer.ts `tmuxExplorerHost`); without one the explorer cannot open. */
   explorer?: ExplorerHost | undefined;
   /** The outer terminal's colour depth (color.ts `colorDepthFromEnv`, from the CLI layer; default `truecolor`). */
-  colorDepth?: ColorDepth;
+  colorDepth?: ColorDepth | undefined;
 }
 
 export interface App {
