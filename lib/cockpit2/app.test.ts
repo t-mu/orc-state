@@ -4,7 +4,7 @@ import { tmuxSessionTarget, type ProjectWatchState } from '../../client.ts';
 import { MASTER_TAB, closeTab, openAgent, selectTab, showProject } from '../cockpitTabs.ts';
 import { DEFAULT_COCKPIT_KEYS, resolveCockpitKeys, type CockpitKeys } from '../cockpitKeys.ts';
 import {
-  FOOTER_ROWS, HEADER_ROWS, SIDEBAR_COLS, TAB_BAR_ROWS, agentTarget, computeLayout, dispatchMouse, footerHints, hitTest, masterTarget, quitHint, runApp, shortQuitHint, slotMessage,
+  FOOTER_ROWS, HEADER_ROWS, SIDEBAR_COLS, TAB_BAR_ROWS, agentTarget, computeLayout, dispatchMouse, footerHints, hitTest, masterTarget, quitHint, runApp, slotMessage,
 } from './app.ts';
 import type { ColorDepth } from './color.ts';
 import { BUILT_IN_THEMES, resolveTheme, type Theme } from './theme.ts';
@@ -98,7 +98,7 @@ describe('hitTest and dispatchMouse', () => {
     const handlers = { slot: (_: MouseEvent, at: { x: number; y: number }) => seen.push(['slot', at.x, at.y]) };
     expect(dispatchMouse(layout, click(40, 6), handlers)).toBe('slot');
     expect(dispatchMouse(layout, click(1, 2), handlers)).toBe('sidebar'); // no handler yet: nothing happens
-    expect(dispatchMouse(layout, click(40, 0), handlers)).toBe('header'); // nothing happens there yet
+    expect(dispatchMouse(layout, click(40, 0), handlers)).toBe('header'); // no handler here: nothing happens
     expect(dispatchMouse(layout, click(40, 23), handlers)).toBe('footer');
     expect(dispatchMouse(layout, click(90, 2), handlers)).toBeNull();
     expect(seen).toEqual([['slot', 6, 2]]);
@@ -201,8 +201,6 @@ describe('quitHint', () => {
   it('names the quit key and the prefix then d, spelled out', () => {
     expect(quitHint(DEFAULT_COCKPIT_KEYS)).toBe('Ctrl-q: quit · F12 d: quit');
     expect(quitHint({ ...DEFAULT_COCKPIT_KEYS, prefix: 'C-a', quit: null })).toBe('Ctrl-a d: quit');
-    expect(shortQuitHint(DEFAULT_COCKPIT_KEYS)).toBe('Ctrl-q: quit');
-    expect(shortQuitHint({ ...DEFAULT_COCKPIT_KEYS, prefix: 'C-a', quit: null })).toBe('Ctrl-a d: quit');
   });
 });
 
@@ -318,12 +316,12 @@ describe('runApp (fake tmux client)', () => {
     expect(text(screen, 4, 34)).toBe('$ hello from orc-master');
     expect((await sidebarRows(terminal)).some((row) => row.includes('▸ demo-project'))).toBe(true);
     expect(text(screen, 2, 34)).toContain('master');
-    expect(text(screen, 2, 34).endsWith('Ctrl-q: quit')).toBe(true);
+    expect(text(screen, 2, 34)).not.toContain('quit'); // the quit key is in the footer only
     // The cursor is where the pane has it, in frame coordinates.
     expect(screen.cursor()).toEqual({ x: 36, y: 4, visible: true });
-    // The footer, full width on the last row: the mode, project › tab, the keys; the header row is blank for now.
+    // The footer, full width on the last row: the mode, project › tab, the keys; the header: the mark and the project.
     expect(text(screen, 23)).toBe('[master] keys go to the master · demo-project › master · Ctrl-q: quit');
-    expect(text(screen, 0)).toBe('');
+    expect(text(screen, 0)).toBe('ORC │ demo-project');
   });
 
   it('names the resolved keys in the footer', async () => {
@@ -430,7 +428,7 @@ describe('runApp (fake tmux client)', () => {
     await waitForSlotLine(terminal, '$ resized');
     const screen = await shown(terminal);
     expect(text(screen, 4, 34)).toBe('$ resized');
-    expect(text(screen, 2, 34)).toContain('Ctrl-q: quit');
+    expect(text(screen, 0)).toBe('ORC │ demo-project');
   });
 
   it('keeps showing the master and taking input after a keystroke or paste fails', async () => {
@@ -815,6 +813,10 @@ async function columnOf(terminal: FakeTerminal, y: number, grapheme: string, fro
   const row = (await shown(terminal)).row(y);
   return row.findIndex((cell, x) => x >= from && cell.text === grapheme);
 }
+/** Waits until the header (the terminal's top row) contains `part`. */
+async function waitForHeader(terminal: FakeTerminal, part: string): Promise<void> {
+  await waitFor(async () => text(await shown(terminal), 0).includes(part));
+}
 async function sidebarRow(terminal: FakeTerminal, part: string): Promise<number> {
   await waitForSidebar(terminal, part);
   // A frame row: the sidebar's rows start below the header.
@@ -1043,7 +1045,7 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     const host = new FakeExplorerHost();
     const { terminal, clients, app } = start({ explorer: host });
     await attached(terminal);
-    await waitForTabBar(terminal, 1, 'tasks Ctrl-q: quit');
+    await waitForHeader(terminal, 'tasks');
     const before = app.tabs();
     terminal.type(`${F12}t`);
     await attached(terminal, 'explorer-demo');
@@ -1053,7 +1055,7 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     expect(fake.ignoreSize).toBe(false);
     await waitForTabBar(terminal, 1, '2 tasks ×');
     await waitForFooter(terminal, '[tasks] Ctrl-] or ×: close');
-    expect(text(await shown(terminal), 2, SIDEBAR_COLS)).not.toContain('tasks Ctrl-q'); // no entry while it is shown
+    expect(text(await shown(terminal), 0)).not.toContain('tasks'); // no entry while it is shown
     // Its own keys reach it; i is not the typing key here.
     terminal.type(`j${ESC}[Bi\r`);
     await waitFor(() => fake.sent.length === 4);
@@ -1071,13 +1073,17 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     await waitForFooter(terminal, '[master] keys go to the master');
   });
 
-  it('opens on a click on the tasks entry, closes on its close marker, and gives way to any tab change', async () => {
+  it('opens on a click on the header tasks entry, closes on its close marker, and gives way to any tab change', async () => {
     const host = new FakeExplorerHost();
     const { terminal, app } = start({ explorer: host, projects: [projectState('demo', { workers: [{ agent_id: 'w1', ...W1_TARGET }] })] });
     app.apply((state) => openAgent(state, 'demo', 'w1'));
     await attached(terminal, 'orc-w1');
-    await waitForTabBar(terminal, 1, 'tasks');
-    terminal.type(click(await columnOf(terminal, 2, 't', SIDEBAR_COLS + 20), 2));
+    await waitForHeader(terminal, 'tasks');
+    // The tab bar's right end, where the entry was before the header: no button there now.
+    terminal.type(click(76, 2));
+    await sleep(30);
+    expect(host.started).toEqual([]);
+    terminal.type(click(await columnOf(terminal, 0, 't', 40), 0));
     await attached(terminal, 'explorer-demo');
     const close = await columnOf(terminal, 2, '×', (await columnOf(terminal, 2, '×', SIDEBAR_COLS)) + 1);
     terminal.type(click(close, 2));
@@ -1253,12 +1259,12 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
   it('refuses the explorer without a host, keeping the active tab', async () => {
     const { terminal } = start();
     await attached(terminal);
-    expect(text(await shown(terminal), 2, SIDEBAR_COLS)).not.toContain('tasks');
+    expect(text(await shown(terminal), 0)).not.toContain('tasks');
     terminal.type(`${F12}t`);
     await waitForTabBar(terminal, 2, 'This cockpit has no task explorer.');
   });
 
-  it('jumps to the next agent needing attention across projects on F11 and on a click on the badge', async () => {
+  it('jumps to the next agent needing attention across projects on F11 and on a click on the header badge', async () => {
     const { terminal, app } = start({
       projects: [
         projectState('demo', { workers: [{ agent_id: 'w1', ...W1_TARGET }, { agent_id: 'w2', socket: 'orc-sock', session: 'orc-w2', attention: { kind: 'question', detail: null } }] }),
@@ -1270,14 +1276,22 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
       ],
     });
     await attached(terminal);
-    await waitForTabBar(terminal, 1, '! 2 Ctrl-q: quit'); // the stopped project's agent is not counted
+    await waitForHeader(terminal, '! 2'); // the stopped project's agent is not counted
+    expect((await shown(terminal)).row(0).map((cell) => cell.text).join('').endsWith(' ! 2')).toBe(true);
+    // The count is on the button only: not in the tab bar or the footer.
+    expect(text(await shown(terminal), 2, SIDEBAR_COLS)).not.toContain('! 2');
+    expect(text(await shown(terminal), 23)).not.toContain('! 2');
     terminal.type(F11);
     await attached(terminal, 'orc-w2');
     expect(app.tabs().activeProject).toBe('demo');
     expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: ['w2'], active: 'w2' });
     await waitForFooter(terminal, '[view] i: type'); // it opens view-only, with the keys
+    // A click where the badge was in the tab bar does nothing.
+    terminal.type(click(79, 2));
+    await sleep(30);
+    expect(app.tabs().activeProject).toBe('demo');
     // The badge: the next one is in the other project, added with the agent's tab.
-    terminal.type(click(await columnOf(terminal, 2, '!', SIDEBAR_COLS), 2));
+    terminal.type(click(await columnOf(terminal, 0, '!'), 0));
     await attached(terminal, 'orc-o1');
     expect(app.tabs().activeProject).toBe('other');
     expect(app.tabs().projects[1]).toEqual({ projectId: 'other', tabs: ['o1'], active: 'o1' });
