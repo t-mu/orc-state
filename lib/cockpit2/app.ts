@@ -106,7 +106,7 @@ export const TAB_BAR_ROWS = 3;
 /** The header (top) and footer (bottom) rows, full width; dropped (footer first) before the slot shrinks below its minimum. */
 export const HEADER_ROWS = 1;
 export const FOOTER_ROWS = 1;
-/** The slot keeps at least this much; the footer, the header, then the sidebar and tab bar shrink first on a tiny terminal. */
+/** The slot keeps at least this much; the footer, the tab bar's borders, the header, then the tab bar's labels row go first on a tiny terminal. */
 const MIN_SLOT_COLS = 20;
 const MIN_SLOT_ROWS = 3;
 /** Lines one wheel notch scrolls a pane's scrollback. */
@@ -132,15 +132,20 @@ export interface Layout {
 /**
  * The regions of a `cols` by `rows` terminal: the sidebar's width and the
  * tab bar's height stay fixed while there is room. Rows beyond the slot's
- * minimum go to the tab bar, then the header, then the footer.
+ * minimum go to the tab bar's labels row, then the header, then the tab
+ * bar's other two rows, then the footer.
  */
 export function computeLayout(cols: number, rows: number): Layout {
   const sidebarCols = Math.min(SIDEBAR_COLS, Math.max(0, cols - MIN_SLOT_COLS));
   let spare = Math.max(0, rows - MIN_SLOT_ROWS);
-  const tabBarRows = Math.min(TAB_BAR_ROWS, spare);
+  // The tab bar's labels row, then the header (its buttons stay reachable), then the tab bar's borders, then the footer.
+  let tabBarRows = Math.min(1, spare);
   spare -= tabBarRows;
   const headerRows = Math.min(HEADER_ROWS, spare);
   spare -= headerRows;
+  const borderRows = Math.min(TAB_BAR_ROWS - tabBarRows, spare);
+  tabBarRows += borderRows;
+  spare -= borderRows;
   const footerRows = Math.min(FOOTER_ROWS, spare);
   const rightCols = Math.max(0, cols - sidebarCols);
   const middleRows = Math.max(0, rows - headerRows - footerRows);
@@ -541,16 +546,15 @@ export function runApp(options: AppOptions): App {
     return tabBarView(explorer ? withExplorerTab(marked) : marked, layout.tabBar.cols);
   }
 
-  /** The header as drawn now: the active project's name, the explorer entry and the count of agents needing attention (none with no project open). */
+  /** The header as drawn now: the active project's name and the explorer entry (neither with no project open) and the count of agents needing attention across projects. */
   function currentHeader() {
     const project = tabs.activeProject;
-    if (project === null) return headerView(layout.header.cols, null, []);
     const waiting = attentionQueue(tabs, [...watched.values()]).length;
     const buttons: HeaderButton[] = [
-      ...(explorer || !options.explorer ? [] : [{ action: 'explorer' as const, text: EXPLORER_LABEL }]),
+      ...(project === null || explorer || !options.explorer ? [] : [{ action: 'explorer' as const, text: EXPLORER_LABEL }]),
       ...(waiting > 0 ? [{ action: 'attention' as const, text: `! ${waiting}` }] : []),
     ];
-    return headerView(layout.header.cols, projectName(project), buttons);
+    return headerView(layout.header.cols, project === null ? null : projectName(project), buttons);
   }
 
   /** The project's name as the watcher has it, else its id. */

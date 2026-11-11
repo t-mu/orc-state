@@ -55,14 +55,19 @@ describe('computeLayout', () => {
     expect(seven.footer).toEqual({ x: 0, y: 7, cols: 30, rows: 0 });
     expect(seven.slot).toEqual({ x: 10, y: 4, cols: 20, rows: 3 });
     expect(seven.sidebar).toEqual({ x: 0, y: 1, cols: 10, rows: 6 });
-    // 30x6: then the header; the tab bar keeps its three rows.
+    // 30x6: then a tab bar border row; the header and its buttons stay.
     const six = computeLayout(30, 6);
-    expect(six.header.rows).toBe(0);
+    expect(six.header).toEqual({ x: 0, y: 0, cols: 30, rows: 1 });
     expect(six.footer.rows).toBe(0);
-    expect(six.tabBar).toEqual({ x: 10, y: 0, cols: 20, rows: 3 });
+    expect(six.tabBar).toEqual({ x: 10, y: 1, cols: 20, rows: 2 });
     expect(six.slot).toEqual({ x: 10, y: 3, cols: 20, rows: 3 });
-    expect(six.sidebar).toEqual({ x: 0, y: 0, cols: 10, rows: 6 });
-    // 30x4: the tab bar shrinks; the slot keeps its minimum.
+    expect(six.sidebar).toEqual({ x: 0, y: 1, cols: 10, rows: 5 });
+    // 30x5: the tab bar keeps only its labels row, under the header.
+    const five = computeLayout(30, 5);
+    expect(five.header.rows).toBe(1);
+    expect(five.tabBar).toEqual({ x: 10, y: 1, cols: 20, rows: 1 });
+    expect(five.slot).toEqual({ x: 10, y: 2, cols: 20, rows: 3 });
+    // 30x4: then the header; the slot keeps its minimum.
     const four = computeLayout(30, 4);
     expect(four.sidebar.cols).toBe(10);
     expect(four.tabBar.rows).toBe(1);
@@ -89,8 +94,11 @@ describe('hitTest and dispatchMouse', () => {
     expect(hitTest(layout, 80, 1)).toBeNull();
     expect(hitTest(layout, 0, 24)).toBeNull();
     // A dropped header or footer is never hit.
-    expect(hitTest(computeLayout(30, 6), 0, 0)?.region).toBe('sidebar');
-    expect(hitTest(computeLayout(30, 6), 15, 5)?.region).toBe('slot');
+    expect(hitTest(computeLayout(30, 4), 0, 0)?.region).toBe('sidebar');
+    expect(hitTest(computeLayout(30, 4), 15, 3)?.region).toBe('slot');
+    // At 30x6 the header still takes clicks above a two-row tab bar.
+    expect(hitTest(computeLayout(30, 6), 25, 0)?.region).toBe('header');
+    expect(hitTest(computeLayout(30, 6), 15, 1)?.region).toBe('tabBar');
   });
 
   it('hands an event to its region\'s handler with region-relative coordinates', () => {
@@ -1297,6 +1305,20 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     expect(app.tabs().projects[1]).toEqual({ projectId: 'other', tabs: ['o1'], active: 'o1' });
     // Wraps around.
     terminal.type(F11);
+    await attached(terminal, 'orc-w2');
+    expect(app.tabs().activeProject).toBe('demo');
+  });
+
+  it('keeps the header badge with no project open, without the tasks entry, and a click on it jumps', async () => {
+    const { terminal, app } = start({
+      explorer: new FakeExplorerHost(),
+      projects: [projectState('demo', { workers: [{ agent_id: 'w2', socket: 'orc-sock', session: 'orc-w2', attention: { kind: 'question', detail: null } }] })],
+    });
+    await attached(terminal);
+    app.apply((state) => ({ ok: true, state: { ...state, activeProject: null }, message: 'none' }));
+    await waitFor(async () => !text(await shown(terminal), 0).includes('tasks'));
+    expect(text(await shown(terminal), 0)).toMatch(/^ORC +! 1$/);
+    terminal.type(click(await columnOf(terminal, 0, '!'), 0));
     await attached(terminal, 'orc-w2');
     expect(app.tabs().activeProject).toBe('demo');
   });

@@ -1,10 +1,12 @@
 /**
- * lib/cockpit2/widgets.ts — the sidebar, the tab bar and the footer drawn as cells (Plan 6 Step 9).
+ * lib/cockpit2/widgets.ts — the header, the sidebar, the tab bar and the footer drawn as cells (Plan 6 Step 9).
  *
  * The sidebar and the tab bar come from the pure view models the Ink cockpit
  * uses: the sidebar from lib/tui/sidebar.ts (status box, projects box, agents
  * box), the tab bar from lib/tui/tabBarModel.ts (three rows of square-bordered tabs).
- * The footer is the cockpit's last row: the mode, where you are, the keys.
+ * The header is the cockpit's top row: the orc mark, the active project, the
+ * explorer and attention buttons. The footer is its last row: the mode,
+ * where you are, the keys.
  * Text is fitted by display width (lib/cellWidth.ts), so wide-character names
  * take their two columns and are never split.
  *
@@ -291,10 +293,10 @@ export function headerButtonAt(view: HeaderView, x: number): HeaderButton['actio
   return view.buttons.find((button) => x >= button.x && x < button.x + stringWidth(button.text))?.action ?? null;
 }
 
-/** Draws the header into `region`'s first row: the mark (`text.accent`, bold), the project's name (`text.primary`) and the buttons. */
+/** Draws the header into `region`'s first row: the mark (`text.accent`), the project's name (`text.primary`) and the buttons. */
 export function drawHeader(frame: Frame, region: Region, view: HeaderView, theme: Theme): void {
   if (region.cols <= 0 || region.rows <= 0) return;
-  const runs: Run[] = [[HEADER_MARK, roleWith(theme, 'text.accent', { bold: true })]];
+  const runs: Run[] = [[HEADER_MARK, styleOf(theme, 'text.accent')]];
   if (view.project) runs.push([HEADER_SEPARATOR, styleOf(theme, 'text.muted')], [view.project, styleOf(theme, 'text.primary')]);
   drawRuns(frame, region.x, region.y, runs, region.cols);
   for (const button of view.buttons) {
@@ -386,11 +388,30 @@ export interface FooterDrawOptions {
 }
 
 const FOOTER_SEPARATOR = ' · ';
+/** A breadcrumb cut to fit is kept while it has at least this many columns. */
+const MIN_FOOTER_CRUMB_COLS = 8;
+
+/** Runs cut to `cols` display columns in all (the last one shown ends in `…`). */
+function fitRuns(runs: readonly Run[], cols: number): Run[] {
+  if (runs.reduce((sum, [text]) => sum + stringWidth(text), 0) <= cols) return [...runs];
+  const out: Run[] = [];
+  let left = cols;
+  for (const [text, runStyle] of runs) {
+    const width = stringWidth(text);
+    // A whole run only while a column stays for the `…`.
+    if (width < left) { out.push([text, runStyle]); left -= width; continue; }
+    out.push([fitText(`${text}…`, left), runStyle]); // cut, always ending in `…`
+    break;
+  }
+  return out;
+}
 
 /**
  * Draws the footer into `region`'s first row: the mode, then `project › tab`,
- * then the key hints, separated by ` · `. Segments that do not fit are left
- * out from the right; the mode is cut (never dropped) last.
+ * then the key hints, separated by ` · `. Hints that do not fit are left out
+ * from the right, except the first (quit), which is kept before the
+ * breadcrumb: a breadcrumb too long is cut by display width (dropped below
+ * 8 columns). The mode is cut (never dropped) last.
  */
 export function drawFooter(frame: Frame, region: Region, options: FooterDrawOptions): void {
   if (region.cols <= 0 || region.rows <= 0) return;
@@ -398,18 +419,32 @@ export function drawFooter(frame: Frame, region: Region, options: FooterDrawOpti
   const role = (name: ThemeRole) => styleOf(theme, name);
   const muted = role('text.muted');
   const accent = role('text.accent');
-  const segments: Run[][] = [];
-  if (options.breadcrumb) segments.push([[options.breadcrumb.project, role('text.primary')], [' › ', muted], [options.breadcrumb.tab, role('text.primary')]]);
-  for (const hint of options.hints) segments.push([[hint.key, accent], [`: ${hint.action}`, muted]]);
+  const sep = stringWidth(FOOTER_SEPARATOR);
   const widthOf = (runs: readonly Run[]) => runs.reduce((sum, [text]) => sum + stringWidth(text), 0);
-  const runs: Run[] = [[options.mode, accent]];
-  let used = stringWidth(options.mode);
-  for (const segment of segments) {
-    const width = stringWidth(FOOTER_SEPARATOR) + widthOf(segment);
-    if (used + width > region.cols) break;
-    runs.push([FOOTER_SEPARATOR, muted], ...segment);
-    used += width;
+  const hints = options.hints.map((hint): Run[] => [[hint.key, accent], [`: ${hint.action}`, muted]]);
+  let crumb: Run[] = options.breadcrumb
+    ? [[options.breadcrumb.project, role('text.primary')], [' › ', muted], [options.breadcrumb.tab, role('text.primary')]]
+    : [];
+  let room = region.cols - stringWidth(options.mode);
+  // The quit hint first: what it leaves is the breadcrumb's, then the other hints'.
+  const kept: Run[][] = [];
+  if (hints.length > 0 && sep + widthOf(hints[0]) <= room) {
+    kept.push(hints[0]);
+    room -= sep + widthOf(hints[0]);
   }
+  if (crumb.length > 0) {
+    const crumbCols = Math.min(widthOf(crumb), room - sep);
+    crumb = crumbCols >= Math.min(widthOf(crumb), MIN_FOOTER_CRUMB_COLS) ? fitRuns(crumb, crumbCols) : [];
+    if (crumb.length > 0) room -= sep + widthOf(crumb);
+  }
+  for (const hint of hints.slice(kept.length > 0 ? 1 : hints.length)) {
+    if (sep + widthOf(hint) > room) break;
+    kept.push(hint);
+    room -= sep + widthOf(hint);
+  }
+  const ordered = crumb.length > 0 ? [crumb, ...kept] : kept;
+  const runs: Run[] = [[options.mode, accent]];
+  for (const segment of ordered) runs.push([FOOTER_SEPARATOR, muted], ...segment);
   if (runs.length === 1) runs[0] = [fitText(options.mode, region.cols), accent];
   drawRuns(frame, region.x, region.y, runs, region.cols);
 }
