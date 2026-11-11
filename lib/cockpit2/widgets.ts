@@ -393,13 +393,14 @@ const MIN_FOOTER_CRUMB_COLS = 8;
 
 /** Runs cut to `cols` display columns in all (the last one shown ends in `…`). */
 function fitRuns(runs: readonly Run[], cols: number): Run[] {
+  if (runs.reduce((sum, [text]) => sum + stringWidth(text), 0) <= cols) return [...runs];
   const out: Run[] = [];
   let left = cols;
   for (const [text, runStyle] of runs) {
-    if (left <= 0) break;
     const width = stringWidth(text);
-    if (width <= left) { out.push([text, runStyle]); left -= width; continue; }
-    out.push([fitText(text, left), runStyle]);
+    // A whole run only while a column stays for the `…`.
+    if (width < left) { out.push([text, runStyle]); left -= width; continue; }
+    out.push([fitText(`${text}…`, left), runStyle]); // cut, always ending in `…`
     break;
   }
   return out;

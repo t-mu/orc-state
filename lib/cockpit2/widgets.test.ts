@@ -443,6 +443,12 @@ describe('drawFooter', () => {
     expect(stringWidth(line)).toBe(80);
   });
 
+  it('ends a breadcrumb cut right after the project name with …', () => {
+    // MODE (29) + ' · ' + crumb + ' · Ctrl-q: quit' (15): the crumb gets exactly the project's 9 columns.
+    const { line } = footer(29 + 3 + 9 + 15, MODE, { project: 'orc-state', tab: 'master' });
+    expect(line).toBe(`${MODE} · orc-stat… · Ctrl-q: quit`);
+  });
+
   it('draws the mode and key names in text.accent, separators and actions in text.muted', () => {
     const { frame, line } = footer(120);
     const cellAt = (part: string) => frame.cells[23 * frame.cols + [...line.slice(0, line.indexOf(part))].reduce((sum, ch) => sum + stringWidth(ch), 0)];
