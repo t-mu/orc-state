@@ -9,7 +9,7 @@
  * (lib/cockpit2/app.ts), starting in the current project. This layer resolves
  * everything lib/cockpit2 must not read itself: the tmux binary, the view-state
  * file and the cockpit lock under orc's data home, the cockpit keys and the
- * current project, and it runs the project watcher. Quitting (Ctrl-q, or the
+ * current project and the terminal's colour depth, and it runs the project watcher. Quitting (Ctrl-q, or the
  * prefix then d) never stops a master, a worker or a coordinator.
  *
  * `explorer` runs the read-only task explorer (lib/tui/ExplorerView.ts) for
@@ -24,6 +24,7 @@ import { resolveCockpitKeys } from '../lib/cockpitKeys.ts';
 import { projectDataHome } from '../lib/dataHome.ts';
 import { ACTIVE_PROJECT } from '../lib/paths.ts';
 import { runApp } from '../lib/cockpit2/app.ts';
+import { colorDepthFromEnv } from '../lib/cockpit2/color.ts';
 import { tmuxExplorerHost } from '../lib/cockpit2/explorer.ts';
 import { fdWriter, openTerminal } from '../lib/cockpit2/terminal.ts';
 import { createViewStateStore } from '../lib/cockpit2/viewState.ts';
@@ -83,6 +84,7 @@ async function main(): Promise<void> {
       projects: watcher,
       projectId: ACTIVE_PROJECT.id,
       keys,
+      colorDepth: colorDepthFromEnv(process.env),
       explorer: tmuxExplorerHost({ tmuxBinary: tmuxBinary(), command: (projectId) => explorerCommand(thisOrc(), projectId) }),
     });
     await app.done;

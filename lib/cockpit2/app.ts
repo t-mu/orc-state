@@ -61,6 +61,7 @@ import { buildProjectViews } from '../tui/status.ts';
 import { buildTabBarModel, tabAttention, tabBarClickTarget } from '../tui/tabBarModel.ts';
 import { DEFAULT_STYLE, blitScreen, createFrame, drawText, slotCursor, type Frame, type Region } from './frame.ts';
 import { createDispatcher, cursorKeyMirror, modeNotice, type DispatchContext } from './dispatch.ts';
+import type { ColorDepth } from './color.ts';
 import { attentionQueue, type ExplorerHost } from './explorer.ts';
 import { createTokenizer, type Token } from './input.ts';
 import { createMotionCoalescer, encodeMouse, parseSgrMouse, routeSlotMouse, type MouseEvent } from './mouse.ts';
@@ -220,6 +221,8 @@ export interface AppOptions {
   tickMs?: number;
   /** Starts and stops the task explorer's sessions (explorer.ts `tmuxExplorerHost`); without one the explorer cannot open. */
   explorer?: ExplorerHost | undefined;
+  /** The outer terminal's colour depth (color.ts `colorDepthFromEnv`, from the CLI layer; default `truecolor`). */
+  colorDepth?: ColorDepth | undefined;
 }
 
 export interface App {
@@ -481,7 +484,7 @@ export function runApp(options: AppOptions): App {
     // Arrow keys reach the pane in the form its program asked for; checked on every render, so on tab switch and mode change.
     mirrorCursorKeys(screen ? screen.modes().applicationCursorKeys : false);
     if (prevFrame && prevCursor && framesEqual(prevFrame, frame) && sameCursor(prevCursor, cursor)) return;
-    terminal.write(renderDiff(prevFrame, frame, cursor));
+    terminal.write(renderDiff(prevFrame, frame, cursor, options.colorDepth));
     prevFrame = frame;
     prevCursor = cursor;
   }
