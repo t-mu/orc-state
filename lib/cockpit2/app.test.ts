@@ -296,10 +296,28 @@ describe('runApp (fake tmux client)', () => {
     await waitFor(() => client.resizes.includes('166x57'));
     client.lines = ['$ resized'];
     client.emit('notification', '%layout-change @1 abcd,166x57,0,0,1 abcd,166x57,0,0,1 *');
-    await waitFor(() => terminal.writes.join('').includes('resized'));
+    await waitForSlotLine(terminal, '$ resized');
     const screen = await shown(terminal);
     expect(text(screen, 3, 34)).toBe('$ resized');
     expect(text(screen, 1, 34)).toContain('Ctrl-q: quit');
+  });
+
+  it('keeps showing the master and taking input after a keystroke or paste fails', async () => {
+    const { terminal, client } = start();
+    await attached(terminal);
+    const sendBytes = client.sendBytes.bind(client);
+    const paste = client.paste.bind(client);
+    client.sendBytes = () => { client.sendBytes = sendBytes; return Promise.reject(new Error('send-keys failed')); };
+    client.paste = () => { client.paste = paste; return Promise.reject(new Error('set-buffer failed')); };
+    terminal.type('a');
+    terminal.type(`${ESC}[200~big${ESC}[201~`);
+    await sleep(30);
+    terminal.type('b');
+    terminal.type(`${ESC}[200~next${ESC}[201~`);
+    expect(client.sent).toEqual(['%1 b']);
+    expect(client.pastes).toEqual(['%1 next']);
+    const screen = await shown(terminal);
+    expect(text(screen, 3, 34)).toBe('$ hello');
   });
 
   it('says so when the master\'s session ends and stops typing into it', async () => {
@@ -352,6 +370,23 @@ describe.skipIf(!hasTmux)('runApp (private tmux server)', () => {
     expect((await shown(terminal)).row(0).length).toBe(120);
 
     terminal.type('\x11');
+    await app.done;
+    expect(terminal.restored).toBe(1);
+    expect(tmux('has-session', '-t', `=${session}`).status).toBe(0);
+  }, 20_000);
+
+  it('quits on the prefix then d and leaves the master\'s session running', async () => {
+    const session = 'orc-master-prefix';
+    const created = tmux('new-session', '-d', '-s', session, '-x', '100', '-y', '30', 'env -i PS1="$ " sh');
+    expect(created.status, created.stderr).toBe(0);
+    const terminal = new FakeTerminal();
+    const app = runApp({
+      terminal, keys: DEFAULT_COCKPIT_KEYS, tmuxBinary: 'tmux', dataHome: '/unused', lockPath: '/unused/lock',
+      projectName: 'fake', target: { socket, session },
+    });
+    apps.push(app);
+    await waitForSlotLine(terminal, '$');
+    terminal.type(`${F12}d`);
     await app.done;
     expect(terminal.restored).toBe(1);
     expect(tmux('has-session', '-t', `=${session}`).status).toBe(0);

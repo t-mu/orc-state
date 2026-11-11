@@ -53,7 +53,12 @@ describe('the cockpit2 quit key', () => {
     const clash = resolveCockpitKeys({ ORC_COCKPIT_KEYS: 'quit=F10' });
     expect(clash.keys.quit).toBeNull();
     expect(clash.keys.direct.dashboard).toBe('F10');
-    expect(resolveCockpitKeys({ ORC_COCKPIT_PREFIX: 'C-q' }).keys).toMatchObject({ prefix: 'C-q', quit: null });
+    expect(clash.problems).toEqual([expect.stringContaining('there is no direct quit key')]);
+  });
+
+  it('drops the default quit key silently when the prefix or a direct key is C-q, so orc start-session warns about nothing new', () => {
+    expect(resolveCockpitKeys({ ORC_COCKPIT_PREFIX: 'C-q' })).toEqual({ keys: expect.objectContaining({ prefix: 'C-q', quit: null }), problems: [] });
+    expect(resolveCockpitKeys({ ORC_COCKPIT_KEYS: 'dashboard=C-q' })).toMatchObject({ keys: { quit: null }, problems: [] });
   });
 });
 

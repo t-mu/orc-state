@@ -55,7 +55,7 @@ function isDirectKeyName(key: string): boolean {
  * direct key; `quit=<key>` sets cockpit2's quit key). Anything invalid is
  * reported in `problems` and its default kept; a direct key that clashes with
  * the prefix or an earlier direct key is dropped, and so is a quit key that
- * clashes with any of them.
+ * clashes with any of them (silently when it is the default).
  */
 export function resolveCockpitKeys(env: NodeJS.ProcessEnv = process.env): { keys: CockpitKeys; problems: string[] } {
   const problems: string[] = [];
@@ -67,13 +67,14 @@ export function resolveCockpitKeys(env: NodeJS.ProcessEnv = process.env): { keys
   }
   const direct = { ...DEFAULT_COCKPIT_KEYS.direct };
   let quit = DEFAULT_COCKPIT_KEYS.quit;
+  let quitSet = false;
   for (const entry of (env.ORC_COCKPIT_KEYS ?? '').split(',').map((part) => part.trim()).filter(Boolean)) {
     const split = entry.indexOf('=');
     const action = entry.slice(0, split).trim();
     const key = entry.slice(split + 1).trim();
     if (split >= 0 && action === 'quit') {
       if (key.toLowerCase() === 'none') quit = null;
-      else if (isDirectKeyName(key)) quit = key;
+      else if (isDirectKeyName(key)) { quit = key; quitSet = true; }
       else problems.push(`ORC_COCKPIT_KEYS: '${key}' cannot be the quit key (a function key F1-F12, or a C- or M- key); using ${quit ?? 'none'}`);
       continue;
     }
@@ -98,7 +99,8 @@ export function resolveCockpitKeys(env: NodeJS.ProcessEnv = process.env): { keys
     }
   }
   if (quit != null && taken.has(quit.toLowerCase())) {
-    problems.push(`ORC_COCKPIT_KEYS: ${quit} is already the prefix or another action's key; there is no direct quit key`);
+    // The default yields silently: the tmux cockpit (orc start-session) has no quit key to warn about.
+    if (quitSet) problems.push(`ORC_COCKPIT_KEYS: ${quit} is already the prefix or another action's key; there is no direct quit key`);
     quit = null;
   }
   return { keys: { prefix, direct, quit }, problems };

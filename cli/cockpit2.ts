@@ -31,15 +31,21 @@ async function main(): Promise<void> {
   for (const problem of problems) console.error(`Warning: ${problem}`);
   const target = await resolveMasterTarget(STATE_DIR);
   const terminal = openTerminal({ input: process.stdin, output: process.stdout, write: fdWriter(process.stdout.fd) });
-  const app = runApp({
-    terminal,
-    tmuxBinary: tmuxBinary(),
-    ...cockpit2Paths(projectDataHome()),
-    projectName: ACTIVE_PROJECT?.name ?? 'orc',
-    target,
-    keys,
-  });
-  await app.done;
+  try {
+    const app = runApp({
+      terminal,
+      tmuxBinary: tmuxBinary(),
+      ...cockpit2Paths(projectDataHome()),
+      projectName: ACTIVE_PROJECT?.name ?? 'orc',
+      target,
+      keys,
+    });
+    await app.done;
+  } catch (error) {
+    // Back on the main screen first, or the error is printed on the alternate one and lost.
+    terminal.restore();
+    cliError(error);
+  }
   process.exit(0);
 }
 

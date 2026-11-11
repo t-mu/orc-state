@@ -222,9 +222,11 @@ export function runApp(options: AppOptions): App {
   /** Why the master is not shown (attaching, or its session ended); null while it is live. */
   let message: string[] | null = [`Attaching to the master (tmux -L ${target.socket}, session ${target.session})…`];
   let chain: Promise<void> = Promise.resolve();
+  /** Runs `op` after everything queued; its promise rejects when `op` fails (and `fail` reports it), the chain goes on. */
   const enqueue = (op: () => Promise<void> | void): Promise<void> => {
-    chain = chain.then(op).catch((error: unknown) => fail(error));
-    return chain;
+    const run = chain.then(op);
+    chain = run.catch((error: unknown) => fail(error));
+    return run;
   };
   /**
    * Output while the screen is captured: `drop` before the capture's reply
@@ -333,7 +335,7 @@ export function runApp(options: AppOptions): App {
       const batch = Buffer.concat(unwritten);
       unwritten = [];
       return screen!.write(batch);
-    }).then(scheduleRender);
+    }).then(scheduleRender, () => { /* reported by the chain */ });
   };
   client.on('output', (pane, bytes) => {
     if (closed || pane !== paneId || outputMode === 'drop') return;
@@ -362,8 +364,13 @@ export function runApp(options: AppOptions): App {
   /** Steps 9 and 10 fill these in: sidebar and tab bar clicks, pane mouse routing. */
   const mouseHandlers: MouseHandlers = {};
 
+  /**
+   * A failed keystroke or paste leaves the master shown and the next input
+   * flows: a session that ended is reported by the client's exit event.
+   */
+  const ignoreInputError = () => { /* see above */ };
   const forward = (bytes: Buffer) => {
-    if (!message) client.sendBytes(paneTarget(), bytes).catch(fail);
+    if (!message) client.sendBytes(paneTarget(), bytes).catch(ignoreInputError);
   };
 
   function onToken(token: Token): void {
@@ -376,7 +383,7 @@ export function runApp(options: AppOptions): App {
       return;
     }
     if (token.kind === 'paste') {
-      if (!message) client.paste(paneTarget(), token.data.toString('utf8')).catch(fail);
+      if (!message) client.paste(paneTarget(), token.data.toString('utf8')).catch(ignoreInputError);
       return;
     }
     if (prefixPending) {
