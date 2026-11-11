@@ -101,8 +101,15 @@ export function navigateSidebar(view: SidebarCursor, nav: SidebarNav, key: Sideb
     case 'up':
     case 'down': {
       if (length === 0) return { nav, command: null };
-      const next = Math.max(0, Math.min(length - 1, current + (key === 'up' ? -1 : 1)));
-      return { nav: projects ? { ...nav, projectKey: model.projects[next].project_id } : { ...nav, agentKey: model.agents[next].key }, command: null };
+      const step = key === 'up' ? -1 : 1;
+      if (!projects) {
+        const next = Math.max(0, Math.min(length - 1, current + step));
+        return { nav: { ...nav, agentKey: model.agents[next].key }, command: null };
+      }
+      // Projects move in drawn order: the active one (the Project card) first, then Other projects.
+      const order = projectOrder(model);
+      const next = order[Math.max(0, Math.min(length - 1, order.indexOf(current) + step))];
+      return { nav: { ...nav, projectKey: model.projects[next].project_id }, command: null };
     }
     case 'open': {
       if (length === 0) return { nav, command: null };
@@ -115,6 +122,13 @@ export function navigateSidebar(view: SidebarCursor, nav: SidebarNav, key: Sideb
   }
 }
 
+/** Indices into `model.projects` in the order the cards draw them: the active project, then the others in model order. */
+function projectOrder(model: SidebarModel): number[] {
+  const active = model.projects.findIndex((project) => project.active);
+  const others = model.projects.flatMap((project, index) => (project.active ? [] : [index]));
+  return active >= 0 ? [active, ...others] : others;
+}
+
 /** `nav` with the agent `key` expanded if it was collapsed, else collapsed; the cursor goes to it. */
 function toggleAgent(nav: SidebarNav, key: string): SidebarNav {
   const expanded = new Set(nav.expanded);
@@ -122,9 +136,13 @@ function toggleAgent(nav: SidebarNav, key: string): SidebarNav {
   return { ...nav, box: 'agents', agentKey: key, expanded };
 }
 
-/** `nav` without the expanded keys of agents no longer in `model` (the same object when none went). */
+/**
+ * `nav` without the expanded keys of agents no longer in `model` (the same
+ * object when none went). A model without the active project's status (before
+ * its first load, or while it reconnects) lists no agents and prunes nothing.
+ */
 export function pruneExpanded(nav: SidebarNav, model: SidebarModel): SidebarNav {
-  if (nav.expanded.size === 0) return nav;
+  if (nav.expanded.size === 0 || model.status.workers === null) return nav;
   const live = new Set(model.agents.map((agent) => agent.key));
   const kept = [...nav.expanded].filter((key) => live.has(key));
   return kept.length === nav.expanded.size ? nav : { ...nav, expanded: new Set(kept) };
@@ -207,7 +225,8 @@ function agentBlocks(agents: SidebarAgent[], expanded: ReadonlySet<string>, cols
     const part = (name: BlockPart, text?: string): CardLine => (text === undefined ? { kind: 'block', index, part: name } : { kind: 'block', index, part: name, text });
     return [
       part('top'), part('task'), part('phase'),
-      ...blockDetail(agent.detail, blockTextCols(cols)).map((text) => part('detail', text)),
+      // The detail falls back to the task (lib/tui/sidebar.ts), which the block already shows on its task line.
+      ...blockDetail(agent.detail === agent.task_ref && !agent.attention ? null : agent.detail, blockTextCols(cols)).map((text) => part('detail', text)),
       part('hint'), part('bottom'),
     ];
   });
@@ -236,7 +255,8 @@ function agentLines(blocks: CardLine[][], body: number, cursor: number): CardLin
   const height = (index: number): number => blocks[index].length;
   const total = blocks.reduce((sum, block) => sum + block.length, 0);
   if (total <= body) return blocks.flat();
-  const room = body >= 2 ? body - 1 : body;
+  // A row for the `+N more` line, only when another agent can be left out.
+  const room = blocks.length > 1 && body >= 2 ? body - 1 : body;
   let start = 0;
   let used = blocks.slice(0, cursor + 1).reduce((sum, block) => sum + block.length, 0);
   while (used > room && start < cursor) used -= height(start++);
@@ -257,7 +277,8 @@ function agentLines(blocks: CardLine[][], body: number, cursor: number): CardLin
  * projects goes unless the cursor is in it, until the Agents card holds the
  * cursor agent's row (an expanded agent's whole block, and a `+N more` line
  * when there are other agents). Rows the Agents window leaves unused go back
- * to a shrunk Other projects. Each card's lines keep the cursor's row in view.
+ * to a shrunk Other projects, or, once it is dropped, to the Project card.
+ * Each card's lines keep the cursor's row in view.
  */
 export function sidebarCardsLayout(model: SidebarModel, rows: number, nav: SidebarNav, cols: number): SidebarCardsLayout {
   const cursor = sidebarCursor(model, nav);
@@ -281,7 +302,11 @@ export function sidebarCardsLayout(model: SidebarModel, rows: number, nav: Sideb
   let other = othersFull;
   if (project + other + agentsFull > rows) other = Math.max(othersMin, Math.min(othersFull, rows - project - agentsFull));
   if (rows - project - other < agentsMin) project = Math.max(MIN_CARD_ROWS, rows - other - agentsMin);
-  if (rows - project - other < agentsMin && !inOthers) other = 0;
+  if (rows - project - other < agentsMin && !inOthers && other > 0) {
+    other = 0;
+    // The rows Other projects gave up that the agents leave unused go back to the Project card.
+    project = Math.max(project, Math.min(PROJECT_ROWS, rows - agentsFull));
+  }
   // A sidebar too short for every card: the top ones keep their rows, the rest are cut.
   project = Math.max(0, Math.min(project, rows));
   other = Math.max(0, Math.min(other, rows - project));

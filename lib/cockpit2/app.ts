@@ -28,8 +28,8 @@
  * name, and flush right the task explorer entry and the count of agents
  * needing attention (both clickable). Its last row is the footer: the mode,
  * `project › tab` and the cockpit keys; a terminal too short drops the
- * footer, then the header, before the slot shrinks. The header, the tab bar
- * and the footer are drawn by widgets.ts, the sidebar's Project, Other
+ * footer, then the tab bar's borders, then the header, before the slot
+ * shrinks. The header, the tab bar and the footer are drawn by widgets.ts, the sidebar's Project, Other
  * projects and Agents cards by sidebarCards.ts, from the pure models of
  * lib/tui. The keys belong to the slot or to a sidebar box: the dashboard key
  * (F10 by default) or the prefix then `o` focus the sidebar, where arrows (or

@@ -181,6 +181,28 @@ describe('sidebar navigation (keys move in the projects and agents boxes)', () =
     expect(navigateSidebar(view(nav), { ...nav, box: 'projects' }, 'switchBox').nav.box).toBe('agents');
   });
 
+  it('moves through the projects in drawn order when the active project is not first in the model', () => {
+    // Registry order a, b (active), c: drawn as b on the Project card, then a and c in Other projects.
+    const shuffled = model(0, 1, {
+      projects: [project('a'), project('b', { active: true }), project('c')],
+      activeProjectId: 'b',
+    });
+    const at = (nav: SidebarNav) => sidebarCardsLayout(shuffled, 22, nav, COLS);
+    let nav: SidebarNav = { ...INITIAL_SIDEBAR_NAV, box: 'projects' };
+    const visited = [at(nav).projectIndex];
+    for (let i = 0; i < 3; i += 1) {
+      nav = navigateSidebar(at(nav), nav, 'down').nav;
+      visited.push(at(nav).projectIndex);
+    }
+    expect(visited.map((index) => shuffled.projects[index].project_id)).toEqual(['b', 'a', 'c', 'c']);
+    for (let i = 0; i < 3; i += 1) nav = navigateSidebar(at(nav), nav, 'up').nav;
+    expect(nav.projectKey).toBe('b');
+    expect(at(nav).cursorCard).toBe('project');
+    // The rows a click hits are the projects drawn there.
+    const others = card(at(nav), 'otherProjects')!;
+    expect([1, 2].map((row) => shuffled.projects[sidebarCardTarget(at(nav), 2, others.y + row)!.index].project_id)).toEqual(['a', 'c']);
+  });
+
   it('opens nothing in an empty box', () => {
     const empty = sidebarCursor(model(1, 0), INITIAL_SIDEBAR_NAV);
     expect(navigateSidebar(empty, INITIAL_SIDEBAR_NAV, 'open').command).toBeNull();
@@ -397,6 +419,35 @@ describe('expanded agents', () => {
     expect([...gone.expanded]).toEqual(['p1/a2']);
     expect(gone.agentKey).toBe('p1/a2');
     expect(pruneExpanded(nav, { ...details(1), agents: [] }).expanded.size).toBe(0);
+    // Without the project's status (before its first load or while it reconnects) no agent is listed: nothing is dropped.
+    const unloaded = { ...details(1), agents: [], status: { ...details(1).status, workers: null } };
+    expect(pruneExpanded(nav, unloaded)).toBe(nav);
+  });
+
+  it('gives a lone expanded agent every body row (no row held for a `+N more` line)', () => {
+    const lone = details(0);
+    lone.agents = lone.agents.slice(1, 2); // a2: a one-line activity, a 6-row block
+    const nav = at('p1/a2', ['p1/a2']);
+    for (const rows of [8, 10]) {
+      const layout = sidebarCardsLayout(lone, rows, nav, COLS);
+      const agents = card(layout, 'agents')!;
+      expect(agents.lines.length, `${rows} rows`).toBe(Math.min(6, agents.rows - 2));
+    }
+  });
+
+  it('gives the Project card back the rows of a dropped Other projects', () => {
+    const one = details(3);
+    one.agents = one.agents.slice(1, 2);
+    const layout = sidebarCardsLayout(one, 12, at('p1/a2', ['p1/a2']), COLS);
+    expect(rowsOf(layout)).toEqual([4, 8]);
+    expect(card(layout, 'project')!.lines.map((line) => line.kind)).toEqual(['coordinator', 'workers']);
+  });
+
+  it('leaves out the activity line when it only repeats the task', () => {
+    const fallback = details(0);
+    fallback.agents = [{ ...fallback.agents[1], detail: 'cockpit-style/foo' }];
+    const layout = sidebarCardsLayout(fallback, 22, at('p1/a2', ['p1/a2']), COLS);
+    expect(blockRows(layout, 0).map((line) => (line.kind === 'block' ? line.part : ''))).toEqual(['top', 'task', 'phase', 'hint', 'bottom']);
   });
 
   it('lays out the block: the row, task, phase and provider, at most two activity lines, the open hint', () => {
