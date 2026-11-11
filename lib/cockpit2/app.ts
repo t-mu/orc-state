@@ -196,9 +196,14 @@ export interface App {
 const MUTED_STYLE = { ...DEFAULT_STYLE, dim: true };
 const TITLE_STYLE = { ...DEFAULT_STYLE, bold: true };
 
-/** How to quit, as the tab bar shows it. */
+/** How to quit, as the slot's messages show it. */
 export function quitHint(keys: CockpitKeys): string {
   return [...(keys.quit ? [`${keyLabel(keys.quit)}: quit`] : []), `${keyLabel(keys.prefix)} d: quit`].join(' · ');
+}
+
+/** How to quit in one key, as the tab bar keeps it in view: the quit key, else the prefix then d. */
+export function shortQuitHint(keys: CockpitKeys): string {
+  return keys.quit ? `${keyLabel(keys.quit)}: quit` : `${keyLabel(keys.prefix)} d: quit`;
 }
 
 /** Where the keys go: the slot (the shown tab) or a sidebar box. */
@@ -371,7 +376,7 @@ export function runApp(options: AppOptions): App {
     const project = tabs.activeProject;
     const model = buildTabBarModel(tabs, tabAttention(buildProjectViews([...watched.values()]), project));
     const marked = withModeMarks(model, (agentId) => project !== null && typingTabs.has(tabKey({ projectId: project, agentId })));
-    return tabBarView(marked, layout.tabBar.cols);
+    return tabBarView(marked, layout.tabBar.cols, shortQuitHint(keys));
   }
 
   /** The keys' context: the shown tab's mode, and whether the sidebar has the keys. */
@@ -393,7 +398,6 @@ export function runApp(options: AppOptions): App {
     drawTabBar(frame, layout.tabBar, currentTabBar(), {
       slotFocused: focus === 'slot',
       error: refusal ?? (lastSaveError ? `view state not saved: ${lastSaveError}` : null),
-      hint: quitHint(keys),
     });
     const session = sessions.shown();
     const project = tab && watched.get(tab.projectId);
@@ -457,7 +461,7 @@ export function runApp(options: AppOptions): App {
     scheduleRender();
   }
 
-  /** Runs what a sidebar key or click asks for; opening never moves the keys away from the sidebar. */
+  /** Runs what a sidebar key or click asks for; opening by key leaves the keys with the sidebar. */
   function runSidebar(step: SidebarStep): void {
     nav = step.nav;
     scheduleRender();
@@ -468,14 +472,15 @@ export function runApp(options: AppOptions): App {
     else apply((state) => openAgent(state, command.projectId, command.agentId));
   }
 
-  /** Sidebar and tab bar clicks; a click in the slot gives it the keys (Step 10 routes pane mouse events). */
+  /** Sidebar and tab bar clicks give the slot the keys, and so does a click in it (Step 10 routes pane mouse events). */
   const mouseHandlers: MouseHandlers = {
     sidebar: (event, at) => {
       if (!isClick(event)) return;
       const step = sidebarClick(currentSidebar(), nav, at.y);
       if (!step) return;
-      setFocus(step.nav.box);
+      // What was clicked is shown and takes the keys, as after a tab click; the sidebar cursor stays on its row.
       runSidebar(step);
+      setFocus('slot');
     },
     tabBar: (event, at) => {
       if (!isClick(event)) return;

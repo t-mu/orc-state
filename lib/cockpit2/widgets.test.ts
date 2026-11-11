@@ -181,8 +181,8 @@ const TABS: TabBarState = { activeProject: 'p1', projects: [{ projectId: 'p1', t
 function renderTabBar(cols: number, rows: number, state: TabBarState = TABS, slotFocused = true, typing = new Set([EMOJI_AGENT])) {
   const layout = computeLayout(cols, rows);
   const frame = createFrame(cols, rows);
-  const bar = tabBarView(withModeMarks(buildTabBarModel(state, new Map([['w3', 'permission_prompt' as const]])), (id) => typing.has(id)), layout.tabBar.cols);
-  drawTabBar(frame, layout.tabBar, bar, { slotFocused, error: null, hint: 'Ctrl-q: quit' });
+  const bar = tabBarView(withModeMarks(buildTabBarModel(state, new Map([['w3', 'permission_prompt' as const]])), (id) => typing.has(id)), layout.tabBar.cols, 'Ctrl-q: quit');
+  drawTabBar(frame, layout.tabBar, bar, { slotFocused, error: null });
   const lines = [0, 1, 2].map((y) => rowText(frame, y, layout.tabBar.x, layout.tabBar.cols));
   return { frame, layout, bar, lines };
 }
@@ -217,22 +217,25 @@ describe('drawTabBar', () => {
     expect(unfocused.frame.cells[1 * 200 + x + 2].style.bold).toBe(true); // still the active tab
   });
 
-  it('fits 80x24 with overflow markers, the active tab always shown and the hint left out when it does not fit', () => {
+  it('fits 80x24 with overflow markers, the active tab always shown and the quit hint kept in view', () => {
     const { lines, bar } = renderTabBar(80, 24);
     expect(bar.layout.hiddenLeft + bar.layout.hiddenRight).toBeGreaterThan(0);
     expect(bar.layout.cells.some((cell) => cell.index === 1)).toBe(true);
-    expect(lines[1].trimEnd()).toMatch(/ 2 ›$/); // the two tabs right of the shown ones
+    expect(lines[1]).toMatch(/^‹ 1 .* 2 › +Ctrl-q: quit$/); // the master tab left of the shown one, two tabs right of it
     for (const line of lines) expect(stringWidth(line)).toBe(46);
-    expect(lines[1]).not.toContain('Ctrl-q');
+    expect(lines[1].endsWith(' Ctrl-q: quit')).toBe(true);
+    expect(lines[1]).not.toContain('│Ctrl-q'); // the tabs end before it
+    // A bar too narrow for both keeps the tabs.
+    expect(tabBarView(buildTabBarModel(TABS), 30, 'Ctrl-q: quit').hint).toBeNull();
   });
 
   it('shows the error on the bottom row and a notice without tabs', () => {
     const layout = computeLayout(80, 24);
     const frame = createFrame(80, 24);
-    drawTabBar(frame, layout.tabBar, tabBarView(buildTabBarModel(TABS), 46), { slotFocused: true, error: 'The master tab stays open.', hint: null });
+    drawTabBar(frame, layout.tabBar, tabBarView(buildTabBarModel(TABS), 46), { slotFocused: true, error: 'The master tab stays open.' });
     expect(rowText(frame, 2, 34, 46).trimEnd()).toBe('The master tab stays open.');
     const empty = createFrame(80, 24);
-    drawTabBar(empty, layout.tabBar, tabBarView(buildTabBarModel({ activeProject: null, projects: [] }), 46), { slotFocused: true, error: null, hint: 'x' });
+    drawTabBar(empty, layout.tabBar, tabBarView(buildTabBarModel({ activeProject: null, projects: [] }), 46, 'x'), { slotFocused: true, error: null });
     expect(rowText(empty, 1, 34, 46)).toContain('No project is open');
   });
 });

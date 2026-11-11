@@ -5,7 +5,7 @@ import { tmuxSessionTarget, type ProjectWatchState, type ProjectWatchUpdate } fr
 import { MASTER_TAB, closeTab, openAgent, selectTab, showProject } from '../cockpitTabs.ts';
 import { DEFAULT_COCKPIT_KEYS, type CockpitKeys } from '../cockpitKeys.ts';
 import {
-  SIDEBAR_COLS, TAB_BAR_ROWS, agentTarget, computeLayout, dispatchMouse, hitTest, masterTarget, quitHint, runApp, slotMessage,
+  SIDEBAR_COLS, TAB_BAR_ROWS, agentTarget, computeLayout, dispatchMouse, hitTest, masterTarget, quitHint, runApp, shortQuitHint, slotMessage,
   type App,
 } from './app.ts';
 import type { MouseEvent } from './mouse.ts';
@@ -164,6 +164,8 @@ describe('quitHint', () => {
   it('names the quit key and the prefix then d, spelled out', () => {
     expect(quitHint(DEFAULT_COCKPIT_KEYS)).toBe('Ctrl-q: quit · F12 d: quit');
     expect(quitHint({ ...DEFAULT_COCKPIT_KEYS, prefix: 'C-a', quit: null })).toBe('Ctrl-a d: quit');
+    expect(shortQuitHint(DEFAULT_COCKPIT_KEYS)).toBe('Ctrl-q: quit');
+    expect(shortQuitHint({ ...DEFAULT_COCKPIT_KEYS, prefix: 'C-a', quit: null })).toBe('Ctrl-a d: quit');
   });
 });
 
@@ -357,7 +359,7 @@ describe('runApp (fake tmux client)', () => {
     expect(text(screen, 3, 34)).toBe('$ hello from orc-master');
     expect((await sidebarRows(terminal)).some((row) => row.includes('▸ demo-project'))).toBe(true);
     expect(text(screen, 1, 34)).toContain('master');
-    expect(text(screen, 1, 34)).toContain('Ctrl-q: quit · F12 d: quit');
+    expect(text(screen, 1, 34).endsWith('Ctrl-q: quit')).toBe(true);
     // The cursor is where the pane has it, in frame coordinates.
     expect(screen.cursor()).toEqual({ x: 36, y: 3, visible: true });
   });
@@ -840,6 +842,8 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     await waitForSlotText(terminal, '$ hello from orc-master');
     terminal.type(click(3, await sidebarRow(terminal, 'w1 ')));
     expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: ['w1'], active: 'w1' });
+    // The opened tab takes the keys, as after a tab click: its view mode's keys work at once.
+    await waitForSidebar(terminal, '[view] i: type');
     await waitForSlotText(terminal, '$ hello from orc-w1');
     // The second row of an agent opens it too; a wide name's tab lays out by display width.
     terminal.type(click(3, (await sidebarRow(terminal, WIDE_AGENT)) + 1));
@@ -873,13 +877,17 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     expect(app.tabs().projects[0].tabs).toEqual(['w1']);
   });
 
-  it('switches projects on a click on a project row', async () => {
-    const { terminal, app } = withWorkers();
+  it('switches projects on a click on a project row, its master taking the keys', async () => {
+    const { terminal, clients, app } = withWorkers();
     await attached(terminal);
     terminal.type(click(5, await sidebarRow(terminal, '日本語')));
     expect(app.tabs().activeProject).toBe('other');
     await attached(terminal, 'orc-master-other');
     await waitForSidebar(terminal, '▸ 日本語');
+    // Its master takes the keys right away.
+    const other = clients.find((fake) => fake.target.session === 'orc-master-other')!;
+    terminal.type('z');
+    expect(other.sent).toEqual([`${other.paneId} z`]);
   });
 
   it('navigates the sidebar by keyboard: F10 focuses it, arrows move, Enter opens, Tab switches box, Esc returns to the pane', async () => {

@@ -250,8 +250,11 @@ export function drawSidebar(frame: Frame, region: Region, view: SidebarView, opt
 
 // ── tab bar ──────────────────────────────────────────────────────────────────
 
-/** The tab bar as it is drawn: the model and which tabs fit. */
-export interface TabBarView { model: TabBarModel; layout: TabBarLayout }
+/** The tab bar as it is drawn: the model, which tabs fit, and the hint flush right of them (null when it has no room). */
+export interface TabBarView { model: TabBarModel; layout: TabBarLayout; hint: string | null }
+
+/** The tabs keep at least this many columns; a narrower bar drops the hint instead. */
+const MIN_TAB_COLS = 24;
 
 /** Agent tabs labelled with their mode's mark (`○` view, `✎` typing); the master tab, always typing, has none. */
 export function withModeMarks(model: TabBarModel, typing: (agentId: string) => boolean): TabBarModel {
@@ -261,8 +264,16 @@ export function withModeMarks(model: TabBarModel, typing: (agentId: string) => b
   };
 }
 
-export function tabBarView(model: TabBarModel, cols: number): TabBarView {
-  return { model, layout: layoutTabBar(model, cols) };
+/**
+ * Lays the tabs out in `cols`, minus room for `hint` (the quit key) flush
+ * right, so the hint stays visible however many tabs are open: tabs that do
+ * not fit go behind the overflow markers. The hint is left out only when the
+ * tabs would keep fewer than 24 columns.
+ */
+export function tabBarView(model: TabBarModel, cols: number, hint: string | null = null): TabBarView {
+  const reserve = hint ? stringWidth(hint) + 1 : 0;
+  const shown = hint && cols - reserve >= MIN_TAB_COLS ? hint : null;
+  return { model, layout: layoutTabBar(model, shown ? cols - reserve : cols), hint: shown };
 }
 
 export interface TabBarDrawOptions {
@@ -270,8 +281,6 @@ export interface TabBarDrawOptions {
   slotFocused: boolean;
   /** What the last action reported, or a failed save; takes the bottom row. */
   error: string | null;
-  /** Drawn flush right on the tabs' row when it fits after the tabs (the quit keys). */
-  hint: string | null;
 }
 
 function segmentStyle(segment: TabBarSegment, model: TabBarModel, slotFocused: boolean): CellStyle {
@@ -300,10 +309,7 @@ export function drawTabBar(frame: Frame, region: Region, view: TabBarView, optio
   rows.forEach((segments, offset) => {
     drawRuns(frame, region.x, region.y + offset, segments.map((segment): Run => [segment.text, segmentStyle(segment, model, options.slotFocused)]), region.cols);
   });
-  if (!options.hint || model.notice) return;
-  const used = middle.reduce((sum, segment) => sum + stringWidth(segment.text), 0);
-  const hintWidth = stringWidth(options.hint);
-  if (used + 1 + hintWidth <= region.cols) {
-    drawText(frame, region.x + region.cols - hintWidth, region.y + (region.rows >= 3 ? 1 : 0), options.hint, MUTED, hintWidth);
-  }
+  if (!view.hint || model.notice) return;
+  const hintWidth = stringWidth(view.hint);
+  drawText(frame, region.x + region.cols - hintWidth, region.y + (region.rows >= 3 ? 1 : 0), view.hint, MUTED, hintWidth);
 }
