@@ -58,9 +58,9 @@ describe('tab bar rows', () => {
     const model = buildTabBarModel(state(['w1'], 'w1'), new Map([['w1', 'question']]));
     const layout = layoutTabBar(model, 40);
     expect(tabBarText(tabBarRows(model, layout, 40))).toEqual([
-      '╭──────────╮╭─────────────────╮',
-      '│ 1 master ││ 2 w1 QUESTION × │',
-      `┴──────────┴╯                 ╰${'─'.repeat(9)}`,
+      '┌──────────┐┌───────────────────┐',
+      '│ 1 master ││ 2 w1 ! QUESTION × │',
+      `┴──────────┴┘                   └${'─'.repeat(7)}`,
     ]);
   });
 
@@ -99,6 +99,7 @@ describe('layoutTabBar overflow', () => {
       expect(rows[1]).toContain(model.tabs[activeIndex].label);
     }
     const middle = layoutTabBar(buildTabBarModel(state(many, 'worker-07')), 40);
+    expect(tabBarText(tabBarRows(buildTabBarModel(state(many, 'worker-07')), middle, 40)).join('')).not.toMatch(/[╭╮╰╯]/);
     expect(tabBarText(tabBarRows(buildTabBarModel(state(many, 'worker-07')), middle, 40))[1]).toMatch(/^‹ \d+ .* \d+ ›$/);
   });
 
@@ -109,7 +110,7 @@ describe('layoutTabBar overflow', () => {
     expect(layout.cells.map(cell => cell.index)).toEqual([1]);
     const rows = tabBarText(tabBarRows(model, layout, 30));
     expect(rows.every(row => row.length <= 30)).toBe(true);
-    expect(rows[1]).toBe('‹ 1 │ 2 a-very… PERMISSION × │');
+    expect(rows[1]).toBe('‹ 1 │ 2 a-ve… ! PERMISSION × │'); // the badge keeps its `!`, the name gives way
   });
 });
 
@@ -117,11 +118,11 @@ describe('wide-character tab names', () => {
   const model = buildTabBarModel(state(['作業者', 'agent-🚀'], '作業者'), new Map([['作業者', 'question']]));
 
   it('measures tabs by display width, so borders, close markers and clicks line up', () => {
-    expect(tabWidth(model.tabs[1])).toBe(2 + stringWidth(' 2 作業者') + ' QUESTION'.length + ' × '.length);
+    expect(tabWidth(model.tabs[1])).toBe(2 + stringWidth(' 2 作業者') + ' ! QUESTION'.length + ' × '.length);
     const layout = layoutTabBar(model, 80);
     const rows = tabBarText(tabBarRows(model, layout, 80));
-    expect(rows.map(row => stringWidth(row))).toEqual([51, 51, 80]); // the rule under the tabs runs to the right edge
-    expect(rows[1]).toBe('│ 1 master ││ 2 作業者 QUESTION × ││ 3 agent-🚀 × │');
+    expect(rows.map(row => stringWidth(row))).toEqual([53, 53, 80]); // the rule under the tabs runs to the right edge
+    expect(rows[1]).toBe('│ 1 master ││ 2 作業者 ! QUESTION × ││ 3 agent-🚀 × │');
     for (const cell of layout.cells.slice(1)) {
       expect(tabBarClickTarget(model, layout, cell.closeX!)?.kind).toBe('close');
       expect(tabBarClickTarget(model, layout, cell.closeX! - 2)?.kind).toBe('select');
@@ -155,6 +156,27 @@ describe('tabBarClickTarget', () => {
     expect(master.closeX).toBeNull();
     expect(middle.slice(master.x, master.x + master.width)).not.toContain('×');
     for (let x = master.x; x < master.x + master.width; x += 1) expect(tabBarClickTarget(model, layout, x)?.kind).toBe('select');
+  });
+
+  it('selects and closes the right tab after an overflow marker, at the badged widths', () => {
+    const many = Array.from({ length: 12 }, (_, index) => `w-${index + 1}`);
+    const attention = new Map(many.map((id, index) => [id, index % 2 ? 'no_progress' as const : 'question' as const]));
+    const overflow = buildTabBarModel(state(many, 'w-9'), attention);
+    const shown = layoutTabBar(overflow, 60);
+    expect(shown.hiddenLeft).toBeGreaterThan(0);
+    const [top, row, bottom] = tabBarText(tabBarRows(overflow, shown, 60));
+    for (const cell of shown.cells) {
+      const tab = overflow.tabs[cell.index];
+      expect([top[cell.x], top[cell.x + cell.width - 1]]).toEqual(['┌', '┐']);
+      expect([bottom[cell.x], bottom[cell.x + cell.width - 1]]).toEqual(tab.active ? ['┘', '└'] : ['┴', '┴']);
+      expect(row.slice(cell.x, cell.x + cell.width)).toContain(`${tab.number} ${tab.label} ! `);
+      expect(row[cell.closeX!]).toBe('×');
+      expect(tabBarClickTarget(overflow, shown, cell.closeX!)).toEqual({ kind: 'close', tab });
+      expect(tabBarClickTarget(overflow, shown, cell.x)).toEqual({ kind: 'select', tab });
+      expect(tabBarClickTarget(overflow, shown, cell.x + cell.width - 2)).toEqual({ kind: 'close', tab }); // the cell right of `×`
+      expect(tabBarClickTarget(overflow, shown, cell.x + cell.width - 1)).toEqual({ kind: 'select', tab }); // its right border
+    }
+    expect(tabBarClickTarget(overflow, shown, 0)).toBeNull(); // the left marker
   });
 
   it('does nothing over a notice', () => {

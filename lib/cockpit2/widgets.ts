@@ -3,7 +3,7 @@
  *
  * The sidebar and the tab bar come from the pure view models the Ink cockpit
  * uses: the sidebar from lib/tui/sidebar.ts (status box, projects box, agents
- * box), the tab bar from lib/tui/tabBarModel.ts (three rows of bordered tabs).
+ * box), the tab bar from lib/tui/tabBarModel.ts (three rows of square-bordered tabs).
  * The footer is the cockpit's last row: the mode, where you are, the keys.
  * Text is fitted by display width (lib/cellWidth.ts), so wide-character names
  * take their two columns and are never split.
@@ -350,7 +350,8 @@ function segmentStyle(segment: TabBarSegment, model: TabBarModel, slotFocused: b
     case 'badge': return styleOf(theme, badgeRole(tab?.attention ? attentionRole(tab.attention) : 'status.attention'));
     case 'close': return styleOf(theme, 'tab.close');
     case 'error': return styleOf(theme, 'error');
-    case 'marker': case 'rule': case 'notice': return styleOf(theme, 'chrome.meta');
+    case 'rule': return styleOf(theme, 'chrome.border');
+    case 'marker': case 'notice': return styleOf(theme, 'text.muted');
   }
 }
 
