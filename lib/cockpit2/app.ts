@@ -1,8 +1,8 @@
 /**
  * lib/cockpit2/app.ts — the cockpit2 app (Plan 6 Steps 6 to 11).
  *
- * Draws the whole terminal: a sidebar (left, fixed width), a tab bar (top
- * right, fixed height) and the slot, which shows the active tab: a project's
+ * Draws the whole terminal: a header row, a sidebar (left, fixed width), a
+ * tab bar (right, fixed height), a footer row and the slot, which shows the active tab: a project's
  * master or an agent's session. Each open tab has its own tmux control client
  * and screen model (sessions.ts); only the shown one receives output, the
  * hidden ones are paused and restored when shown again. Screens are blitted
@@ -24,8 +24,11 @@
  * app; masters, workers and coordinators keep running, and closing a tab only
  * detaches its view.
  *
- * The sidebar and the tab bar are drawn by widgets.ts from the pure models of
- * lib/tui. The keys belong to the slot or to a sidebar box: the dashboard key
+ * The terminal's top row is the header (reserved, blank for now) and its last
+ * row the footer: the mode, `project › tab` and the cockpit keys; a terminal
+ * too short drops the footer, then the header, before the slot shrinks. The
+ * sidebar, the tab bar and the footer are drawn by widgets.ts, the first two
+ * from the pure models of lib/tui. The keys belong to the slot or to a sidebar box: the dashboard key
  * (F10 by default) or the prefix then `o` focus the sidebar, where arrows (or
  * j/k), Tab, Enter and Esc navigate, open and return to the pane. Clicks on a
  * sidebar row open that project or agent, on a tab show it, on a tab's close
@@ -89,44 +92,63 @@ import type { TerminalSession } from './terminal.ts';
 import { TmuxControlClient } from './tmuxControl.ts';
 import { mergeProjects, type TmuxTarget, type ViewState, type ViewStateStore } from './viewState.ts';
 import {
-  EXPLORER_LABEL, EXPLORER_TAB, INITIAL_SIDEBAR_NAV, drawSidebar, drawTabBar, navigateSidebar, sidebarClick, sidebarView, tabBarButtonAt, tabBarView,
-  withExplorerTab, withModeMarks, type SidebarBox, type TabBarButton, type SidebarCommand, type SidebarNav, type SidebarStep,
+  EXPLORER_LABEL, EXPLORER_TAB, INITIAL_SIDEBAR_NAV, drawFooter, drawSidebar, drawTabBar, navigateSidebar, sidebarClick, sidebarView, tabBarButtonAt, tabBarView,
+  withExplorerTab, withModeMarks, type FooterHint, type SidebarBox, type TabBarButton, type SidebarCommand, type SidebarNav, type SidebarStep,
 } from './widgets.ts';
 
 // ── layout ────────────────────────────────────────────────────────────────────
 
 export const SIDEBAR_COLS = 34;
 export const TAB_BAR_ROWS = 3;
-/** The slot keeps at least this much; the sidebar and tab bar shrink first on a tiny terminal. */
+/** The header (top) and footer (bottom) rows, full width; dropped (footer first) before the slot shrinks below its minimum. */
+export const HEADER_ROWS = 1;
+export const FOOTER_ROWS = 1;
+/** The slot keeps at least this much; the footer, the header, then the sidebar and tab bar shrink first on a tiny terminal. */
 const MIN_SLOT_COLS = 20;
 const MIN_SLOT_ROWS = 3;
 /** Lines one wheel notch scrolls a pane's scrollback. */
 export const WHEEL_LINES = 3;
 
-export type RegionName = 'sidebar' | 'tabBar' | 'slot';
+export type RegionName = 'header' | 'sidebar' | 'tabBar' | 'slot' | 'footer';
 
 export interface Layout {
   cols: number;
   rows: number;
-  /** Left, full height. */
+  /** Top row, full width; zero rows when the terminal is too short. */
+  header: Region;
+  /** Left, between the header and the footer. */
   sidebar: Region;
-  /** Top right, above the slot. */
+  /** Right, below the header and above the slot. */
   tabBar: Region;
   /** The rest: the active tab's screen. */
   slot: Region;
+  /** Bottom row, full width; zero rows when the terminal is too short (dropped before the header). */
+  footer: Region;
 }
 
-/** The regions of a `cols` by `rows` terminal: the sidebar's width and the tab bar's height stay fixed while there is room. */
+/**
+ * The regions of a `cols` by `rows` terminal: the sidebar's width and the
+ * tab bar's height stay fixed while there is room. Rows beyond the slot's
+ * minimum go to the tab bar, then the header, then the footer.
+ */
 export function computeLayout(cols: number, rows: number): Layout {
   const sidebarCols = Math.min(SIDEBAR_COLS, Math.max(0, cols - MIN_SLOT_COLS));
-  const tabBarRows = Math.min(TAB_BAR_ROWS, Math.max(0, rows - MIN_SLOT_ROWS));
+  let spare = Math.max(0, rows - MIN_SLOT_ROWS);
+  const tabBarRows = Math.min(TAB_BAR_ROWS, spare);
+  spare -= tabBarRows;
+  const headerRows = Math.min(HEADER_ROWS, spare);
+  spare -= headerRows;
+  const footerRows = Math.min(FOOTER_ROWS, spare);
   const rightCols = Math.max(0, cols - sidebarCols);
+  const middleRows = Math.max(0, rows - headerRows - footerRows);
   return {
     cols,
     rows,
-    sidebar: { x: 0, y: 0, cols: sidebarCols, rows },
-    tabBar: { x: sidebarCols, y: 0, cols: rightCols, rows: tabBarRows },
-    slot: { x: sidebarCols, y: tabBarRows, cols: rightCols, rows: Math.max(0, rows - tabBarRows) },
+    header: { x: 0, y: 0, cols, rows: headerRows },
+    sidebar: { x: 0, y: headerRows, cols: sidebarCols, rows: middleRows },
+    tabBar: { x: sidebarCols, y: headerRows, cols: rightCols, rows: tabBarRows },
+    slot: { x: sidebarCols, y: headerRows + tabBarRows, cols: rightCols, rows: Math.max(0, middleRows - tabBarRows) },
+    footer: { x: 0, y: rows - footerRows, cols, rows: footerRows },
   };
 }
 
@@ -135,7 +157,7 @@ const inside = (region: Region, x: number, y: number) =>
 
 /** The region at frame cell (x, y) and the cell relative to that region; null outside every region. */
 export function hitTest(layout: Layout, x: number, y: number): { region: RegionName; x: number; y: number } | null {
-  for (const name of ['sidebar', 'tabBar', 'slot'] as const) {
+  for (const name of ['header', 'sidebar', 'tabBar', 'slot', 'footer'] as const) {
     const region = layout[name];
     if (inside(region, x, y)) return { region: name, x: x - region.x, y: y - region.y };
   }
@@ -273,6 +295,20 @@ export function quitHint(keys: CockpitKeys): string {
 /** How to quit in one key, as the tab bar keeps it in view: the quit key, else the prefix then d. */
 export function shortQuitHint(keys: CockpitKeys): string {
   return keys.quit ? `${keyLabel(keys.quit)}: quit` : `${keyLabel(keys.prefix)} d: quit`;
+}
+
+/**
+ * The footer's key hints from the resolved keys: quit (as the tab bar shows
+ * it), the dashboard key (else the prefix then o) and the attention key (left
+ * out when it has no direct key).
+ */
+export function footerHints(keys: CockpitKeys): FooterHint[] {
+  const { dashboard, attention } = keys.direct;
+  return [
+    keys.quit ? { key: keyLabel(keys.quit), action: 'quit' } : { key: `${keyLabel(keys.prefix)} d`, action: 'quit' },
+    { key: dashboard ? keyLabel(dashboard) : `${keyLabel(keys.prefix)} o`, action: 'dashboard' },
+    ...(attention ? [{ key: keyLabel(attention), action: 'attention' }] : []),
+  ];
 }
 
 /** Where the keys go: the slot (the shown tab) or a sidebar box. */
@@ -512,6 +548,14 @@ export function runApp(options: AppOptions): App {
     return tabBarView(explorer ? withExplorerTab(marked) : marked, layout.tabBar.cols, shortQuitHint(keys), buttons);
   }
 
+  /** The footer's `project › tab`: the active project's name and the shown tab's label (the explorer's while it is shown). */
+  function breadcrumb(): { project: string; tab: string } | null {
+    const project = tabs.activeProject;
+    if (project === null) return null;
+    const active = buildTabBarModel(tabs).tabs.find((tab) => tab.active);
+    return { project: watched.get(project)?.project.name ?? project, tab: explorer ? EXPLORER_LABEL : active?.label ?? '' };
+  }
+
   /** The keys' context: the shown tab's mode, and whether the sidebar has the keys. */
   function keyContext(): DispatchContext {
     const tab = shownTab(tabs);
@@ -544,12 +588,13 @@ export function runApp(options: AppOptions): App {
     if (closed) return;
     lastRender = Date.now();
     const frame = createFrame(layout.cols, layout.rows);
-    drawSidebar(frame, layout.sidebar, currentSidebar(), { focus: focus === 'slot' ? null : focus, footer: modeNotice(keyContext()), theme });
+    drawSidebar(frame, layout.sidebar, currentSidebar(), { focus: focus === 'slot' ? null : focus, theme });
     drawTabBar(frame, layout.tabBar, currentTabBar(), {
       slotFocused: focus === 'slot',
       error: refusal ?? (lastSaveError ? `view state not saved: ${lastSaveError}` : null),
       theme,
     });
+    drawFooter(frame, layout.footer, { mode: modeNotice(keyContext()), breadcrumb: breadcrumb(), hints: footerHints(keys), theme });
     const { message, screen } = slotContent();
     let cursor: Cursor = { x: 0, y: 0, visible: false };
     if (!screen) {

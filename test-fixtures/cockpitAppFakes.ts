@@ -101,19 +101,31 @@ export async function waitForSlotLine(terminal: FakeTerminal, line: string, ms =
   }
 }
 
-/** Waits until row `y` of the tab bar contains `part`. */
+/** Waits until row `y` of the tab bar (0 its top row, below the header) contains `part`. */
 export async function waitForTabBar(terminal: FakeTerminal, y: number, part: string): Promise<void> {
   const until = Date.now() + 2_000;
-  while (!text(await shown(terminal), y, SIDEBAR_COLS).includes(part)) {
-    if (Date.now() > until) throw new Error(`timed out waiting for ${JSON.stringify(part)} in tab bar row ${y}: ${text(await shown(terminal), y, SIDEBAR_COLS)}`);
+  const row = computeLayout(terminal.cols, terminal.rows).tabBar.y + y;
+  while (!text(await shown(terminal), row, SIDEBAR_COLS).includes(part)) {
+    if (Date.now() > until) throw new Error(`timed out waiting for ${JSON.stringify(part)} in tab bar row ${y}: ${text(await shown(terminal), row, SIDEBAR_COLS)}`);
     await sleep(25);
   }
 }
 
-/** The sidebar's rows as the real terminal shows them. */
+/** The sidebar's rows as the real terminal shows them (0 its first row, below the header). */
 export async function sidebarRows(terminal: FakeTerminal): Promise<string[]> {
   const screen = await shown(terminal);
-  return Array.from({ length: terminal.rows }, (_, y) => text(screen, y, 0, SIDEBAR_COLS));
+  const { sidebar } = computeLayout(terminal.cols, terminal.rows);
+  return Array.from({ length: sidebar.rows }, (_, y) => text(screen, sidebar.y + y, sidebar.x, sidebar.cols));
+}
+
+/** Waits until the footer (the terminal's last row) contains `part`. */
+export async function waitForFooter(terminal: FakeTerminal, part: string): Promise<void> {
+  const until = Date.now() + 2_000;
+  const footer = async () => text(await shown(terminal), computeLayout(terminal.cols, terminal.rows).footer.y);
+  while (!(await footer()).includes(part)) {
+    if (Date.now() > until) throw new Error(`timed out waiting for ${JSON.stringify(part)} in the footer: ${await footer()}`);
+    await sleep(25);
+  }
 }
 
 /** Waits until some sidebar row contains `part`. */

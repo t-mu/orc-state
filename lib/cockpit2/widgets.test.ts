@@ -6,8 +6,8 @@ import { computeLayout } from './app.ts';
 import { createFrame, type Frame } from './frame.ts';
 import { BUILT_IN_THEMES, styleOf } from './theme.ts';
 import {
-  EXPLORER_TAB, INITIAL_SIDEBAR_NAV, TYPING_MARK, VIEW_MARK, drawSidebar, drawTabBar, navigateSidebar, sidebarClick, sidebarView, tabBarButtonAt,
-  tabBarView, withExplorerTab, withModeMarks, type SidebarNav, type TabBarButton,
+  EXPLORER_TAB, INITIAL_SIDEBAR_NAV, TYPING_MARK, VIEW_MARK, drawFooter, drawSidebar, drawTabBar, navigateSidebar, sidebarClick, sidebarView, tabBarButtonAt,
+  tabBarView, withExplorerTab, withModeMarks, type FooterHint, type SidebarNav, type TabBarButton,
 } from './widgets.ts';
 
 /** Today's look: every cell drawn as before the theme roles. */
@@ -52,14 +52,15 @@ function renderSidebar(cols: number, rows: number, sidebar: SidebarModel, focus:
   const layout = computeLayout(cols, rows);
   const frame = createFrame(cols, rows);
   const view = sidebarView(sidebar, layout.sidebar.rows, nav);
-  drawSidebar(frame, layout.sidebar, view, { focus, footer: '[master] keys go to the master', theme: CLASSIC });
-  const lines = Array.from({ length: rows }, (_, y) => rowText(frame, y, 0, layout.sidebar.cols));
+  drawSidebar(frame, layout.sidebar, view, { focus, theme: CLASSIC });
+  // The sidebar's rows (row 0 is its first, below the header).
+  const lines = Array.from({ length: layout.sidebar.rows }, (_, y) => rowText(frame, layout.sidebar.y + y, 0, layout.sidebar.cols));
   return { frame, layout, view, lines };
 }
 
 describe('drawSidebar', () => {
   for (const [cols, rows] of [[80, 24], [200, 60]] as const) {
-    it(`draws the status, projects and agents boxes and the footer at ${cols}x${rows}, wide names in their display width`, () => {
+    it(`draws the status, projects and agents boxes and no footer row at ${cols}x${rows}, wide names in their display width`, () => {
       const { frame, lines, layout } = renderSidebar(cols, rows, model());
       const width = layout.sidebar.cols;
       expect(width).toBe(34);
@@ -77,33 +78,34 @@ describe('drawSidebar', () => {
       expect(lines[11]).toContain(CJK_AGENT);
       // A long wide-character detail is cut with `…`, never half a character.
       expect(lines[12]).toBe('│  日本語のテキストがとても長い… │');
-      expect(lines[rows - 1]).toBe('[master] keys go to the master    ');
+      expect(layout.sidebar.rows).toBe(rows - 2); // between the header and the footer
+      expect(lines.some((line) => line.includes('[master]'))).toBe(false); // the mode is the footer's
       // Every box row ends on the right border and takes exactly the sidebar's width: no wide character was split or overflowed.
       for (let y = 0; y < 16; y += 1) {
         expect([...lines[y]].at(-1)).toMatch(/[╮│╯]/);
         expect(stringWidth(lines[y])).toBe(width);
-        expect(frame.cells[y * cols + width].text).toBe(' '); // nothing spilled into the slot
+        expect(frame.cells[(layout.sidebar.y + y) * cols + width].text).toBe(' '); // nothing spilled into the slot
       }
     });
   }
 
   it('marks the focused box: its title reversed, its border coloured, the cursor row reversed', () => {
     const projectsFocused = renderSidebar(80, 24, model(), 'projects');
-    const titleCell = projectsFocused.frame.cells[4 * 80 + 3]; // `P` of `Projects`
+    const titleCell = projectsFocused.frame.cells[5 * 80 + 3]; // `P` of `Projects`
     expect(titleCell.text).toBe('P');
     expect(titleCell.style.inverse).toBe(true);
-    expect(projectsFocused.frame.cells[5 * 80 + 2].style.inverse).toBe(true); // the active project's row is the cursor
-    expect(projectsFocused.frame.cells[8 * 80 + 3].style.inverse).toBe(false); // agents title
+    expect(projectsFocused.frame.cells[6 * 80 + 2].style.inverse).toBe(true); // the active project's row is the cursor
+    expect(projectsFocused.frame.cells[9 * 80 + 3].style.inverse).toBe(false); // agents title
 
     const agentsFocused = renderSidebar(80, 24, model(), 'agents', { ...INITIAL_SIDEBAR_NAV, agentKey: `p1/${CJK_AGENT}` });
-    expect(agentsFocused.frame.cells[4 * 80 + 3].style.inverse).toBe(false);
-    expect(agentsFocused.frame.cells[8 * 80 + 3].style.inverse).toBe(true);
-    expect(agentsFocused.frame.cells[11 * 80 + 1].style.inverse).toBe(true); // the cursor agent's first row
-    expect(agentsFocused.frame.cells[9 * 80 + 1].style.inverse).toBe(false);
+    expect(agentsFocused.frame.cells[5 * 80 + 3].style.inverse).toBe(false);
+    expect(agentsFocused.frame.cells[9 * 80 + 3].style.inverse).toBe(true);
+    expect(agentsFocused.frame.cells[12 * 80 + 1].style.inverse).toBe(true); // the cursor agent's first row
+    expect(agentsFocused.frame.cells[10 * 80 + 1].style.inverse).toBe(false);
 
     const unfocused = renderSidebar(80, 24, model(), null);
-    expect(unfocused.frame.cells.slice(0, 34 * 24).some((cell) => cell.style.inverse && cell.text !== ' ' && cell.text !== '')).toBe(true); // the attention badge only
-    expect(unfocused.frame.cells[4 * 80 + 3].style.inverse).toBe(false);
+    expect(unfocused.frame.cells.slice(0, 80 * 24).filter((_, index) => index % 80 < 34).some((cell) => cell.style.inverse && cell.text !== ' ' && cell.text !== '')).toBe(true); // the attention badge only
+    expect(unfocused.frame.cells[5 * 80 + 3].style.inverse).toBe(false);
   });
 
   it('keeps a `+N more` row and the cursor in view when the agents do not fit 80x24', () => {
@@ -113,7 +115,8 @@ describe('drawSidebar', () => {
     expect(lines.some((line) => /\+\d+ more/.test(line))).toBe(true);
     expect(view.layout.agents).toContain(14);
     expect(lines.some((line) => line.includes('w15 '))).toBe(true);
-    expect(lines[23]).toContain('[master]');
+    // No footer row is kept: the agents box may end on the sidebar's last row (two-row agents leave at most one spare).
+    expect(lines.slice(-2).some((line) => /^╰─+╯$/.test(line))).toBe(true);
   });
 
   it('says why there are no agents', () => {
@@ -173,7 +176,7 @@ describe('sidebarClick (hit-testing sidebar rows)', () => {
       expect(sidebarClick(view, INITIAL_SIDEBAR_NAV, rowOf('w3 '))?.command).toEqual({ type: 'openAgent', projectId: 'p1', agentId: 'w3' });
       expect(sidebarClick(view, INITIAL_SIDEBAR_NAV, rowOf('Projects'))).toBeNull(); // a border
       expect(sidebarClick(view, INITIAL_SIDEBAR_NAV, 1)).toBeNull(); // the status box
-      expect(sidebarClick(view, INITIAL_SIDEBAR_NAV, rows - 1)).toBeNull(); // the footer
+      expect(sidebarClick(view, INITIAL_SIDEBAR_NAV, rows - 3)).toBeNull(); // the last row: the agents box's border
     });
   }
 });
@@ -187,7 +190,7 @@ function renderTabBar(cols: number, rows: number, state: TabBarState = TABS, slo
   const frame = createFrame(cols, rows);
   const bar = tabBarView(withModeMarks(buildTabBarModel(state, new Map([['w3', 'permission_prompt' as const]])), (id) => typing.has(id)), layout.tabBar.cols, 'Ctrl-q: quit');
   drawTabBar(frame, layout.tabBar, bar, { slotFocused, error: null, theme: CLASSIC });
-  const lines = [0, 1, 2].map((y) => rowText(frame, y, layout.tabBar.x, layout.tabBar.cols));
+  const lines = [0, 1, 2].map((y) => rowText(frame, layout.tabBar.y + y, layout.tabBar.x, layout.tabBar.cols));
   return { frame, layout, bar, lines };
 }
 
@@ -213,12 +216,12 @@ describe('drawTabBar', () => {
     const focused = renderTabBar(200, 60);
     const active = focused.bar.layout.cells[1];
     const x = focused.layout.tabBar.x + active.x;
-    expect(focused.frame.cells[2 * 200 + x].text).toBe('╯');
-    expect(focused.frame.cells[1 * 200 + x + 2].style.inverse).toBe(true); // its label
-    expect(focused.frame.cells[1 * 200 + x].style.bold).toBe(true); // its border
+    expect(focused.frame.cells[3 * 200 + x].text).toBe('╯');
+    expect(focused.frame.cells[2 * 200 + x + 2].style.inverse).toBe(true); // its label
+    expect(focused.frame.cells[2 * 200 + x].style.bold).toBe(true); // its border
     const unfocused = renderTabBar(200, 60, TABS, false);
-    expect(unfocused.frame.cells[1 * 200 + x + 2].style.inverse).toBe(false);
-    expect(unfocused.frame.cells[1 * 200 + x + 2].style.bold).toBe(true); // still the active tab
+    expect(unfocused.frame.cells[2 * 200 + x + 2].style.inverse).toBe(false);
+    expect(unfocused.frame.cells[2 * 200 + x + 2].style.bold).toBe(true); // still the active tab
   });
 
   it('fits 80x24 with overflow markers, the active tab always shown and the quit hint kept in view', () => {
@@ -237,10 +240,10 @@ describe('drawTabBar', () => {
     const layout = computeLayout(80, 24);
     const frame = createFrame(80, 24);
     drawTabBar(frame, layout.tabBar, tabBarView(buildTabBarModel(TABS), 46), { slotFocused: true, error: 'The master tab stays open.', theme: CLASSIC });
-    expect(rowText(frame, 2, 34, 46).trimEnd()).toBe('The master tab stays open.');
+    expect(rowText(frame, 3, 34, 46).trimEnd()).toBe('The master tab stays open.');
     const empty = createFrame(80, 24);
     drawTabBar(empty, layout.tabBar, tabBarView(buildTabBarModel({ activeProject: null, projects: [] }), 46, 'x'), { slotFocused: true, error: null, theme: CLASSIC });
-    expect(rowText(empty, 1, 34, 46)).toContain('No project is open');
+    expect(rowText(empty, 2, 34, 46)).toContain('No project is open');
   });
 });
 
@@ -253,7 +256,7 @@ describe('tab bar buttons and the explorer tab', () => {
       const frame = createFrame(cols, rows);
       const bar = tabBarView(buildTabBarModel(TABS), layout.tabBar.cols, 'Ctrl-q: quit', BUTTONS);
       drawTabBar(frame, layout.tabBar, bar, { slotFocused: true, error: null, theme: CLASSIC });
-      const line = rowText(frame, 1, layout.tabBar.x, layout.tabBar.cols);
+      const line = rowText(frame, layout.tabBar.y + 1, layout.tabBar.x, layout.tabBar.cols);
       expect(line.endsWith(' tasks ! 2 Ctrl-q: quit')).toBe(true);
       expect(stringWidth(line)).toBe(layout.tabBar.cols);
       // The tabs end before the buttons.
@@ -265,7 +268,7 @@ describe('tab bar buttons and the explorer tab', () => {
       expect([badge, badge + 2].map((x) => tabBarButtonAt(bar, x))).toEqual(['attention', 'attention']);
       expect(tabBarButtonAt(bar, tasks - 1)).toBeNull();
       expect(tabBarButtonAt(bar, layout.tabBar.cols - 1)).toBeNull(); // the quit hint
-      expect(frame.cells[1 * cols + layout.tabBar.x + badge].style.inverse).toBe(true);
+      expect(frame.cells[(layout.tabBar.y + 1) * cols + layout.tabBar.x + badge].style.inverse).toBe(true);
     });
   }
 
@@ -315,6 +318,57 @@ function columnOf(line: string, x: number): string | null {
   return null;
 }
 
+// ── footer ───────────────────────────────────────────────────────────────────
+
+const FOOTER_HINTS: FooterHint[] = [{ key: 'Ctrl-q', action: 'quit' }, { key: 'F10', action: 'dashboard' }, { key: 'F11', action: 'attention' }];
+
+describe('drawFooter', () => {
+  const MODE = '[view] i: type · q/Esc: close';
+  const FULL = `${MODE} · ${CJK_PROJECT} › w1 · Ctrl-q: quit · F10: dashboard · F11: attention`;
+  function footer(cols: number, mode = MODE, breadcrumb: { project: string; tab: string } | null = { project: CJK_PROJECT, tab: 'w1' }) {
+    const layout = computeLayout(Math.max(cols, 30), 24);
+    const frame = createFrame(layout.cols, 24);
+    drawFooter(frame, { ...layout.footer, cols }, { mode, breadcrumb, hints: FOOTER_HINTS, theme: CLASSIC });
+    return { frame, line: rowText(frame, 23, 0, cols).trimEnd() };
+  }
+
+  it('shows the mode, then project › tab, then the key hints on the last row', () => {
+    expect(footer(120).line).toBe(FULL);
+    expect(stringWidth(FULL)).toBeLessThan(120);
+  });
+
+  it('drops segments from the right as the width shrinks; the mode always comes first', () => {
+    const fullWidth = stringWidth(FULL);
+    expect(footer(fullWidth).line).toBe(FULL);
+    expect(footer(fullWidth - 1).line).toBe(`${MODE} · ${CJK_PROJECT} › w1 · Ctrl-q: quit · F10: dashboard`);
+    expect(footer(80).line).toBe(`${MODE} · ${CJK_PROJECT} › w1 · Ctrl-q: quit`);
+    expect(footer(60).line).toBe(`${MODE} · ${CJK_PROJECT} › w1`);
+    expect(footer(40).line).toBe(MODE);
+    // The mode is cut last, by display width.
+    expect(footer(12).line).toBe(`${MODE.slice(0, 11)}…`);
+    expect(stringWidth(footer(12).line)).toBe(12);
+    // No project open: the hints follow the mode.
+    expect(footer(80, MODE, null).line).toBe(`${MODE} · Ctrl-q: quit · F10: dashboard · F11: attention`);
+  });
+
+  it('draws the mode and key names in text.accent, separators and actions in text.muted', () => {
+    const { frame, line } = footer(120);
+    const cellAt = (part: string) => frame.cells[23 * frame.cols + [...line.slice(0, line.indexOf(part))].reduce((sum, ch) => sum + stringWidth(ch), 0)];
+    expect(cellAt('[view]').style).toEqual(styleOf(CLASSIC, 'text.accent'));
+    expect(cellAt(' · Ctrl').style).toEqual(styleOf(CLASSIC, 'text.muted')); // the separator after the breadcrumb; the mode's own ` · ` is the mode's
+    expect(cellAt(' › ').style).toEqual(styleOf(CLASSIC, 'text.muted'));
+    expect(cellAt('Ctrl-q').style).toEqual(styleOf(CLASSIC, 'text.accent'));
+    expect(cellAt(': quit').style).toEqual(styleOf(CLASSIC, 'text.muted'));
+  });
+
+  it('draws nothing into a dropped footer', () => {
+    const layout = computeLayout(30, 7);
+    const frame = createFrame(30, 7);
+    drawFooter(frame, layout.footer, { mode: MODE, breadcrumb: null, hints: FOOTER_HINTS, theme: CLASSIC });
+    expect(frame.cells.every((cell) => cell.text === ' ')).toBe(true);
+  });
+});
+
 // ── full-style snapshot ──────────────────────────────────────────────────────
 
 /** A cell style as a short key: attribute letters, then fg and bg (`p<index>`, `#rrggbb`, empty for default). */
@@ -351,10 +405,11 @@ describe('full-style snapshot at 80x24', () => {
   function draw(sidebar: SidebarModel, focus: 'projects' | 'agents' | null, nav: SidebarNav, activeTab: string, slotFocused: boolean, error: string | null, explorer = false): string[] {
     const layout = computeLayout(80, 24);
     const frame = createFrame(80, 24);
-    drawSidebar(frame, layout.sidebar, sidebarView(sidebar, layout.sidebar.rows, nav), { focus, footer: '[sidebar] ↑↓ move · Enter open', theme: CLASSIC });
+    drawSidebar(frame, layout.sidebar, sidebarView(sidebar, layout.sidebar.rows, nav), { focus, theme: CLASSIC });
     const tabs = buildTabBarModel({ activeProject: 'p1', projects: [{ projectId: 'p1', tabs: tabAgents, active: activeTab }] }, tabAttention);
     const marked = withModeMarks(tabs, (id) => id === 'a-question');
     drawTabBar(frame, layout.tabBar, tabBarView(explorer ? withExplorerTab(marked) : marked, layout.tabBar.cols, 'Ctrl-q: quit', BUTTONS), { slotFocused, error, theme: CLASSIC });
+    drawFooter(frame, layout.footer, { mode: '[sidebar] ↑↓ move · Enter open', breadcrumb: { project: 'p1', tab: explorer ? 'tasks' : activeTab }, hints: FOOTER_HINTS, theme: CLASSIC });
     return serialiseFrame(frame);
   }
 
@@ -395,7 +450,7 @@ describe('drawing with amber, the running cockpit theme', () => {
     const layout = computeLayout(80, 24);
     const frame = createFrame(80, 24);
     const view = sidebarView(model(), layout.sidebar.rows, INITIAL_SIDEBAR_NAV);
-    drawSidebar(frame, layout.sidebar, view, { focus: 'projects', footer: 'f', theme: AMBER });
+    drawSidebar(frame, layout.sidebar, view, { focus: 'projects', theme: AMBER });
     expect(cellOf(frame, '╭─ Projects').style).toEqual(styleOf(AMBER, 'chrome.borderFocus'));
     expect(cellOf(frame, '1 needs you').style).toEqual(styleOf(AMBER, 'status.attention.badge'));
     expect(cellOf(frame, 'QUESTION').style).toEqual(styleOf(AMBER, 'status.attention.badge'));
@@ -405,7 +460,7 @@ describe('drawing with amber, the running cockpit theme', () => {
     const layout = computeLayout(80, 24);
     const frame = createFrame(80, 24);
     const view = sidebarView(model(), layout.sidebar.rows, INITIAL_SIDEBAR_NAV);
-    drawSidebar(frame, layout.sidebar, view, { focus: 'agents', footer: 'f', theme: AMBER }); // the cursor on the question agent
+    drawSidebar(frame, layout.sidebar, view, { focus: 'agents', theme: AMBER }); // the cursor on the question agent
     const badge = styleOf(AMBER, 'status.attention.badge');
     expect(cellOf(frame, 'QUESTION').style).toEqual({ ...badge, bold: true });
     const cursor = styleOf(AMBER, 'row.cursor');
@@ -416,7 +471,7 @@ describe('drawing with amber, the running cockpit theme', () => {
     const layout = computeLayout(80, 24);
     const frame = createFrame(80, 24);
     const view = sidebarView(model(), layout.sidebar.rows, INITIAL_SIDEBAR_NAV);
-    drawSidebar(frame, layout.sidebar, view, { focus: 'projects', footer: 'f', theme: AMBER }); // the cursor on the active project
+    drawSidebar(frame, layout.sidebar, view, { focus: 'projects', theme: AMBER }); // the cursor on the active project
     const y = Array.from({ length: frame.rows }, (_, row) => row).find((row) => rowText(frame, row).includes(CJK_PROJECT))!;
     const x = rowText(frame, y).indexOf('running');
     const cursor = styleOf(AMBER, 'row.cursor');

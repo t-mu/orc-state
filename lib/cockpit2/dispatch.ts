@@ -90,8 +90,8 @@ export const SIDEBAR_KEYS: Readonly<Record<string, SidebarKey>> = {
 };
 
 /**
- * One line naming the focus or the shown tab's mode and its keys, for the
- * sidebar's last row: at most 32 columns, the sidebar's inside.
+ * One line naming the focus or the shown tab's mode and its keys: the
+ * footer's first segment, kept short (the footer cuts it last).
  */
 export function modeNotice(context: DispatchContext): string {
   if (context.sidebar) return '↑↓ Tab · Enter: open · Esc: pane';

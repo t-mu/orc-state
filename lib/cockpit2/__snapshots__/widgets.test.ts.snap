@@ -2,6 +2,7 @@
 
 exports[`full-style snapshot at 80x24 > a stale agent list with the cursor on a plain agent; stalled and no-progress tabs with an error line 1`] = `
 [
+  "{//}                                                                                ",
   "{di//}╭─ {bo//}Status{di//} ───────────────────────╮    {bo/p6/}╭─────────────╮{//}                           ",
   "{di//}│{//}coordinator {/p1/}incompatible{//}        {di//}│‹ 3 {bo/p6/}│{boin//} 4 …{boin/p1/} STAL…{boin//} {/p1/}×{boin//} {bo/p6/}│{di//} 1 ›{//} {un/p6/}tasks{//} {boin/p3/}! 4{//} {di//}Ctrl-q: quit",
   "{di//}│{//}workers 0/2                     {di//}│{bo/p1/}The master tab stays open.{//}                    ",
@@ -24,13 +25,13 @@ exports[`full-style snapshot at 80x24 > a stale agent list with the cursor on a 
   "{//}                                                                                ",
   "{//}                                                                                ",
   "{//}                                                                                ",
-  "{//}                                                                                ",
-  "{di//}[sidebar] ↑↓ move · Enter open{//}                                                  ",
+  "{bo//}[sidebar] ↑↓ move · Enter open{di//} · {//}p1{di//} › {//}a-stalled{di//} · {bo//}Ctrl-q{di//}: quit · {bo//}F10{di//}: dashboard{//} ",
 ]
 `;
 
 exports[`full-style snapshot at 80x24 > agents focused: every attention kind, the cursor on an attention agent; a question tab active and focused 1`] = `
 [
+  "{//}                                                                                ",
   "{di//}╭─ {bo//}Status{di//} ───────────────────────╮    {bo/p6/}╭─────────────╮{//}                           ",
   "{di//}│{//}coordinator {/p1/}stale{//}               {di//}│‹ 2 {bo/p6/}│{boin//} 3 …{boin/p3/} QUES…{boin//} {/p1/}×{boin//} {bo/p6/}│{di//} 2 ›{//} {un/p6/}tasks{//} {boin/p3/}! 4{//} {di//}Ctrl-q: quit",
   "{di//}│{//}workers 4/4          {boin/p3/}1 needs you{di//}│────{bo/p6/}╯             ╰{di//}───────────────────────────",
@@ -53,13 +54,13 @@ exports[`full-style snapshot at 80x24 > agents focused: every attention kind, th
   "{bo/p6/}╰────────────────────────────────╯{//}                                              ",
   "{//}                                                                                ",
   "{//}                                                                                ",
-  "{//}                                                                                ",
-  "{di//}[sidebar] ↑↓ move · Enter open{//}                                                  ",
+  "{bo//}[sidebar] ↑↓ move · Enter open{di//} · {//}p1{di//} › {//}a-question{di//} · {bo//}Ctrl-q{di//}: quit · {bo//}F10{di//}: dashboard",
 ]
 `;
 
 exports[`full-style snapshot at 80x24 > no focus, a stopped coordinator with no agents; the explorer tab shown 1`] = `
 [
+  "{//}                                                                                ",
   "{di//}╭─ {bo//}Status{di//} ───────────────────────╮    ╭───────────╮{//}                             ",
   "{di//}│{//}coordinator {/p3/}stopped{//}             {di//}│‹ 5 │{bo//} 6 tasks {/p1/}×{bo//} {di//}│{//}       {un/p6/}tasks{//} {boin/p3/}! 4{//} {di//}Ctrl-q: quit",
   "{di//}│{//}workers -                       {di//}│────╯           ╰─────────────────────────────",
@@ -82,23 +83,22 @@ exports[`full-style snapshot at 80x24 > no focus, a stopped coordinator with no 
   "{//}                                                                                ",
   "{//}                                                                                ",
   "{//}                                                                                ",
-  "{//}                                                                                ",
-  "{di//}[sidebar] ↑↓ move · Enter open{//}                                                  ",
+  "{bo//}[sidebar] ↑↓ move · Enter open{di//} · {//}p1{di//} › {//}tasks{di//} · {bo//}Ctrl-q{di//}: quit · {bo//}F10{di//}: dashboard{//}     ",
 ]
 `;
 
 exports[`full-style snapshot at 80x24 > projects focused: every project state, the cursor row, a notice; a permission tab active with the slot unfocused 1`] = `
 [
+  "{//}                                                                                ",
   "{di//}╭─ {bo//}Status{di//} ───────────────────────╮    ╭─────────────╮{//}                           ",
   "{di//}│{//}coordinator {/p6/}connecting{//}          {di//}│‹ 1 │{bo//} 2 …{boin/p3/} PERM…{bo//} {/p1/}×{bo//} {di//}│ 3 ›{//} {un/p6/}tasks{//} {boin/p3/}! 4{//} {di//}Ctrl-q: quit",
   "{di//}│{//}workers -             {boin/p3/}4 need you{di//}│────╯             ╰───────────────────────────",
   "{di//}│{/p3/}coordinator restarting{//}          {di//}│{//}                                              ",
   "{di//}╰────────────────────────────────╯{//}                                              ",
   "{bo/p6/}╭─ {boin/p6/}Projects{bo/p6/} ─────────────────────╮{//}                                              ",
-  "{bo/p6/}│{//}  p3                  {/p3/}stopped{boin/p3/} !1{bo/p6/}│{//}                                              ",
   "{bo/p6/}│{//}  p4                       {/p1/}stale{bo/p6/}│{//}                                              ",
   "{bo/p6/}│{in//}  p5                {in/p1/}incompatible{bo/p6/}│{//}                                              ",
-  "{bo/p6/}│{di//}+2 more{//}                         {bo/p6/}│{//}                                              ",
+  "{bo/p6/}│{di//}+3 more{//}                         {bo/p6/}│{//}                                              ",
   "{bo/p6/}╰────────────────────────────────╯{//}                                              ",
   "{di//}╭─ {bo//}Agents · p1{di//} ──────────────────╮{//}                                              ",
   "{di//}│{bo//}a-permission_pro…{//} {boin/p3/}PERMISSION{di//} 12m│{//}                                              ",
@@ -112,6 +112,6 @@ exports[`full-style snapshot at 80x24 > projects focused: every project state, t
   "{di//}│{bo//}plain{//}                  {di//}implement│{//}                                              ",
   "{di//}│  {//}                              {di//}│{//}                                              ",
   "{di//}╰────────────────────────────────╯{//}                                              ",
-  "{di//}[sidebar] ↑↓ move · Enter open{//}                                                  ",
+  "{bo//}[sidebar] ↑↓ move · Enter open{di//} · {//}p1{di//} › {//}a-permission_prompt{di//} · {bo//}Ctrl-q{di//}: quit{//}        ",
 ]
 `;
