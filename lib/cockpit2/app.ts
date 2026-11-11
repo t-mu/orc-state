@@ -494,7 +494,7 @@ export function runApp(options: AppOptions): App {
     else apply((state) => openAgent(state, command.projectId, command.agentId));
   }
 
-  /** Sidebar and tab bar clicks give the slot the keys, and so does a click in it (Step 10 routes pane mouse events). */
+  /** Sidebar and tab bar clicks give the slot the keys, and so does a press in it; slot events go to onSlotMouse (mouse.ts routeSlotMouse). */
   const mouseHandlers: MouseHandlers = {
     sidebar: (event, at) => {
       if (!isClick(event)) return;
