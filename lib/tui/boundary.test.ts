@@ -17,6 +17,13 @@ const CLIENT_ENTRY = join(REPO_ROOT, 'client.ts');
 /** Helpers with no runtime import of another repo module (checked below). */
 const PURE_HELPERS = new Set(['lib/banner.ts', 'lib/currentActivity.ts', 'lib/terminalHost.ts', 'lib/cockpitTabs.ts', 'lib/cockpitKeys.ts', 'lib/cellWidth.ts']
   .map((path) => join(REPO_ROOT, path)));
+/**
+ * Pure lib/tui view models lib/cockpit2 may import: the sidebar and tab-bar models and the
+ * modules they import transitively. Each is free of Ink/React and IO, and imports only
+ * `client.ts` (types) or another module in this list (checked below). Ink components stay forbidden.
+ */
+const COCKPIT2_TUI_MODULES = new Set(['lib/tui/sidebar.ts', 'lib/tui/tabBarModel.ts', 'lib/tui/status.ts', 'lib/tui/taskList.ts']
+  .map((path) => join(REPO_ROOT, path)));
 
 interface ImportRef { specifier: string; typeOnly: boolean }
 
@@ -45,6 +52,7 @@ function boundaryViolation(file: string, ref: ImportRef): string | null {
   const ownDir = BOUNDARY_DIRS.find((dir) => file.startsWith(`${dir}/`));
   if (target === CLIENT_ENTRY || (ownDir && target.startsWith(`${ownDir}/`))) return null;
   if (PURE_HELPERS.has(target)) return null;
+  if (file.startsWith(`${join(REPO_ROOT, 'lib', 'cockpit2')}/`) && COCKPIT2_TUI_MODULES.has(target)) return null;
   return `${relative(REPO_ROOT, target)} is not orc-state/client`;
 }
 
@@ -115,6 +123,31 @@ describe('lib/tui and lib/cockpit2 import boundary', () => {
       'lib/cockpit2/example.ts: lib/paths.ts is not orc-state/client',
       'lib/cockpit2/example.ts: lib/tui/Header.tsx is not orc-state/client',
     ]);
+  });
+
+  it('every lib/cockpit2 tui allowlist module is Ink-free, IO-free and closed over the allowlist', () => {
+    for (const module of COCKPIT2_TUI_MODULES) {
+      const source = readFileSync(module, 'utf8');
+      const runtime = importsOf(source).filter((ref) => !ref.typeOnly);
+      for (const ref of runtime) {
+        const name = relative(REPO_ROOT, module);
+        expect(ref.specifier, name).not.toMatch(/^(ink|react)(\/|$)|^(node:)?(fs|child_process)(\/|$)/);
+        if (!ref.specifier.startsWith('.')) continue;
+        const target = resolve(dirname(module), ref.specifier);
+        expect(COCKPIT2_TUI_MODULES.has(target) || target === CLIENT_ENTRY || PURE_HELPERS.has(target), `${name} -> ${ref.specifier}`).toBe(true);
+      }
+      expect(/from\s+['"](ink|react)['"]|\bimport\s*\(\s*['"](ink|react|node:fs|node:child_process)/.test(source), relative(REPO_ROOT, module)).toBe(false);
+    }
+  });
+
+  it('lets lib/cockpit2 import the allowlisted tui view models but still forbids Ink components', () => {
+    const file = join(REPO_ROOT, 'lib', 'cockpit2', 'example.ts');
+    const source = [
+      "import { ATTENTION_BADGE } from '../tui/sidebar.ts';",
+      "import type { TabBarTab } from '../tui/tabBarModel.ts';",
+      "import { Header } from '../tui/Header.tsx';",
+    ].join('\n');
+    expect(violations(file, source)).toEqual(['lib/cockpit2/example.ts: lib/tui/Header.tsx is not orc-state/client']);
   });
 
   it('allows the client entry, lib/tui modules, packages and pure helpers', () => {
