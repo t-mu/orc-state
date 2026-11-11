@@ -22,14 +22,14 @@ import {
 // ── layout ────────────────────────────────────────────────────────────────────
 
 describe('computeLayout', () => {
-  it('lays out 80x24: a header row, a 34-column sidebar, a 3-row tab bar over a framed 44x18 slot, a footer row', () => {
+  it('lays out 80x24: a header row, a 34-column sidebar, a one-row tab bar over a boxed 44x19 slot, a footer row', () => {
     expect(computeLayout(80, 24)).toEqual({
       cols: 80, rows: 24,
       header: { x: 0, y: 0, cols: 80, rows: HEADER_ROWS },
       sidebar: { x: 0, y: 1, cols: SIDEBAR_COLS, rows: 22 },
       tabBar: { x: 34, y: 1, cols: 46, rows: TAB_BAR_ROWS },
-      slot: { x: 35, y: 4, cols: 44, rows: 18 },
-      paneFrame: { x: 34, y: 4, cols: 46, rows: 19 },
+      slot: { x: 35, y: 3, cols: 44, rows: 19 },
+      paneFrame: { x: 34, y: 2, cols: 46, rows: 21 },
       footer: { x: 0, y: 23, cols: 80, rows: FOOTER_ROWS },
     });
   });
@@ -38,58 +38,48 @@ describe('computeLayout', () => {
     const layout = computeLayout(200, 60);
     expect(layout.header).toEqual({ x: 0, y: 0, cols: 200, rows: 1 });
     expect(layout.sidebar).toEqual({ x: 0, y: 1, cols: 34, rows: 58 });
-    expect(layout.tabBar).toEqual({ x: 34, y: 1, cols: 166, rows: 3 });
-    expect(layout.slot).toEqual({ x: 35, y: 4, cols: 164, rows: 54 });
-    expect(layout.paneFrame).toEqual({ x: 34, y: 4, cols: 166, rows: 55 });
+    expect(layout.tabBar).toEqual({ x: 34, y: 1, cols: 166, rows: 1 });
+    expect(layout.slot).toEqual({ x: 35, y: 3, cols: 164, rows: 55 });
+    expect(layout.paneFrame).toEqual({ x: 34, y: 2, cols: 166, rows: 57 });
     expect(layout.footer).toEqual({ x: 0, y: 59, cols: 200, rows: 1 });
     const mid = computeLayout(120, 40);
-    expect(mid.slot).toEqual({ x: 35, y: 4, cols: 84, rows: 34 });
-    expect(mid.paneFrame).toEqual({ x: 34, y: 4, cols: 86, rows: 35 });
+    expect(mid.slot).toEqual({ x: 35, y: 3, cols: 84, rows: 35 });
+    expect(mid.paneFrame).toEqual({ x: 34, y: 2, cols: 86, rows: 37 });
     expect(mid.sidebar.rows).toBe(38);
     expect(mid.footer).toEqual({ x: 0, y: 39, cols: 120, rows: 1 });
   });
 
-  it('drops the footer, then the header, then shrinks the tab bar before the slot falls below 20x3', () => {
-    // 30x8: room for everything.
-    expect(computeLayout(30, 8)).toMatchObject({ header: { rows: 1 }, footer: { y: 7, rows: 1 }, slot: { x: 10, y: 4, cols: 20, rows: 3 } });
-    // 30x7: the footer goes first.
-    const seven = computeLayout(30, 7);
-    expect(seven.header.rows).toBe(1);
-    expect(seven.footer).toEqual({ x: 0, y: 7, cols: 30, rows: 0 });
-    expect(seven.slot).toEqual({ x: 10, y: 4, cols: 20, rows: 3 });
-    expect(seven.sidebar).toEqual({ x: 0, y: 1, cols: 10, rows: 6 });
-    // 30x6: then a tab bar border row; the header and its buttons stay.
-    const six = computeLayout(30, 6);
-    expect(six.header).toEqual({ x: 0, y: 0, cols: 30, rows: 1 });
-    expect(six.footer.rows).toBe(0);
-    expect(six.tabBar).toEqual({ x: 10, y: 1, cols: 20, rows: 2 });
-    expect(six.slot).toEqual({ x: 10, y: 3, cols: 20, rows: 3 });
-    expect(six.sidebar).toEqual({ x: 0, y: 1, cols: 10, rows: 5 });
-    // 30x5: the tab bar keeps only its labels row, under the header.
+  it('drops the footer, then the header, then the tab bar before the slot falls below 20x3', () => {
+    // 30x6: room for everything.
+    expect(computeLayout(30, 6)).toMatchObject({ header: { rows: 1 }, tabBar: { y: 1, rows: 1 }, footer: { y: 5, rows: 1 }, slot: { x: 10, y: 2, cols: 20, rows: 3 } });
+    // 30x5: the footer goes first; the header and its buttons stay.
     const five = computeLayout(30, 5);
-    expect(five.header.rows).toBe(1);
+    expect(five.header).toEqual({ x: 0, y: 0, cols: 30, rows: 1 });
+    expect(five.footer).toEqual({ x: 0, y: 5, cols: 30, rows: 0 });
     expect(five.tabBar).toEqual({ x: 10, y: 1, cols: 20, rows: 1 });
     expect(five.slot).toEqual({ x: 10, y: 2, cols: 20, rows: 3 });
-    // 30x4: then the header; the slot keeps its minimum.
+    expect(five.sidebar).toEqual({ x: 0, y: 1, cols: 10, rows: 4 });
+    // 30x4: then the header; the tab bar stays above the slot.
     const four = computeLayout(30, 4);
     expect(four.sidebar.cols).toBe(10);
-    expect(four.tabBar.rows).toBe(1);
+    expect(four.tabBar).toEqual({ x: 10, y: 0, cols: 20, rows: 1 });
     expect(four.slot).toEqual({ x: 10, y: 1, cols: 20, rows: 3 });
     expect(four.header.rows + four.footer.rows).toBe(0);
+    // 30x3: then the tab bar; the slot keeps its minimum.
+    const three = computeLayout(30, 3);
+    expect(three.tabBar.rows).toBe(0);
+    expect(three.slot).toEqual({ x: 10, y: 0, cols: 20, rows: 3 });
   });
-  it('frames the slot only with the full tab bar and room for a 20x3 slot inside the frame', () => {
-    // 56x9: just enough on both axes.
-    expect(computeLayout(56, 9)).toMatchObject({ paneFrame: { x: 34, y: 4, cols: 22, rows: 4 }, slot: { x: 35, y: 4, cols: 20, rows: 3 } });
+  it('boxes the slot only with room for a 20x3 slot inside the box', () => {
+    // 56x8: just enough on both axes.
+    expect(computeLayout(56, 8)).toMatchObject({ paneFrame: { x: 34, y: 2, cols: 22, rows: 5 }, slot: { x: 35, y: 3, cols: 20, rows: 3 } });
     // One column short: no frame, the slot keeps the whole right side.
-    expect(computeLayout(55, 9)).toMatchObject({ paneFrame: null, slot: { x: 34, y: 4, cols: 21, rows: 4 } });
+    expect(computeLayout(55, 8)).toMatchObject({ paneFrame: null, slot: { x: 34, y: 2, cols: 21, rows: 5 } });
     // One row short: no frame.
-    expect(computeLayout(56, 8)).toMatchObject({ paneFrame: null, slot: { x: 34, y: 4, cols: 22, rows: 3 } });
-    // A tab bar without its bottom rule has nothing to join the frame to.
-    const six = computeLayout(80, 6);
-    expect(six.tabBar.rows).toBe(2);
-    expect(six.paneFrame).toBeNull();
+    expect(computeLayout(56, 7)).toMatchObject({ paneFrame: null, slot: { x: 34, y: 2, cols: 22, rows: 4 } });
+    expect(computeLayout(80, 6).paneFrame).toBeNull();
     expect(computeLayout(30, 4).paneFrame).toBeNull();
-    for (const [cols, rows] of [[20, 3], [30, 4], [40, 8], [55, 9], [56, 8], [56, 9], [57, 10], [80, 6], [80, 7], [80, 24]]) {
+    for (const [cols, rows] of [[20, 3], [30, 4], [40, 8], [55, 8], [56, 7], [56, 8], [57, 10], [80, 6], [80, 7], [80, 24]]) {
       const { slot } = computeLayout(cols, rows);
       expect(slot.cols, `${cols}x${rows}`).toBeGreaterThanOrEqual(20);
       expect(slot.rows, `${cols}x${rows}`).toBeGreaterThanOrEqual(3);
@@ -107,10 +97,11 @@ describe('hitTest and dispatchMouse', () => {
     expect(hitTest(layout, 0, 1)).toEqual({ region: 'sidebar', x: 0, y: 0 });
     expect(hitTest(layout, 33, 22)).toEqual({ region: 'sidebar', x: 33, y: 21 });
     expect(hitTest(layout, 34, 1)).toEqual({ region: 'tabBar', x: 0, y: 0 });
-    expect(hitTest(layout, 79, 3)).toEqual({ region: 'tabBar', x: 45, y: 2 });
-    expect(hitTest(layout, 35, 4)).toEqual({ region: 'slot', x: 0, y: 0 });
-    expect(hitTest(layout, 78, 21)).toEqual({ region: 'slot', x: 43, y: 17 });
-    // The pane frame's sides and bottom row belong to no region.
+    expect(hitTest(layout, 79, 1)).toEqual({ region: 'tabBar', x: 45, y: 0 });
+    expect(hitTest(layout, 35, 3)).toEqual({ region: 'slot', x: 0, y: 0 });
+    expect(hitTest(layout, 78, 21)).toEqual({ region: 'slot', x: 43, y: 18 });
+    // The pane frame's top and bottom rows and its sides belong to no region.
+    expect(hitTest(layout, 50, 2)).toBeNull();
     expect(hitTest(layout, 34, 4)).toBeNull();
     expect(hitTest(layout, 79, 10)).toBeNull();
     expect(hitTest(layout, 50, 22)).toBeNull();
@@ -121,9 +112,9 @@ describe('hitTest and dispatchMouse', () => {
     // A dropped header or footer is never hit.
     expect(hitTest(computeLayout(30, 4), 0, 0)?.region).toBe('sidebar');
     expect(hitTest(computeLayout(30, 4), 15, 3)?.region).toBe('slot');
-    // At 30x6 the header still takes clicks above a two-row tab bar.
-    expect(hitTest(computeLayout(30, 6), 25, 0)?.region).toBe('header');
-    expect(hitTest(computeLayout(30, 6), 15, 1)?.region).toBe('tabBar');
+    // At 30x5 the header still takes clicks above the tab bar.
+    expect(hitTest(computeLayout(30, 5), 25, 0)?.region).toBe('header');
+    expect(hitTest(computeLayout(30, 5), 15, 1)?.region).toBe('tabBar');
   });
 
   it('hands an event to its region\'s handler with region-relative coordinates', () => {
@@ -134,7 +125,7 @@ describe('hitTest and dispatchMouse', () => {
     expect(dispatchMouse(layout, click(40, 0), handlers)).toBe('header'); // no handler here: nothing happens
     expect(dispatchMouse(layout, click(40, 23), handlers)).toBe('footer');
     expect(dispatchMouse(layout, click(90, 2), handlers)).toBeNull();
-    expect(seen).toEqual([['slot', 5, 2]]);
+    expect(seen).toEqual([['slot', 5, 3]]);
   });
 });
 
@@ -344,18 +335,19 @@ describe('runApp (fake tmux client)', () => {
     const { terminal, clients } = start();
     await attached(terminal);
     expect(clients.map((fake) => [fake.target, fake.ignoreSize])).toEqual([[MASTER_TARGET, false]]);
-    expect(clients[0].resizes).toEqual(['44x18']);
+    expect(clients[0].resizes).toEqual(['44x19']);
     const screen = await shown(terminal);
-    expect(text(screen, 4, 35, 44)).toBe('$ hello from orc-master');
-    // The pane's frame: its sides beside the slot, its bottom row above the footer, its top the tab bar's rule.
-    expect(screen.row(4)[34].text).toBe('│');
-    expect(screen.row(4)[79].text).toBe('│');
+    expect(text(screen, 3, 35, 44)).toBe('$ hello from orc-master');
+    // The pane's frame: a box around the slot, its top row under the tab bar, its bottom row above the footer.
+    expect(text(screen, 2, 34)).toBe(`┌${'─'.repeat(44)}┐`);
+    expect(screen.row(3)[34].text).toBe('│');
+    expect(screen.row(3)[79].text).toBe('│');
     expect(text(screen, 22, 34)).toBe(`└${'─'.repeat(44)}┘`);
     expect((await sidebarRows(terminal)).some((row) => row.includes('[ DEMO-PROJECT ]'))).toBe(true);
-    expect(text(screen, 2, 34)).toContain('master');
-    expect(text(screen, 2, 34)).not.toContain('quit'); // the quit key is in the footer only
+    expect(text(screen, 1, 34)).toContain('master');
+    expect(text(screen, 1, 34)).not.toContain('quit'); // the quit key is in the footer only
     // The cursor is where the pane has it, in frame coordinates.
-    expect(screen.cursor()).toEqual({ x: 37, y: 4, visible: true });
+    expect(screen.cursor()).toEqual({ x: 37, y: 3, visible: true });
     // The footer, full width on the last row: the mode, project › tab, the keys; the header: the mark and the project.
     expect(text(screen, 23)).toBe('[master] keys go to the master · demo-project › master · Ctrl-q: quit');
     expect(text(screen, 0)).toBe('ORC │ demo-project');
@@ -459,12 +451,12 @@ describe('runApp (fake tmux client)', () => {
     const { terminal, client } = start();
     await attached(terminal);
     terminal.resizeTo(200, 60);
-    await waitFor(() => client().resizes.includes('164x54'));
+    await waitFor(() => client().resizes.includes('164x55'));
     client().lines = ['$ resized'];
-    client().emit('resize', 164, 54);
+    client().emit('resize', 164, 55);
     await waitForSlotLine(terminal, '$ resized');
     const screen = await shown(terminal);
-    expect(text(screen, 4, 35, 164)).toBe('$ resized');
+    expect(text(screen, 3, 35, 164)).toBe('$ resized');
     expect(text(screen, 58, 34)).toBe(`└${'─'.repeat(164)}┘`);
     expect(text(screen, 0)).toBe('ORC │ demo-project');
   });
@@ -485,7 +477,7 @@ describe('runApp (fake tmux client)', () => {
     expect(fake.sent).toEqual(['%1 b']);
     expect(fake.pastes).toEqual(['%1 next']);
     const screen = await shown(terminal);
-    expect(text(screen, 4, 35, 44)).toBe('$ hello from orc-master');
+    expect(text(screen, 3, 35, 44)).toBe('$ hello from orc-master');
   });
 
   it('says so when the master\'s session ends and stops typing into it', async () => {
@@ -523,7 +515,7 @@ describe('runApp tabs and projects (fake tmux clients)', () => {
     const [master, worker] = clients;
     expect([worker.target, worker.ignoreSize]).toEqual([W1_TARGET, true]);
     expect(worker.resizes).toEqual([]); // a view never sizes the worker's window
-    expect(text(await shown(terminal), 2, 34)).toContain('w1');
+    expect(text(await shown(terminal), 1, 34)).toContain('w1');
 
     expect(app.apply((state) => selectTab(state, 1)).ok).toBe(true);
     await waitForSlotLine(terminal, '$ hello from orc-master');
@@ -606,11 +598,11 @@ describe('runApp tabs and projects (fake tmux clients)', () => {
     expect(worker.pastes).toEqual([]);
     expect(clients[0].sent).toEqual([]);
     await waitForFooter(terminal, '[view] i: type · q/Esc: close');
-    await waitForTabBar(terminal, 1, '○ w1');
+    await waitForTabBar(terminal, 0, '○ w1');
 
     terminal.type('i');
     await waitForFooter(terminal, '[typing] Ctrl-]: stop typing');
-    await waitForTabBar(terminal, 1, '✎ w1');
+    await waitForTabBar(terminal, 0, '✎ w1');
     expect(worker.sent).toEqual([]); // i itself only starts typing
     terminal.type(`q\x04\x03${ESC}[A`);
     terminal.type(`${ESC}[200~pasted${ESC}[201~`);
@@ -806,7 +798,7 @@ describe('runApp tabs and projects (fake tmux clients)', () => {
     store.failWith = new Error('EACCES: permission denied');
     app.apply((state) => openAgent(state, 'demo', 'w1'));
     await waitFor(() => app.saveError() === 'EACCES: permission denied');
-    await waitForTabBar(terminal, 2, 'view state not saved: EACCES');
+    await waitForTabBar(terminal, 0, 'view state not saved: EACCES');
     store.failWith = null;
     app.apply((state) => selectTab(state, MASTER_TAB));
     await waitFor(() => app.saveError() === null);
@@ -901,31 +893,31 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     terminal.type(click(3, (await sidebarRow(terminal, WIDE_AGENT)) + 1));
     expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: ['w1', WIDE_AGENT], active: WIDE_AGENT });
     await waitForSlotText(terminal, '$ hello from orc-wide');
-    await waitForTabBar(terminal, 1, `○ ${WIDE_AGENT} ! QUESTION ×`);
+    await waitForTabBar(terminal, 0, `○ ${WIDE_AGENT} ! QUESTION ×`);
 
     // A release, motion or a right click does nothing; a press on the master tab shows it.
-    const masterX = (await columnOf(terminal, 2, 'm', SIDEBAR_COLS));
-    terminal.type(click(masterX, 2, true));
-    terminal.type(`${ESC}[<32;${masterX + 1};3M${ESC}[<2;${masterX + 1};3M`);
+    const masterX = (await columnOf(terminal, 1, 'm', SIDEBAR_COLS));
+    terminal.type(click(masterX, 1, true));
+    terminal.type(`${ESC}[<32;${masterX + 1};2M${ESC}[<2;${masterX + 1};2M`);
     expect(app.tabs().projects[0].active).toBe(WIDE_AGENT);
-    terminal.type(click(masterX, 2));
+    terminal.type(click(masterX, 1));
     expect(app.tabs().projects[0].active).toBe(null);
     await waitForSlotText(terminal, '$ hello from orc-master');
 
     // The close marker of the wide-named tab, found by its column on the real terminal.
-    const firstClose = await columnOf(terminal, 2, '×', SIDEBAR_COLS);
-    const wideClose = await columnOf(terminal, 2, '×', firstClose + 1);
-    terminal.type(click(wideClose, 2));
+    const firstClose = await columnOf(terminal, 1, '×', SIDEBAR_COLS);
+    const wideClose = await columnOf(terminal, 1, '×', firstClose + 1);
+    terminal.type(click(wideClose, 1));
     expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: ['w1'], active: null });
     const wideClient = clients.find((fake) => fake.target.session === 'orc-wide')!;
     expect(wideClient.closed).toBe(1);
     expect(wideClient.sent).toEqual([]);
     expect(wideClient.pastes).toEqual([]);
-    for (let until = Date.now() + 2_000; text(await shown(terminal), 2, SIDEBAR_COLS).includes(WIDE_AGENT); await sleep(25)) {
+    for (let until = Date.now() + 2_000; text(await shown(terminal), 1, SIDEBAR_COLS).includes(WIDE_AGENT); await sleep(25)) {
       if (Date.now() > until) throw new Error('the closed tab is still drawn');
     }
     // A click on the master tab's text never closes it.
-    terminal.type(click(masterX + 7, 2));
+    terminal.type(click(masterX + 7, 1));
     expect(app.tabs().projects[0].tabs).toEqual(['w1']);
   });
 
@@ -1046,9 +1038,9 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     const { terminal, app } = withWorkers();
     await attached(terminal);
     terminal.type(`${F12}&`);
-    await waitForTabBar(terminal, 2, 'The master tab stays open');
+    await waitForTabBar(terminal, 0, 'The master tab stays open');
     terminal.type('x');
-    for (let until = Date.now() + 2_000; text(await shown(terminal), 3, SIDEBAR_COLS).includes('stays open'); await sleep(25)) {
+    for (let until = Date.now() + 2_000; text(await shown(terminal), 1, SIDEBAR_COLS).includes('stays open'); await sleep(25)) {
       if (Date.now() > until) throw new Error('the refusal is still shown');
     }
     expect(app.tabs().projects[0].tabs).toEqual([]);
@@ -1063,15 +1055,15 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
       for (let until = Date.now() + 2_000; ; await sleep(25)) {
         const screen = await shown(terminal);
         const footer = text(screen, rows - 1, 0, SIDEBAR_COLS);
-        // The active tab's '┘' at the rule's left end is joined to the pane frame's left side.
-        if (screen.row(1)[SIDEBAR_COLS - 1].text === '┐' && footer.includes('[master]') && text(screen, 3, SIDEBAR_COLS).startsWith('│')
+        // The pane frame's top-left corner sits under the tab bar.
+        if (screen.row(1)[SIDEBAR_COLS - 1].text === '┐' && footer.includes('[master]') && text(screen, 2, SIDEBAR_COLS).startsWith('┌')
           && screen.row(rows - 2)[cols - 1].text === '┘') break;
         if (Date.now() > until) throw new Error(`layout not redrawn at ${cols}x${rows}`);
       }
       const { slot, paneFrame } = computeLayout(cols, rows);
       const framed = { x: SIDEBAR_COLS, y: HEADER_ROWS + TAB_BAR_ROWS, cols: cols - SIDEBAR_COLS, rows: rows - HEADER_ROWS - TAB_BAR_ROWS - FOOTER_ROWS };
       expect(paneFrame).toEqual(framed);
-      expect(slot).toEqual({ x: framed.x + 1, y: framed.y, cols: framed.cols - 2, rows: framed.rows - 1 });
+      expect(slot).toEqual({ x: framed.x + 1, y: framed.y + 1, cols: framed.cols - 2, rows: framed.rows - 2 });
     }
   });
 });
@@ -1127,11 +1119,11 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     const before = app.tabs();
     terminal.type(`${F12}t`);
     await attached(terminal, 'explorer-demo');
-    expect(host.started).toEqual(['demo 44x18']);
+    expect(host.started).toEqual(['demo 44x19']);
     const fake = explorerClient(clients)!;
     // The explorer's window is the cockpit's own: sized to the slot, not an ignore-size view.
     expect(fake.ignoreSize).toBe(false);
-    await waitForTabBar(terminal, 1, '2 tasks ×');
+    await waitForTabBar(terminal, 0, '2 tasks ×');
     await waitForFooter(terminal, '[tasks] Ctrl-] or ×: close');
     expect(text(await shown(terminal), 0)).not.toContain('tasks'); // no entry while it is shown
     // Its own keys reach it; i is not the typing key here.
@@ -1158,13 +1150,13 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     await attached(terminal, 'orc-w1');
     await waitForHeader(terminal, 'tasks');
     // The tab bar's right end, where the entry was before the header: no button there now.
-    terminal.type(click(76, 2));
+    terminal.type(click(76, 1));
     await sleep(30);
     expect(host.started).toEqual([]);
     terminal.type(click(await columnOf(terminal, 0, 't', 40), 0));
     await attached(terminal, 'explorer-demo');
-    const close = await columnOf(terminal, 2, '×', (await columnOf(terminal, 2, '×', SIDEBAR_COLS)) + 1);
-    terminal.type(click(close, 2));
+    const close = await columnOf(terminal, 1, '×', (await columnOf(terminal, 1, '×', SIDEBAR_COLS)) + 1);
+    terminal.type(click(close, 1));
     await attached(terminal, 'orc-w1'); // back to the active tab
     expect(host.stopped).toHaveLength(1);
 
@@ -1223,7 +1215,7 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     expect(fake.sent).toEqual([`${fake.paneId} \r`, `${fake.paneId} ${ESC}`]);
     await sleep(30);
     expect(host.stopped).toEqual([]);
-    await waitForTabBar(terminal, 1, '2 tasks ×');
+    await waitForTabBar(terminal, 0, '2 tasks ×');
     // q in its list: the explorer quits on its own, its session ends, the cockpit closes the tab.
     terminal.type('q');
     await waitFor(() => fake.sent.length === 3);
@@ -1339,7 +1331,7 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     await attached(terminal);
     expect(text(await shown(terminal), 0)).not.toContain('tasks');
     terminal.type(`${F12}t`);
-    await waitForTabBar(terminal, 2, 'This cockpit has no task explorer.');
+    await waitForTabBar(terminal, 0, 'This cockpit has no task explorer.');
   });
 
   it('jumps to the next agent needing attention across projects on F11 and on a click on the header badge', async () => {
@@ -1357,7 +1349,7 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     await waitForHeader(terminal, '! 2'); // the stopped project's agent is not counted
     expect((await shown(terminal)).row(0).map((cell) => cell.text).join('').endsWith(' ! 2')).toBe(true);
     // The count is on the button only: not in the tab bar or the footer.
-    expect(text(await shown(terminal), 2, SIDEBAR_COLS)).not.toContain('! 2');
+    expect(text(await shown(terminal), 1, SIDEBAR_COLS)).not.toContain('! 2');
     expect(text(await shown(terminal), 23)).not.toContain('! 2');
     terminal.type(F11);
     await attached(terminal, 'orc-w2');
@@ -1365,7 +1357,7 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: ['w2'], active: 'w2' });
     await waitForFooter(terminal, '[view] i: type'); // it opens view-only, with the keys
     // A click where the badge was in the tab bar does nothing.
-    terminal.type(click(79, 2));
+    terminal.type(click(79, 1));
     await sleep(30);
     expect(app.tabs().activeProject).toBe('demo');
     // The badge: the next one is in the other project, added with the agent's tab.
@@ -1398,15 +1390,15 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     await attached(terminal);
     const before = app.tabs();
     terminal.type(F11);
-    await waitForTabBar(terminal, 2, 'No agent needs attention.');
+    await waitForTabBar(terminal, 0, 'No agent needs attention.');
     expect(app.tabs()).toEqual(before);
   });
 });
 
 describe('runApp pane mouse (fake tmux clients)', () => {
-  // The slot at 80x24 starts at frame cell (35, 4), inside the pane frame.
+  // The slot at 80x24 starts at frame cell (35, 3), inside the pane frame.
   const SX = 35;
-  const SY = 4;
+  const SY = 3;
 
   it('forwards clicks, drags and the wheel pane-relative to an app with SGR any-motion mouse, motion coalesced per frame', async () => {
     const { terminal, client } = start({ setup: (fake) => { fake.modes = SGR_ANY; } });
@@ -1439,17 +1431,17 @@ describe('runApp pane mouse (fake tmux clients)', () => {
   it('scrolls the cockpit scrollback with the wheel when the app did not ask for the mouse, history from before the attach included; a key returns to live', async () => {
     const { terminal, client } = start({ setup: (fake) => { fake.lines = Array.from({ length: 30 }, (_, i) => `line ${i}`); } });
     await waitForSlotLine(terminal, 'line 29');
-    expect((await slotRows(terminal))[0]).toBe('line 12');
+    expect((await slotRows(terminal))[0]).toBe('line 11');
     terminal.type(sgr(64, SX + 3, SY + 3));
-    await waitForSlotLine(terminal, 'line 9');
-    expect((await slotRows(terminal))[0]).toBe('line 9');
+    await waitForSlotLine(terminal, 'line 8');
+    expect((await slotRows(terminal))[0]).toBe('line 8');
     terminal.type(sgr(64, SX + 3, SY + 3) + sgr(64, SX + 3, SY + 3) + sgr(64, SX + 3, SY + 3));
     await waitForSlotLine(terminal, 'line 0');
     terminal.type(sgr(65, SX + 3, SY + 3));
     await waitFor(async () => (await slotRows(terminal))[0] === 'line 3');
     expect(client().sent).toEqual([]);
     terminal.type('a');
-    await waitFor(async () => (await slotRows(terminal))[0] === 'line 12');
+    await waitFor(async () => (await slotRows(terminal))[0] === 'line 11');
     expect(client().sent).toEqual(['%1 a']);
   });
 

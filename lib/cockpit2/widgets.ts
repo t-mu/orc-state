@@ -2,7 +2,7 @@
  * lib/cockpit2/widgets.ts — the header, the tab bar and the footer drawn as cells (Plan 6 Step 9).
  *
  * The tab bar comes from the pure view model the Ink cockpit uses
- * (lib/tui/tabBarModel.ts: three rows of square-bordered tabs); the sidebar's
+ * (lib/tui/tabBarModel.ts), drawn as its label row only: one row of solid blocks; the sidebar's
  * cards are sidebarCards.ts.
  * The header is the cockpit's top row: the orc mark, the active project, the
  * explorer and attention buttons. The footer is its last row: the mode,
@@ -18,14 +18,11 @@
 import { stringWidth } from '../cellWidth.ts';
 import { fitText } from '../tui/sidebar.ts';
 import { layoutTabBar, tabBarRows, type TabBarLayout, type TabBarModel, type TabBarSegment } from '../tui/tabBarModel.ts';
-import { drawText, type Frame, type Region } from './frame.ts';
+import { DEFAULT_STYLE, drawText, type Frame, type Region } from './frame.ts';
 import type { CellStyle } from './screen.ts';
 import { attentionRole, badgeRole, styleOf, type Theme, type ThemeRole } from './theme.ts';
 
 // ── styles ───────────────────────────────────────────────────────────────────
-
-/** A role's style with `over` on top: an attribute a widget adds to a role (the focused active tab's inverse). */
-const roleWith = (theme: Theme, role: ThemeRole, over: Partial<CellStyle> = {}): CellStyle => ({ ...styleOf(theme, role), ...over });
 
 /** The mark before an agent tab's name in typing mode, and in view mode. */
 export const TYPING_MARK = '✎';
@@ -137,54 +134,43 @@ export interface TabBarDrawOptions {
   theme: Theme;
 }
 
-function segmentStyle(segment: TabBarSegment, model: TabBarModel, slotFocused: boolean, theme: Theme): CellStyle {
-  const tab = segment.tab === undefined ? null : model.tabs[segment.tab];
-  const focused = Boolean(tab?.active && slotFocused);
-  switch (segment.kind) {
-    case 'border': return styleOf(theme, focused ? 'chrome.borderFocus' : 'chrome.border');
-    case 'text': return tab?.active ? roleWith(theme, 'text.accent', { inverse: focused }) : styleOf(theme, 'text.primary');
-    case 'badge': return styleOf(theme, badgeRole(tab?.attention ? attentionRole(tab.attention) : 'status.attention'));
-    case 'close': return styleOf(theme, 'tab.close');
-    case 'error': return styleOf(theme, 'error');
-    case 'rule': return styleOf(theme, 'chrome.border');
-    case 'marker': case 'notice': return styleOf(theme, 'text.muted');
-  }
-}
-
 /**
- * A segment of the active tab's label row: the label in `tab.active`, badge
- * and close mark in their own colour on the fill (inverse with no fill colour,
- * as in `mono`), the side borders unfilled so the tab keeps its outline.
+ * A tab's segment as a solid block: the active tab in `tab.active`, the others
+ * in `tab.inactive`; badge and close mark keep their colour on the tab's fill
+ * (inverse on the active tab when its role has no fill colour, as in `mono`).
+ * A tab's side borders become plain spaces: the gap between blocks.
  */
-function activeTabFill(segment: TabBarSegment, base: CellStyle, theme: Theme): CellStyle {
-  const fill = styleOf(theme, 'tab.active');
+function tabBlockStyle(segment: TabBarSegment, tab: TabBarModel['tabs'][number], theme: Theme): CellStyle {
+  const fill = styleOf(theme, tab.active ? 'tab.active' : 'tab.inactive');
   const hasFill = fill.bg.type !== 'default';
+  const onFill = (style: CellStyle): CellStyle => (hasFill ? { ...style, bg: fill.bg } : tab.active ? { ...style, inverse: true } : style);
   switch (segment.kind) {
-    case 'border': return base;
-    case 'text': return fill;
-    default: return hasFill ? { ...base, bg: fill.bg } : { ...base, inverse: true };
+    case 'border': return DEFAULT_STYLE;
+    case 'badge': return onFill(styleOf(theme, badgeRole(tab.attention ? attentionRole(tab.attention) : 'status.attention')));
+    case 'close': return onFill(styleOf(theme, 'tab.close'));
+    default: return fill;
   }
 }
 
 /**
- * Draws the tab bar into `region`: the tabs' top borders, their labels, and
- * the rule above the slot (open under the active tab). A region shorter than
- * three rows keeps the labels' row (then the bottom row).
+ * Draws the tab bar into `region`'s first row: the tabs as solid blocks with
+ * a one-column gap between them (the active one in `tab.active`) and the
+ * overflow markers; a notice or the last action's error takes the row instead.
  */
 export function drawTabBar(frame: Frame, region: Region, view: TabBarView, options: TabBarDrawOptions): void {
   if (region.cols <= 0 || region.rows <= 0) return;
   const { model, layout } = view;
-  const [top, middle, bottom] = tabBarRows(model, layout, region.cols, options.error);
-  const rows = region.rows >= 3 ? [top, middle, bottom] : region.rows === 2 ? [middle, bottom] : [middle];
-  rows.forEach((segments, offset) => {
-    // The inside of the active tab's label row is filled (`tab.active`); its border lines stay as on every tab.
-    const filled = segments === middle;
-    drawRuns(frame, region.x, region.y + offset, segments.map((segment): Run => {
-      const base = segmentStyle(segment, model, options.slotFocused, options.theme);
-      const active = segment.tab !== undefined && model.tabs[segment.tab]?.active;
-      return [segment.text, filled && active ? activeTabFill(segment, base, options.theme) : base];
-    }), region.cols);
-  });
+  const { theme } = options;
+  if (options.error) {
+    drawText(frame, region.x, region.y, options.error, styleOf(theme, 'error'), region.cols);
+    return;
+  }
+  const [, middle] = tabBarRows(model, layout, region.cols, null);
+  drawRuns(frame, region.x, region.y, middle.map((segment): Run => {
+    const tab = segment.tab === undefined ? null : model.tabs[segment.tab];
+    if (!tab) return [segment.text, styleOf(theme, 'text.muted')];
+    return [segment.kind === 'border' ? ' ' : segment.text, tabBlockStyle(segment, tab, theme)];
+  }), region.cols);
 }
 
 // ── footer ───────────────────────────────────────────────────────────────────

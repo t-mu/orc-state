@@ -212,45 +212,33 @@ describe('collapseMarker', () => {
 });
 
 describe('drawPaneFrame', () => {
-  const RULE = styleOf(BUILT_IN_THEMES.amber, 'chrome.border');
   const BORDER = styleOf(BUILT_IN_THEMES.amber, 'chrome.borderFocus');
-  /** A 12-column tab rule on row 0 and the frame drawn under it, rows 1-4. */
-  function framed(rule: string) {
-    const frame = createFrame(12, 5);
-    drawText(frame, 0, 0, rule, RULE, 12);
-    drawPaneFrame(frame, { x: 0, y: 1, cols: 12, rows: 4 }, BORDER);
-    return frame;
-  }
 
-  it('draws the sides and the bottom and turns a plain rule\'s ends into corners', () => {
-    const frame = framed('─'.repeat(12));
+  it('draws a plain box around the region in its style, leaving the inside and the rows outside alone', () => {
+    const frame = createFrame(12, 6);
+    drawText(frame, 0, 0, 'tab strip', DEFAULT_STYLE, 12);
+    drawPaneFrame(frame, { x: 0, y: 1, cols: 12, rows: 5 }, BORDER);
     expect(frameText(frame)).toEqual([
+      'tab strip   ',
       `┌${'─'.repeat(10)}┐`,
       `│${' '.repeat(10)}│`,
       `│${' '.repeat(10)}│`,
       `│${' '.repeat(10)}│`,
       `└${'─'.repeat(10)}┘`,
     ]);
-    // The joins keep the rule's style; the sides and bottom take the frame's.
-    expect(cellAt(frame, 0, 0)!.style).toEqual(RULE);
-    expect(cellAt(frame, 11, 0)!.style).toEqual(RULE);
-    for (const [x, y] of [[0, 1], [11, 3], [0, 4], [5, 4], [11, 4]]) expect(cellAt(frame, x, y)!.style, `${x},${y}`).toEqual(BORDER);
-    // The inside is left alone.
-    expect(cellAt(frame, 5, 2)!.style).toBe(DEFAULT_STYLE);
+    for (const [x, y] of [[0, 1], [5, 1], [11, 1], [0, 2], [11, 4], [0, 5], [5, 5], [11, 5]]) expect(cellAt(frame, x, y)!.style, `${x},${y}`).toEqual(BORDER);
+    expect(cellAt(frame, 5, 3)!.style).toBe(DEFAULT_STYLE);
   });
 
-  it('runs an active tab\'s open edge at either end straight into the side', () => {
-    expect(rowText(framed('┘    └─────'.padEnd(12, '─')), 0)).toBe('│    └─────┐');
-    expect(rowText(framed('──────┘    └'), 0)).toBe('┌─────┘    │');
-  });
-
-  it('joins an inactive tab\'s edge, or an active tab\'s far edge, to the side with a junction', () => {
-    expect(rowText(framed('┴────┴──────'), 0)).toBe('├────┴─────┐');
-    expect(rowText(framed('──────┴────┴'), 0)).toBe('┌─────┴────┤');
-    expect(rowText(framed('└──────────┘'), 0)).toBe('├──────────┤');
-  });
-
-  it('leaves any other glyph at the rule\'s ends as it is', () => {
-    expect(rowText(framed(' tab label  '), 0)).toBe(' tab label  ');
+  it('draws only a top and a bottom row for a two-row region and nothing for a smaller one', () => {
+    const two = createFrame(4, 2);
+    drawPaneFrame(two, { x: 0, y: 0, cols: 4, rows: 2 }, BORDER);
+    expect(frameText(two)).toEqual(['┌──┐', '└──┘']);
+    const one = createFrame(4, 1);
+    drawPaneFrame(one, { x: 0, y: 0, cols: 4, rows: 1 }, BORDER);
+    expect(rowText(one, 0)).toBe('    ');
+    const narrow = createFrame(1, 3);
+    drawPaneFrame(narrow, { x: 0, y: 0, cols: 1, rows: 3 }, BORDER);
+    expect(frameText(narrow)).toEqual([' ', ' ', ' ']);
   });
 });
