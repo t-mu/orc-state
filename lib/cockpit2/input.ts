@@ -3,8 +3,16 @@
  *
  * Raw terminal input → tokens, and tokens → the cockpit's configured tmux key
  * names (lib/cockpitKeys.ts). Pure apart from the injectable timer that
- * flushes a lone ESC; every token keeps its raw bytes so it can be forwarded
+ * flushes held bytes; every token keeps its raw bytes so it can be forwarded
  * to a pane unchanged.
+ *
+ * Timeouts: the short `escTimeoutMs` only settles the Alt ambiguity, a lone
+ * ESC or ESC plus one byte. Once a CSI/SS3 sequence has gone past its
+ * introducer (`ESC [ x`, `ESC O x`), the tokenizer waits `sequenceTimeoutMs`
+ * for its final byte, because over SSH a mouse report can arrive in pieces.
+ * A sequence that never completes comes out as an `incomplete` token. The
+ * dispatcher (Plan 6 Step 8) must drop `incomplete` tokens and never forward
+ * them, so an escape sequence is never typed into a pane as text.
  */
 import { isTmuxKeyName } from '../cockpitKeys.ts';
 
@@ -16,14 +24,17 @@ const PASTE_END = Buffer.from('\x1b[201~', 'latin1');
  * One unit of input. `paste`: a bracketed paste, `data` without its markers;
  * `mouse`: an SGR mouse report (lib/cockpit2/mouse.ts parses it); `csi`/`ss3`:
  * `ESC [` / `ESC O` sequences (`params` the parameter bytes, `final` the final
- * byte, `''` when cut short; the Linux console's `ESC [ [ A` has final `[A`;
- * `meta` when an extra ESC came first, rxvt's Meta);
+ * byte; the Linux console's `ESC [ [ A` has final `[A`; `meta` when an extra
+ * ESC came first, rxvt's Meta); `incomplete`: a CSI/SS3 sequence cut short by
+ * the sequence timeout, `flush()` or a byte that cannot continue it, which the
+ * dispatcher drops;
  * `alt`: ESC and one key (`key` the character or control byte); `char`: one
  * UTF-8 character (`�` for an invalid byte); `control`: one C0 byte or DEL.
  */
 export type Token =
   | { kind: 'paste'; raw: Buffer; data: Buffer }
   | { kind: 'mouse'; raw: Buffer }
+  | { kind: 'incomplete'; raw: Buffer }
   | { kind: 'csi'; raw: Buffer; params: string; intermediates: string; final: string; meta?: true }
   | { kind: 'ss3'; raw: Buffer; params: string; final: string; meta?: true }
   | { kind: 'alt'; raw: Buffer; key: string }
@@ -36,8 +47,10 @@ export interface TokenizerTimers {
 }
 
 export interface TokenizerOptions {
-  /** How long a held incomplete sequence (a lone ESC above all) waits for more bytes. */
+  /** How long a lone ESC, ESC plus one byte or a cut-off UTF-8 character waits for more bytes (default 25). */
   escTimeoutMs?: number;
+  /** How long a CSI/SS3 sequence past its introducer waits for its final byte before it becomes `incomplete` (default 500). */
+  sequenceTimeoutMs?: number;
   /** Receives what the timeout flushes. */
   onFlush?: (tokens: Token[]) => void;
   timers?: TokenizerTimers;
@@ -46,7 +59,7 @@ export interface TokenizerOptions {
 export interface Tokenizer {
   /** The tokens `chunk` completes; an incomplete sequence at its end is held for the next push or the timeout. */
   push(chunk: Buffer): Token[];
-  /** Emits what is held as if no more bytes were coming (an unfinished paste stays held). */
+  /** Emits what is held as if no more bytes were coming (an unfinished paste stays held; an unfinished sequence is `incomplete`). */
   flush(): Token[];
 }
 
@@ -88,7 +101,7 @@ function scanCsi(data: Buffer, start: number, final: boolean): Scan {
   if (at >= data.length) return final ? { token: { kind: 'alt', raw: raw(at), key: '[' }, end: at } : null;
   if (data[at] === 0x5b) {
     // Linux console function keys: ESC [ [ A .. ESC [ [ E.
-    if (at + 1 >= data.length) return final ? { token: { kind: 'csi', raw: raw(at + 1), params: '', intermediates: '', final: '[' }, end: at + 1 } : null;
+    if (at + 1 >= data.length) return final ? { token: { kind: 'incomplete', raw: raw(at + 1) }, end: at + 1 } : null;
     return { token: { kind: 'csi', raw: raw(at + 2), params: '', intermediates: '', final: latin1(data, at, at + 2) }, end: at + 2 };
   }
   const paramsStart = at;
@@ -102,8 +115,8 @@ function scanCsi(data: Buffer, start: number, final: boolean): Scan {
   if (intermediates === '$' && /^\d+$/.test(params)) {
     return { token: { kind: 'csi', raw: raw(at), params, intermediates: '', final: '$' }, end: at };
   }
-  if (at >= data.length) return final ? { token: { kind: 'csi', raw: raw(at), params, intermediates, final: '' }, end: at } : null;
-  if (!isFinal(data[at])) return { token: { kind: 'csi', raw: raw(at), params, intermediates, final: '' }, end: at };
+  if (at >= data.length) return final ? { token: { kind: 'incomplete', raw: raw(at) }, end: at } : null;
+  if (!isFinal(data[at])) return { token: { kind: 'incomplete', raw: raw(at) }, end: at };
   const finalByte = String.fromCharCode(data[at]);
   const end = at + 1;
   if (params.startsWith('<') && (finalByte === 'M' || finalByte === 'm') && intermediates === '') return { token: { kind: 'mouse', raw: raw(end) }, end };
@@ -117,8 +130,8 @@ function scanSs3(data: Buffer, start: number, final: boolean): Scan {
   if (at >= data.length) return final ? { token: { kind: 'alt', raw: raw(at), key: 'O' }, end: at } : null;
   while (at < data.length && isParam(data[at])) at += 1;
   const params = latin1(data, start + 2, at);
-  if (at >= data.length) return final ? { token: { kind: 'ss3', raw: raw(at), params, final: '' }, end: at } : null;
-  if (!isFinal(data[at])) return { token: { kind: 'ss3', raw: raw(at), params, final: '' }, end: at };
+  if (at >= data.length) return final ? { token: { kind: 'incomplete', raw: raw(at) }, end: at } : null;
+  if (!isFinal(data[at])) return { token: { kind: 'incomplete', raw: raw(at) }, end: at };
   return { token: { kind: 'ss3', raw: raw(at + 1), params, final: String.fromCharCode(data[at]) }, end: at + 1 };
 }
 
@@ -136,9 +149,11 @@ function scan(data: Buffer, start: number, final: boolean): Scan {
       if (data[start + 2] === 0x5b || data[start + 2] === 0x4f) {
         const inner = data[start + 2] === 0x5b ? scanCsi(data, start + 1, final) : scanSs3(data, start + 1, final);
         if (!inner) return null;
-        if (typeof inner.token !== 'string' && (inner.token.kind === 'csi' || inner.token.kind === 'ss3') && inner.token.final !== '') {
-          return { token: { ...inner.token, raw: Buffer.from(data.subarray(start, inner.end)), meta: true }, end: inner.end };
+        const raw = Buffer.from(data.subarray(start, inner.end));
+        if (typeof inner.token !== 'string' && (inner.token.kind === 'csi' || inner.token.kind === 'ss3')) {
+          return { token: { ...inner.token, raw, meta: true }, end: inner.end };
         }
+        if (typeof inner.token !== 'string' && inner.token.kind === 'incomplete') return { token: { kind: 'incomplete', raw }, end: inner.end };
       }
       return { token: { kind: 'control', raw: Buffer.from([ESC]), code: ESC }, end: start + 1 };
     }
@@ -152,6 +167,12 @@ function scan(data: Buffer, start: number, final: boolean): Scan {
   return { token: char.control ? { kind: 'control', raw, code: byte } : { kind: 'char', raw, text: char.text }, end: char.end };
 }
 
+/** Whether held bytes are a CSI/SS3 sequence past its introducer (after an optional rxvt Meta ESC), not just the Alt ambiguity. */
+function isStartedSequence(held: Buffer): boolean {
+  const at = held[0] === ESC && held[1] === ESC ? 1 : 0;
+  return held[at] === ESC && (held[at + 1] === 0x5b || held[at + 1] === 0x4f) && held.length > at + 2;
+}
+
 const defaultTimers: TokenizerTimers = {
   set: (callback, ms) => setTimeout(callback, ms),
   clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
@@ -159,6 +180,7 @@ const defaultTimers: TokenizerTimers = {
 
 export function createTokenizer(options: TokenizerOptions = {}): Tokenizer {
   const escTimeoutMs = options.escTimeoutMs ?? 25;
+  const sequenceTimeoutMs = options.sequenceTimeoutMs ?? 500;
   const timers = options.timers ?? defaultTimers;
   /** Unparsed bytes outside a paste. */
   let pending = Buffer.alloc(0);
@@ -220,7 +242,7 @@ export function createTokenizer(options: TokenizerOptions = {}): Tokenizer {
           timer = null;
           const flushed = flush();
           if (flushed.length > 0) options.onFlush?.(flushed);
-        }, escTimeoutMs);
+        }, isStartedSequence(pending) ? sequenceTimeoutMs : escTimeoutMs);
       }
       return tokens;
     },
@@ -242,6 +264,11 @@ const NAMED_ALIASES: Record<string, string> = {
 const TILDE_KEYS: Record<string, string> = {
   1: 'Home', 2: 'Insert', 3: 'Delete', 4: 'End', 5: 'PageUp', 6: 'PageDown', 7: 'Home', 8: 'End',
   11: 'F1', 12: 'F2', 13: 'F3', 14: 'F4', 15: 'F5', 17: 'F6', 18: 'F7', 19: 'F8', 20: 'F9', 21: 'F10', 23: 'F11', 24: 'F12',
+};
+
+/** rxvt's Shift-F3..F10: `ESC [ n ~`, and `ESC [ n ^` with Ctrl too. */
+const RXVT_SHIFT_KEYS: Record<string, string> = {
+  25: 'F3', 26: 'F4', 28: 'F5', 29: 'F6', 31: 'F7', 32: 'F8', 33: 'F9', 34: 'F10',
 };
 
 /** Final-byte keys of `ESC [ … X` and `ESC O … X`. */
@@ -299,6 +326,13 @@ function decodeUnprefixed(token: Token): KeyDesc | null {
       if (LETTER_KEYS[token.final]) {
         if (number !== '' && number !== '1') return null;
         return withModifier(LETTER_KEYS[token.final], modifier);
+      }
+      const shifted = RXVT_SHIFT_KEYS[number];
+      if (shifted) {
+        if (modifier != null) return null;
+        if (token.final === '~') return { ...plain(shifted), shift: true };
+        if (token.final === '^') return { ...plain(shifted), ctrl: true, shift: true };
+        return null;
       }
       const key = TILDE_KEYS[number];
       if (!key) return null;
