@@ -29,14 +29,15 @@ import { attentionRole, badgeRole, projectStateRole, styleOf, type Theme, type T
 
 // ── styles ───────────────────────────────────────────────────────────────────
 
-/** A role's style with `over` on top: an attribute a widget adds to a role (a count's bold, the active tab's inverse). */
+/** A role's style with `over` on top: an attribute a widget adds to a role (the focused active tab's inverse). */
 const roleWith = (theme: Theme, role: ThemeRole, over: Partial<CellStyle> = {}): CellStyle => ({ ...styleOf(theme, role), ...over });
 
 /** The mark before an agent tab's name in typing mode, and in view mode. */
 export const TYPING_MARK = '✎';
 export const VIEW_MARK = '○';
 
-type Run = readonly [text: string, style: CellStyle];
+/** Text in one style; `status` marks a run whose colours carry a state (a badge, a project state), which the cursor row keeps. */
+type Run = readonly [text: string, style: CellStyle, status?: boolean];
 
 /** Draws runs left to right from (x, y), at most `maxCols` columns in all; returns the columns drawn. */
 function drawRuns(frame: Frame, x: number, y: number, runs: readonly Run[], maxCols: number): number {
@@ -48,8 +49,14 @@ function drawRuns(frame: Frame, x: number, y: number, runs: readonly Run[], maxC
   return col;
 }
 
-/** A run's style with `over` applied (the cursor row's role, a stale row's dim). */
-const withStyle = (runs: readonly Run[], over: Partial<CellStyle>): Run[] => runs.map(([text, runStyle]) => [text, { ...runStyle, ...over }]);
+/** A run's style with `over` applied (a stale row's dim). */
+const withStyle = (runs: readonly Run[], over: Partial<CellStyle>): Run[] => runs.map(([text, runStyle, status]) => (status ? [text, { ...runStyle, ...over }, true] : [text, { ...runStyle, ...over }]));
+
+/** The cursor row: `row.cursor` over each run, a status run taking only its attributes so its state colour stays. */
+function cursorRow(runs: readonly Run[], theme: Theme): Run[] {
+  const { fg: _fg, bg: _bg, ...attributes } = theme.roles['row.cursor'];
+  return runs.map(([text, runStyle, status]) => (status ? [text, { ...runStyle, ...attributes }, true] : [text, { ...runStyle, ...theme.roles['row.cursor'] }]));
+}
 
 // ── sidebar ──────────────────────────────────────────────────────────────────
 
@@ -159,8 +166,8 @@ export function drawSidebar(frame: Frame, region: Region, view: SidebarView, opt
   const role = (name: ThemeRole) => styleOf(theme, name);
   const PLAIN = role('text.primary');
   const MUTED = role('text.muted');
-  // A count of agents needing a human: the attention status colour, bold.
-  const COUNT = roleWith(theme, 'status.attention', { bold: true });
+  // A count of agents needing a human: an attention badge.
+  const COUNT = role(badgeRole('status.attention'));
   const width = region.cols;
   const inner = width - 2;
   const footerY = region.y + region.rows - 1;
@@ -187,7 +194,7 @@ export function drawSidebar(frame: Frame, region: Region, view: SidebarView, opt
   line(y, [['coordinator ', PLAIN], coordinator ? [coordinator, role(projectStateRole(coordinator))] : ['-', MUTED]]);
   const need = attention > 0 ? `${attention} need${attention === 1 ? 's' : ''} you` : '';
   const counts = fitRow(`workers ${workers ? `${workers.used}/${workers.total}` : '-'}`, need, inner);
-  line(y + 1, [[counts.left, PLAIN], [counts.gap, PLAIN], [counts.right, COUNT]]);
+  line(y + 1, [[counts.left, PLAIN], [counts.gap, PLAIN], [counts.right, COUNT, true]]);
   if (model.notice) line(y + 2, [[model.notice, role('status.warn')]]);
 
   // Projects: `▸` marks the active one; its state and, when its agents need a human, `!N`.
@@ -201,11 +208,11 @@ export function drawSidebar(frame: Frame, region: Region, view: SidebarView, opt
     const badge = project.attention > 0 ? ` !${project.attention}` : '';
     const row = fitRow(project.name, `${project.state}${badge}`, inner - 2);
     const right: Run[] = row.right === `${project.state}${badge}`
-      ? [[project.state, role(projectStateRole(project.state))], [badge, COUNT]]
+      ? [[project.state, role(projectStateRole(project.state)), true], [badge, COUNT, true]]
       : [[row.right, PLAIN]];
     const runs: Run[] = [[`${project.active ? '▸ ' : '  '}${row.left}`, project.active ? role('text.accent') : PLAIN], [row.gap, PLAIN], ...right];
     const cursor = options.focus === 'projects' && index === view.projectIndex;
-    line(y + offset, cursor ? withStyle(runs, theme.roles['row.cursor']) : runs);
+    line(y + offset, cursor ? cursorRow(runs, theme) : runs);
   }
   const hiddenProjects = model.projects.length - layout.projectCount;
   if (hiddenProjects > 0) line(y + Math.max(1, layout.projectCount), [[`+${hiddenProjects} more`, MUTED]]);
@@ -222,10 +229,10 @@ export function drawSidebar(frame: Frame, region: Region, view: SidebarView, opt
     const parts = agentRowParts(agent, inner);
     const cursor = options.focus === 'agents' && index === view.agentIndex;
     const tag: Run = agent.attention
-      ? [parts.tag, role(badgeRole(attentionRole(agent.attention)))]
+      ? [parts.tag, role(badgeRole(attentionRole(agent.attention))), true]
       : [parts.tag, cursor ? PLAIN : MUTED];
     let first: Run[] = [[parts.name, role('text.accent')], [parts.gap, PLAIN], tag, [parts.elapsed, cursor ? PLAIN : MUTED]];
-    if (cursor) first = withStyle(first, theme.roles['row.cursor']);
+    if (cursor) first = cursorRow(first, theme);
     else if (model.agentsStale) first = withStyle(first, { dim: true });
     const detailStyle = agent.attention ? role(attentionRole(agent.attention)) : MUTED;
     line(y + 2 * offset, first);
@@ -315,7 +322,7 @@ function segmentStyle(segment: TabBarSegment, model: TabBarModel, slotFocused: b
   switch (segment.kind) {
     case 'border': return styleOf(theme, focused ? 'chrome.borderFocus' : 'chrome.border');
     case 'text': return tab?.active ? roleWith(theme, 'text.accent', { inverse: focused }) : styleOf(theme, 'text.primary');
-    case 'badge': return roleWith(theme, tab?.attention ? attentionRole(tab.attention) : 'status.attention', { bold: true });
+    case 'badge': return styleOf(theme, badgeRole(tab?.attention ? attentionRole(tab.attention) : 'status.attention'));
     case 'close': return styleOf(theme, 'tab.close');
     case 'error': return styleOf(theme, 'error');
     case 'marker': case 'rule': case 'notice': return styleOf(theme, 'chrome.meta');

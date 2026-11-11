@@ -3,11 +3,11 @@
 exports[`full-style snapshot at 80x24 > a stale agent list with the cursor on a plain agent; stalled and no-progress tabs with an error line 1`] = `
 [
   "{di//}╭─ {bo//}Status{di//} ───────────────────────╮    {bo/p6/}╭─────────────╮{//}                           ",
-  "{di//}│{//}coordinator {/p1/}incompatible{//}        {di//}│‹ 3 {bo/p6/}│{boin//} 4 …{bo/p1/} STAL…{boin//} {/p1/}×{boin//} {bo/p6/}│{di//} 1 ›{//} {un/p6/}tasks{//} {boin/p3/}! 4{//} {di//}Ctrl-q: quit",
+  "{di//}│{//}coordinator {/p1/}incompatible{//}        {di//}│‹ 3 {bo/p6/}│{boin//} 4 …{boin/p1/} STAL…{boin//} {/p1/}×{boin//} {bo/p6/}│{di//} 1 ›{//} {un/p6/}tasks{//} {boin/p3/}! 4{//} {di//}Ctrl-q: quit",
   "{di//}│{//}workers 0/2                     {di//}│{bo/p1/}The master tab stays open.{//}                    ",
   "{di//}╰────────────────────────────────╯{//}                                              ",
   "{di//}╭─ {bo//}Projects{di//} ─────────────────────╮{//}                                              ",
-  "{di//}│{bo//}▸ p1{//}                  {/p2/}running{bo/p3/} !4{di//}│{//}                                              ",
+  "{di//}│{bo//}▸ p1{//}                  {/p2/}running{boin/p3/} !4{di//}│{//}                                              ",
   "{di//}╰────────────────────────────────╯{//}                                              ",
   "{bo/p6/}╭─ {boin/p6/}Agents · p1{bo/p6/} ──────────────────╮{//}                                              ",
   "{bo/p6/}│{boin//}plain{in//}                  implement{bo/p6/}│{//}                                              ",
@@ -32,11 +32,11 @@ exports[`full-style snapshot at 80x24 > a stale agent list with the cursor on a 
 exports[`full-style snapshot at 80x24 > agents focused: every attention kind, the cursor on an attention agent; a question tab active and focused 1`] = `
 [
   "{di//}╭─ {bo//}Status{di//} ───────────────────────╮    {bo/p6/}╭─────────────╮{//}                           ",
-  "{di//}│{//}coordinator {/p1/}stale{//}               {di//}│‹ 2 {bo/p6/}│{boin//} 3 …{bo/p3/} QUES…{boin//} {/p1/}×{boin//} {bo/p6/}│{di//} 2 ›{//} {un/p6/}tasks{//} {boin/p3/}! 4{//} {di//}Ctrl-q: quit",
-  "{di//}│{//}workers 4/4          {bo/p3/}1 needs you{di//}│────{bo/p6/}╯             ╰{di//}───────────────────────────",
+  "{di//}│{//}coordinator {/p1/}stale{//}               {di//}│‹ 2 {bo/p6/}│{boin//} 3 …{boin/p3/} QUES…{boin//} {/p1/}×{boin//} {bo/p6/}│{di//} 2 ›{//} {un/p6/}tasks{//} {boin/p3/}! 4{//} {di//}Ctrl-q: quit",
+  "{di//}│{//}workers 4/4          {boin/p3/}1 needs you{di//}│────{bo/p6/}╯             ╰{di//}───────────────────────────",
   "{di//}╰────────────────────────────────╯{//}                                              ",
   "{di//}╭─ {bo//}Projects{di//} ─────────────────────╮{//}                                              ",
-  "{di//}│{bo//}▸ p1{//}                  {/p2/}running{bo/p3/} !4{di//}│{//}                                              ",
+  "{di//}│{bo//}▸ p1{//}                  {/p2/}running{boin/p3/} !4{di//}│{//}                                              ",
   "{di//}│{//}  p2                  {/p6/}connecting{di//}│{//}                                              ",
   "{di//}╰────────────────────────────────╯{//}                                              ",
   "{bo/p6/}╭─ {boin/p6/}Agents · p1{bo/p6/} ──────────────────╮{//}                                              ",
@@ -90,12 +90,12 @@ exports[`full-style snapshot at 80x24 > no focus, a stopped coordinator with no 
 exports[`full-style snapshot at 80x24 > projects focused: every project state, the cursor row, a notice; a permission tab active with the slot unfocused 1`] = `
 [
   "{di//}╭─ {bo//}Status{di//} ───────────────────────╮    ╭─────────────╮{//}                           ",
-  "{di//}│{//}coordinator {/p6/}connecting{//}          {di//}│‹ 1 │{bo//} 2 …{bo/p3/} PERM…{bo//} {/p1/}×{bo//} {di//}│ 3 ›{//} {un/p6/}tasks{//} {boin/p3/}! 4{//} {di//}Ctrl-q: quit",
-  "{di//}│{//}workers -             {bo/p3/}4 need you{di//}│────╯             ╰───────────────────────────",
+  "{di//}│{//}coordinator {/p6/}connecting{//}          {di//}│‹ 1 │{bo//} 2 …{boin/p3/} PERM…{bo//} {/p1/}×{bo//} {di//}│ 3 ›{//} {un/p6/}tasks{//} {boin/p3/}! 4{//} {di//}Ctrl-q: quit",
+  "{di//}│{//}workers -             {boin/p3/}4 need you{di//}│────╯             ╰───────────────────────────",
   "{di//}│{/p3/}coordinator restarting{//}          {di//}│{//}                                              ",
   "{di//}╰────────────────────────────────╯{//}                                              ",
   "{bo/p6/}╭─ {boin/p6/}Projects{bo/p6/} ─────────────────────╮{//}                                              ",
-  "{bo/p6/}│{//}  p3                  {/p3/}stopped{bo/p3/} !1{bo/p6/}│{//}                                              ",
+  "{bo/p6/}│{//}  p3                  {/p3/}stopped{boin/p3/} !1{bo/p6/}│{//}                                              ",
   "{bo/p6/}│{//}  p4                       {/p1/}stale{bo/p6/}│{//}                                              ",
   "{bo/p6/}│{in//}  p5                {in/p1/}incompatible{bo/p6/}│{//}                                              ",
   "{bo/p6/}│{di//}+2 more{//}                         {bo/p6/}│{//}                                              ",

@@ -4,7 +4,7 @@ import type { SidebarAgent, SidebarModel, SidebarProject } from '../tui/sidebar.
 import { CLOSE_MARKER, buildTabBarModel, tabBarClickTarget, type TabBarState } from '../tui/tabBarModel.ts';
 import { computeLayout } from './app.ts';
 import { createFrame, type Frame } from './frame.ts';
-import { BUILT_IN_THEMES } from './theme.ts';
+import { BUILT_IN_THEMES, styleOf } from './theme.ts';
 import {
   EXPLORER_TAB, INITIAL_SIDEBAR_NAV, TYPING_MARK, VIEW_MARK, drawSidebar, drawTabBar, navigateSidebar, sidebarClick, sidebarView, tabBarButtonAt,
   tabBarView, withExplorerTab, withModeMarks, type SidebarNav, type TabBarButton,
@@ -376,5 +376,39 @@ describe('full-style snapshot at 80x24', () => {
   it('no focus, a stopped coordinator with no agents; the explorer tab shown', () => {
     const sidebar = model({ projects: [project('p1', { state: 'stopped', connection: 'stopped', active: true })], agents: [], status: { coordinator: 'stopped', workers: null, attention: 0 } });
     expect(draw(sidebar, null, INITIAL_SIDEBAR_NAV, 'a-no_progress', false, null, true)).toMatchSnapshot();
+  });
+});
+
+describe('drawing with amber, the running cockpit theme', () => {
+  const AMBER = BUILT_IN_THEMES.amber;
+  /** The cell where `part` starts in `frame` (the first match, top to bottom). */
+  const cellOf = (frame: Frame, part: string) => {
+    for (let y = 0; y < frame.rows; y += 1) {
+      for (let x = 0; x < frame.cols; x += 1) {
+        if (rowText(frame, y, x).startsWith(part)) return frame.cells[y * frame.cols + x];
+      }
+    }
+    throw new Error(`${part} not drawn`);
+  };
+
+  it('draws borders, badges and counts from the amber roles', () => {
+    const layout = computeLayout(80, 24);
+    const frame = createFrame(80, 24);
+    const view = sidebarView(model(), layout.sidebar.rows, INITIAL_SIDEBAR_NAV);
+    drawSidebar(frame, layout.sidebar, view, { focus: 'projects', footer: 'f', theme: AMBER });
+    expect(cellOf(frame, '╭─ Projects').style).toEqual(styleOf(AMBER, 'chrome.borderFocus'));
+    expect(cellOf(frame, '1 needs you').style).toEqual(styleOf(AMBER, 'status.attention.badge'));
+    expect(cellOf(frame, 'QUESTION').style).toEqual(styleOf(AMBER, 'status.attention.badge'));
+  });
+
+  it('keeps the state colours on the cursor row, the rest in row.cursor', () => {
+    const layout = computeLayout(80, 24);
+    const frame = createFrame(80, 24);
+    const view = sidebarView(model(), layout.sidebar.rows, INITIAL_SIDEBAR_NAV);
+    drawSidebar(frame, layout.sidebar, view, { focus: 'agents', footer: 'f', theme: AMBER }); // the cursor on the question agent
+    const badge = styleOf(AMBER, 'status.attention.badge');
+    expect(cellOf(frame, 'QUESTION').style).toEqual({ ...badge, bold: true });
+    const cursor = styleOf(AMBER, 'row.cursor');
+    expect(cellOf(frame, EMOJI_AGENT).style).toMatchObject({ fg: cursor.fg, bg: cursor.bg, bold: true });
   });
 });
