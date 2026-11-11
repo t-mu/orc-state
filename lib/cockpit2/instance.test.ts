@@ -82,6 +82,8 @@ describe('claimInstance', () => {
     await claim(A);
     await expect(claim(B, () => {}, 100)).rejects.toThrow(/pid 1001 did not exit within 0.1 s .*kill 1001 \(docs\/recovery\.md\)/);
     expect(parseHolder(readLockFile(lockPath))).toEqual(A);
+    // The request is withdrawn: B lives on without the lock, and A's next wake-up is a reload, not an exit.
+    expect(exitRequested(lockPath, A, isRunning)).toBe(false);
   });
 
   it('waits for a lock that is being written, and takes over one left broken long ago', async () => {

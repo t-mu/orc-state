@@ -91,6 +91,7 @@ function thisProcess(): InstanceHolder {
 
 /** Wakes a running cockpit: it exits when asked to (an exit request), else reloads its view state. */
 const WAKE_SIGNAL = 'SIGUSR2';
+const ignoreWake = () => { /* a wake-up for a cockpit that has ended */ };
 function wakeCockpit(holder: InstanceHolder): void {
   try { process.kill(holder.pid, WAKE_SIGNAL); } catch { /* exited meanwhile */ }
 }
@@ -185,9 +186,12 @@ export async function runCockpit2(options: Cockpit2Options): Promise<Cockpit2Res
     terminal?.restore();
     throw error;
   } finally {
+    // Released first, and SIGUSR2 stays ignored for the rest of this process (start-session goes on
+    // to retire an ended master): a wake-up sent by someone who read the lock just before still lands.
+    release();
+    if (!process.listeners(WAKE_SIGNAL).includes(ignoreWake)) process.on(WAKE_SIGNAL, ignoreWake);
     process.off(WAKE_SIGNAL, wake);
     process.off('exit', release);
-    release();
     await watcher.stop();
   }
 }
@@ -241,8 +245,14 @@ async function main(): Promise<void> {
   for (const problem of problems) console.error(`Warning: ${problem}`);
   if (!ACTIVE_PROJECT) cliError('orc cockpit2 needs a registered project; run it inside one');
   try {
-    const { ended } = await runCockpit2({ projectId: ACTIVE_PROJECT.id, keys });
-    if (ended === 'takeover') console.log('The cockpit moved to another terminal.');
+    const launch = await launchCockpit2({ projectId: ACTIVE_PROJECT.id, keys });
+    if (launch.kind === 'added') {
+      console.log(launch.running
+        ? `Added ${ACTIVE_PROJECT.name} to the cockpit (pid ${launch.running.pid}); it shows the project now.`
+        : `Added ${ACTIVE_PROJECT.name} to the cockpit; it opens there the next time a cockpit runs in a terminal outside orc's tmux sessions.`);
+    } else if (launch.ended === 'takeover') {
+      console.log('The cockpit moved to another terminal.');
+    }
   } catch (error) {
     cliError(error);
   }

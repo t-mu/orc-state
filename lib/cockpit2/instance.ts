@@ -64,6 +64,7 @@ export function parseHolder(text: string | null): InstanceHolder | null {
 }
 
 const sameHolder = (a: InstanceHolder, b: InstanceHolder) => a.pid === b.pid && a.start === b.start;
+const sameHolderOrNull = (a: InstanceHolder | null, b: InstanceHolder) => !!a && sameHolder(a, b);
 
 /** The cockpit holding the lock while it still runs, else null. */
 export function liveInstance(lockPath: string, isRunning: (holder: InstanceHolder) => boolean): InstanceHolder | null {
@@ -84,7 +85,7 @@ export async function claimInstance(options: InstanceOptions): Promise<InstanceC
   const timeoutMs = options.timeoutMs ?? 5_000;
   let replaced: InstanceHolder | null = null;
   let held: InstanceHolder | null = null;
-  await acquireLockFile(lockPath, {
+  const acquired = acquireLockFile(lockPath, {
     token,
     timeoutMs,
     pollMs: options.pollMs ?? 50,
@@ -108,6 +109,16 @@ export async function claimInstance(options: InstanceOptions): Promise<InstanceC
       return `the cockpit running as pid ${pid ?? '?'} did not exit within ${timeoutMs / 1000} s (lock ${lockPath}); close it, or end it with kill ${pid ?? '<pid>'} (docs/recovery.md)`;
     },
   });
+  try {
+    await acquired;
+  } catch (error) {
+    // Withdrawn: this process lives on without the lock (start-session attaches the master), and the
+    // running cockpit must not read a later wake-up (a reload) as this request.
+    if (sameHolderOrNull(parseHolder(readLockFile(exitRequestPath(lockPath))), self)) {
+      try { unlinkSync(exitRequestPath(lockPath)); } catch { /* gone */ }
+    }
+    throw error;
+  }
   // The request is answered: a later wake-up of this cockpit is a reload.
   try { unlinkSync(exitRequestPath(lockPath)); } catch { /* none was written */ }
   return { replaced, release: () => releaseLockFile(lockPath, token) };
