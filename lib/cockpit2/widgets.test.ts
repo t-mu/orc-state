@@ -417,18 +417,30 @@ describe('drawFooter', () => {
     expect(stringWidth(FULL)).toBeLessThan(120);
   });
 
-  it('drops segments from the right as the width shrinks; the mode always comes first', () => {
+  it('drops hints from the right as the width shrinks, keeps quit by cutting the breadcrumb; the mode always comes first', () => {
     const fullWidth = stringWidth(FULL);
     expect(footer(fullWidth).line).toBe(FULL);
     expect(footer(fullWidth - 1).line).toBe(`${MODE} · ${CJK_PROJECT} › w1 · Ctrl-q: quit · F10: dashboard`);
     expect(footer(80).line).toBe(`${MODE} · ${CJK_PROJECT} › w1 · Ctrl-q: quit`);
-    expect(footer(60).line).toBe(`${MODE} · ${CJK_PROJECT} › w1`);
-    expect(footer(40).line).toBe(MODE);
+    // Quit stays: the breadcrumb is cut by display width instead.
+    expect(footer(60).line).toBe(`${MODE} · 日本語プロジ… · Ctrl-q: quit`);
+    expect(stringWidth(footer(60).line)).toBe(60);
+    // Quit goes when even it does not fit; the breadcrumb is kept down to 8 columns.
+    expect(footer(52).line).toBe(`${MODE} · Ctrl-q: quit`);
+    expect(footer(40).line).toBe(`${MODE} · 日本語…`);
+    expect(footer(36).line).toBe(MODE);
     // The mode is cut last, by display width.
     expect(footer(12).line).toBe(`${MODE.slice(0, 11)}…`);
     expect(stringWidth(footer(12).line)).toBe(12);
     // No project open: the hints follow the mode.
     expect(footer(80, MODE, null).line).toBe(`${MODE} · Ctrl-q: quit · F10: dashboard · F11: attention`);
+  });
+
+  it('keeps the quit key in view at 80 columns with a long project and tab name', () => {
+    const mode = '[sidebar] ↑↓ Tab · Enter: open · Esc: pane';
+    const { line } = footer(80, mode, { project: 'orc-state-desktop-app', tab: 'worker-grommash-cockpit' });
+    expect(line).toBe(`${mode} · orc-state-desktop-a… · Ctrl-q: quit`);
+    expect(stringWidth(line)).toBe(80);
   });
 
   it('draws the mode and key names in text.accent, separators and actions in text.muted', () => {

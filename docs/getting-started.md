@@ -29,7 +29,7 @@ orc start-session
 
 - **Coordinator** (background): dispatches tasks, probes worker processes, merges results.
 - **Master**: your interactive session. It runs in orc's private tmux server.
-- **Cockpit**: what `start-session` runs in this terminal. It draws the whole terminal itself: the sidebar on the left, a tab bar at the top with the active project's tabs, and below it the slot, showing the active tab: at first the master, which has the keys. Each project has its own tabs: its master first, then the agent terminals you open, in opening order. The master is reached directly on orc's tmux server, so its tab works while the coordinator is stopped.
+- **Cockpit**: what `start-session` runs in this terminal. It draws the whole terminal itself: a header row at the top (the project, the `tasks` entry and the attention count), a footer row at the bottom (the mode and the cockpit's keys), the sidebar on the left, a tab bar with the active project's tabs, and below it the slot, showing the active tab: at first the master, which has the keys. Each project has its own tabs: its master first, then the agent terminals you open, in opening order. The master is reached directly on orc's tmux server, so its tab works while the coordinator is stopped.
 
 ### Getting around
 
