@@ -45,6 +45,8 @@ function topLabels(cols: number, title: string, meta: string): { title: string; 
   let shownTitle = '';
   if (title && titleWidth <= titleRoom) shownTitle = title;
   else if (title && titleRoom >= 2) shownTitle = fitText(title, titleRoom);
+  // A cut that keeps no text (a wide first grapheme in two columns) is only the ellipsis: drop it.
+  if (shownTitle && shownTitle !== title && stringWidth(shownTitle) <= 1) shownTitle = '';
   const titleCut = shownTitle !== title;
   const used = shownTitle ? stringWidth(shownTitle) + TITLE_CHROME : 0;
   const metaRoom = inner - used - META_CHROME;

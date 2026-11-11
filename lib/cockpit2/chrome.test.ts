@@ -71,6 +71,14 @@ describe('drawBox', () => {
     expect(rowText(frame, 1).slice(2, 12)).toBe('┌─ [ A ] ┐');
   });
 
+  it('drops a title whose cut keeps no text', () => {
+    // 11 columns leave the title 2 columns: a wide first grapheme cannot fit beside the ellipsis.
+    const wide = boxed(11, 2, { title: '漢字x', meta: 'm' });
+    expect(rowText(wide.frame, 1).slice(2, 13)).toBe('┌─────────┐');
+    const narrow = boxed(11, 2, { title: 'abc' });
+    expect(rowText(narrow.frame, 1).slice(2, 13)).toBe('┌─ [ A… ] ┐');
+  });
+
   it('draws nothing in a region narrower than 4 or shorter than 2', () => {
     for (const [cols, rows] of [[3, 5], [10, 1], [0, 0]]) {
       const { frame, inner } = boxed(cols, rows, { title: 'x' });
