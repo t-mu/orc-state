@@ -4,7 +4,7 @@ import type { SidebarAgent, SidebarModel, SidebarProject } from '../tui/sidebar.
 import { fitText } from '../tui/sidebar.ts';
 import { CLOSE_MARKER, buildTabBarModel, layoutTabBar, tabBarClickTarget, type TabBarState } from '../tui/tabBarModel.ts';
 import { computeLayout } from './app.ts';
-import { createFrame, type Frame } from './frame.ts';
+import { DEFAULT_STYLE, createFrame, type Frame } from './frame.ts';
 import { BUILT_IN_THEMES, attentionRole, badgeRole, styleOf } from './theme.ts';
 import { INITIAL_SIDEBAR_NAV, drawSidebarCards, sidebarCardsLayout, type SidebarNav } from './sidebarCards.ts';
 import {
@@ -59,59 +59,59 @@ function renderTabBar(cols: number, rows: number, state: TabBarState = TABS, slo
   const frame = createFrame(cols, rows);
   const bar = tabBarView(withModeMarks(buildTabBarModel(state, new Map([['w3', 'permission_prompt' as const]])), (id) => typing.has(id)), layout.tabBar.cols);
   drawTabBar(frame, layout.tabBar, bar, { slotFocused, error: null, theme: CLASSIC });
-  const lines = [0, 1, 2].map((y) => rowText(frame, layout.tabBar.y + y, layout.tabBar.x, layout.tabBar.cols));
-  return { frame, layout, bar, lines };
+  const line = rowText(frame, layout.tabBar.y, layout.tabBar.x, layout.tabBar.cols);
+  return { frame, layout, bar, line };
 }
 
 describe('drawTabBar', () => {
   it('draws every tab at 200x60 with mode marks, badges and close markers, wide names in their display width', () => {
-    const { lines, bar, layout } = renderTabBar(200, 60);
-    expect(lines[1]).toContain(` 1 master │`);
-    expect(lines[1]).toContain(` 2 ${VIEW_MARK} ${CJK_AGENT} ${CLOSE_MARKER} │`);
-    expect(lines[1]).toContain(` 3 ${TYPING_MARK} ${EMOJI_AGENT} ${CLOSE_MARKER} │`);
-    expect(lines[1]).toContain(` 4 ${VIEW_MARK} w3 ! PERMISSION ${CLOSE_MARKER} │`);
-    expect(lines[1]).not.toContain('quit'); // the quit key is in the footer
-    // Each tab's borders line up across the three rows: display widths, not string lengths.
+    const { line, bar, layout } = renderTabBar(200, 60);
+    expect(line).toContain(` 1 master `);
+    expect(line).toContain(` 2 ${VIEW_MARK} ${CJK_AGENT} ${CLOSE_MARKER} `);
+    expect(line).toContain(` 3 ${TYPING_MARK} ${EMOJI_AGENT} ${CLOSE_MARKER} `);
+    expect(line).toContain(` 4 ${VIEW_MARK} w3 ! PERMISSION ${CLOSE_MARKER} `);
+    expect(line).not.toContain('quit'); // the quit key is in the footer
+    expect(line).not.toContain('│'); // the tabs' side borders are gaps
+    // Each tab's edges are where the layout puts them: display widths, not string lengths.
     for (const cell of bar.layout.cells) {
-      expect(columnOf(lines[0], cell.x)).toBe('┌');
-      expect(columnOf(lines[1], cell.x)).toBe('│');
-      expect(columnOf(lines[1], cell.x + cell.width - 1)).toBe('│');
+      expect(columnOf(line, cell.x)).toBe(' ');
+      expect(columnOf(line, cell.x + cell.width - 1)).toBe(' ');
     }
     expect(bar.layout.cells.map((cell) => cell.width)).toEqual(bar.model.tabs.map((tab) => 2 + stringWidth(` ${tab.number} ${tab.label}`) + (tab.attention ? ' ! PERMISSION'.length : 0) + (tab.closable ? 3 : 1)));
-    expect(layout.tabBar.rows).toBe(3);
+    expect(layout.tabBar.rows).toBe(1);
   });
 
-  it('opens the active tab towards the slot and marks it as the focus', () => {
+  it('fills the active tab in tab.active and the others in tab.inactive, the gaps unstyled, focused or not', () => {
     const focused = renderTabBar(200, 60);
-    const active = focused.bar.layout.cells[1];
-    const x = focused.layout.tabBar.x + active.x;
-    expect(focused.frame.cells[3 * 200 + x].text).toBe('┘');
-    const label = focused.frame.cells[2 * 200 + x + 2].style;
-    expect(label).toEqual(styleOf(CLASSIC, 'tab.active')); // its label in the tab's fill (classic: inverse)
-    expect(focused.frame.cells[2 * 200 + x].style.inverse).toBe(false); // its side border keeps the tab's outline
-    expect(focused.frame.cells[3 * 200 + x].style.bold).toBe(true); // its open bottom edge in focus
+    const [master, active] = focused.bar.layout.cells;
+    const at = (frame: Frame, x: number) => frame.cells[1 * 200 + focused.layout.tabBar.x + x].style;
+    const label = at(focused.frame, active.x + 2);
+    expect(label).toEqual(styleOf(CLASSIC, 'tab.active')); // classic: inverse
+    expect(at(focused.frame, master.x + 2)).toEqual(styleOf(CLASSIC, 'tab.inactive'));
+    expect(at(focused.frame, active.x)).toEqual(DEFAULT_STYLE);
+    expect(at(focused.frame, active.x + active.width - 1)).toEqual(DEFAULT_STYLE);
     const unfocused = renderTabBar(200, 60, TABS, false);
-    expect(unfocused.frame.cells[2 * 200 + x + 2].style).toEqual(label); // filled whether or not the slot has the keys
+    expect(at(unfocused.frame, active.x + 2)).toEqual(label);
   });
 
   it('fits 80x24 with overflow markers and the active tab always shown, the tabs taking the full width', () => {
-    const { lines, bar } = renderTabBar(80, 24);
+    const { line, bar } = renderTabBar(80, 24);
     expect(bar.layout.hiddenLeft + bar.layout.hiddenRight).toBeGreaterThan(0);
     expect(bar.layout.cells.some((cell) => cell.index === 1)).toBe(true);
-    for (const line of lines) expect(stringWidth(line)).toBe(46);
+    expect(stringWidth(line)).toBe(46);
     expect(bar.layout).toEqual(layoutTabBar(bar.model, 46)); // nothing reserved for buttons or a hint
-    expect(lines[1]).not.toContain('quit');
-    expect(lines[1]).not.toContain('tasks');
+    expect(line).not.toContain('quit');
+    expect(line).not.toContain('tasks');
   });
 
-  it('shows the error on the bottom row and a notice without tabs', () => {
+  it('shows an error instead of the tabs, and a notice without tabs', () => {
     const layout = computeLayout(80, 24);
     const frame = createFrame(80, 24);
     drawTabBar(frame, layout.tabBar, tabBarView(buildTabBarModel(TABS), 46), { slotFocused: true, error: 'The master tab stays open.', theme: CLASSIC });
-    expect(rowText(frame, 3, 34, 46).trimEnd()).toBe('The master tab stays open.');
+    expect(rowText(frame, 1, 34, 46).trimEnd()).toBe('The master tab stays open.');
     const empty = createFrame(80, 24);
     drawTabBar(empty, layout.tabBar, tabBarView(buildTabBarModel({ activeProject: null, projects: [] }), 46), { slotFocused: true, error: null, theme: CLASSIC });
-    expect(rowText(empty, 2, 34, 46)).toContain('No project is open');
+    expect(rowText(empty, 1, 34, 46)).toContain('No project is open');
   });
 });
 
@@ -121,55 +121,63 @@ describe('tab bar roles', () => {
   const ATTENTION: TabBarState = { activeProject: 'p1', projects: [{ projectId: 'p1', tabs: ['w1', 'w2', 'w3'], active: 'w1' }] };
   const KINDS = new Map([['w2', 'stalled' as const], ['w3', 'no_progress' as const]]);
 
-  /** The tab bar at `cols` columns, rows 0-2 of a 3-row frame; `error` takes the bottom row. */
+  /** The tab bar at `cols` columns in a one-row frame. */
   function draw(theme: typeof AMBER, cols: number, slotFocused: boolean, error: string | null = null, state = ATTENTION) {
-    const frame = createFrame(cols, 3);
+    const frame = createFrame(cols, 1);
     const bar = tabBarView(buildTabBarModel(state, KINDS), cols);
-    drawTabBar(frame, { x: 0, y: 0, cols, rows: 3 }, bar, { slotFocused, error, theme });
-    return { frame, bar, at: (x: number, y: number) => frame.cells[y * cols + x].style };
+    drawTabBar(frame, { x: 0, y: 0, cols, rows: 1 }, bar, { slotFocused, error, theme });
+    return { frame, bar, at: (x: number) => frame.cells[x].style };
   }
 
   it('draws each segment kind in its role', () => {
     const { bar, at, frame } = draw(AMBER, 80, true);
     const [master, w1, w2, w3] = bar.layout.cells;
-    expect(at(master.x, 0)).toEqual(styleOf(AMBER, 'chrome.border'));
-    expect(at(master.x, 1)).toEqual(styleOf(AMBER, 'chrome.border'));
-    expect(at(master.x + 2, 1)).toEqual(styleOf(AMBER, 'text.primary'));
-    // The active tab: its top border and label row one block in `tab.active`'s fill, its open bottom edge in focus.
     const fill = styleOf(AMBER, 'tab.active');
-    expect(at(w1.x, 0)).toEqual(styleOf(AMBER, 'chrome.borderFocus'));
-    expect(at(w1.x, 1)).toEqual(styleOf(AMBER, 'chrome.borderFocus'));
-    expect(at(w1.x, 2)).toEqual(styleOf(AMBER, 'chrome.borderFocus'));
-    expect(at(w1.x + 2, 1)).toEqual(fill);
-    expect(at(w1.closeX!, 1)).toEqual({ ...styleOf(AMBER, 'tab.close'), bg: fill.bg });
-    // An attention badge (`! KIND`) in its kind's status role, from theme.ts.
+    const inactive = styleOf(AMBER, 'tab.inactive');
+    expect(inactive.bg.type).not.toBe('default');
+    // The side borders are unstyled gaps; the labels are their tab's fill.
+    expect(at(master.x)).toEqual(DEFAULT_STYLE);
+    expect(at(master.x + 2)).toEqual(inactive);
+    expect(at(w1.x)).toEqual(DEFAULT_STYLE);
+    expect(at(w1.x + 2)).toEqual(fill);
+    // The close mark keeps its colour on the tab's fill.
+    expect(at(w1.closeX!)).toEqual({ ...styleOf(AMBER, 'tab.close'), bg: fill.bg });
+    expect(at(w2.closeX!)).toEqual({ ...styleOf(AMBER, 'tab.close'), bg: inactive.bg });
+    // An attention badge (`! KIND`) in its kind's status colour, from theme.ts, on the tab's fill.
     for (const [cell, kind] of [[w2, 'stalled'], [w3, 'no_progress']] as const) {
       const badgeX = cell.x + 1 + stringWidth(cell.text);
-      expect(rowText(frame, 1, badgeX, cell.badge.length)).toBe(cell.badge);
+      expect(rowText(frame, 0, badgeX, cell.badge.length)).toBe(cell.badge);
       expect(cell.badge.startsWith(' ! ')).toBe(true);
-      for (let x = badgeX; x < badgeX + cell.badge.length; x += 1) expect(at(x, 1)).toEqual(styleOf(AMBER, badgeRole(attentionRole(kind))));
+      for (let x = badgeX; x < badgeX + cell.badge.length; x += 1) expect(at(x)).toEqual({ ...styleOf(AMBER, badgeRole(attentionRole(kind))), bg: inactive.bg });
     }
-    // The rule right of the tabs is a border.
-    expect(at(79, 2)).toEqual(styleOf(AMBER, 'chrome.border'));
+    // Right of the tabs nothing is drawn.
+    expect(at(79)).toEqual(DEFAULT_STYLE);
     // Unfocused, the active tab keeps its fill.
-    const unfocused = draw(AMBER, 80, false);
-    expect(unfocused.at(w1.x, 0)).toEqual(styleOf(AMBER, 'chrome.border'));
-    expect(unfocused.at(w1.x + 2, 1)).toEqual(fill);
+    expect(draw(AMBER, 80, false).at(w1.x + 2)).toEqual(fill);
+  });
+
+  it('draws the active tab\'s close mark inverse when tab.active has no fill colour, as in mono', () => {
+    const { bar, at } = draw(MONO, 80, true);
+    const [, w1, w2] = bar.layout.cells;
+    expect(at(w1.closeX!)).toEqual({ ...styleOf(MONO, 'tab.close'), inverse: true });
+    expect(at(w2.closeX!)).toEqual(styleOf(MONO, 'tab.close'));
   });
 
   it('draws overflow markers and notices in text.muted, errors in error', () => {
     const many: TabBarState = { activeProject: 'p1', projects: [{ projectId: 'p1', tabs: Array.from({ length: 12 }, (_, index) => `worker-${index}`), active: 'worker-11' }] };
-    const { bar, at } = draw(AMBER, 40, true, 'tmux select-pane failed', many);
+    const { bar, at } = draw(AMBER, 40, true, null, many);
     expect(bar.layout.leftMarker).not.toBe('');
-    expect(at(0, 1)).toEqual(styleOf(AMBER, 'text.muted'));
-    expect(at(0, 2)).toEqual(styleOf(AMBER, 'error'));
+    expect(at(0)).toEqual(styleOf(AMBER, 'text.muted'));
+    const failed = draw(AMBER, 40, true, 'tmux select-pane failed', many);
+    expect(rowText(failed.frame, 0).trimEnd()).toBe('tmux select-pane failed');
+    expect(failed.at(0)).toEqual(styleOf(AMBER, 'error'));
     const none = draw(AMBER, 40, true, null, { activeProject: null, projects: [] });
-    expect(none.at(0, 1)).toEqual(styleOf(AMBER, 'text.muted'));
+    expect(none.at(0)).toEqual(styleOf(AMBER, 'text.muted'));
   });
 
   it('shows the same text with mono as with amber', () => {
     for (const focused of [true, false]) {
-      const text = (theme: typeof AMBER) => [0, 1, 2].map((y) => rowText(draw(theme, 80, focused).frame, y));
+      const text = (theme: typeof AMBER) => rowText(draw(theme, 80, focused).frame, 0);
       expect(text(MONO)).toEqual(text(AMBER));
     }
   });
@@ -245,13 +253,13 @@ describe('the explorer tab', () => {
 describe('tab bar hit-testing', () => {
   for (const [cols, rows] of [[80, 24], [200, 60]] as const) {
     it(`selects a tab on its label and closes it on its close marker at ${cols}x${rows}`, () => {
-      const { lines, bar } = renderTabBar(cols, rows);
+      const { line, bar } = renderTabBar(cols, rows);
       for (const cell of bar.layout.cells) {
         const tab = bar.model.tabs[cell.index];
         expect(tabBarClickTarget(bar.model, bar.layout, cell.x + 1)).toEqual({ kind: 'select', tab });
         if (cell.closeX === null) continue;
         // The drawn `×` is where the hit-test puts it, even after a wide name.
-        expect(columnOf(lines[1], cell.closeX)).toBe(CLOSE_MARKER);
+        expect(columnOf(line, cell.closeX)).toBe(CLOSE_MARKER);
         expect(tabBarClickTarget(bar.model, bar.layout, cell.closeX)).toEqual({ kind: 'close', tab });
       }
     });
@@ -331,8 +339,8 @@ describe('drawFooter', () => {
   });
 
   it('draws nothing into a dropped footer', () => {
-    const layout = computeLayout(30, 7);
-    const frame = createFrame(30, 7);
+    const layout = computeLayout(30, 5);
+    const frame = createFrame(30, 5);
     drawFooter(frame, layout.footer, { mode: MODE, breadcrumb: null, hints: FOOTER_HINTS, theme: CLASSIC });
     expect(frame.cells.every((cell) => cell.text === ' ')).toBe(true);
   });

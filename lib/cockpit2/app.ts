@@ -110,11 +110,11 @@ import {
 // ── layout ────────────────────────────────────────────────────────────────────
 
 export const SIDEBAR_COLS = 34;
-export const TAB_BAR_ROWS = 3;
+export const TAB_BAR_ROWS = 1;
 /** The header (top) and footer (bottom) rows, full width; dropped (footer first) before the slot shrinks below its minimum. */
 export const HEADER_ROWS = 1;
 export const FOOTER_ROWS = 1;
-/** The slot keeps at least this much; the footer, the tab bar's borders, the header, then the tab bar's labels row go first on a tiny terminal. */
+/** The slot keeps at least this much; the footer, the header, then the tab bar go first on a tiny terminal. */
 const MIN_SLOT_COLS = 20;
 const MIN_SLOT_ROWS = 3;
 /** Lines one wheel notch scrolls a pane's scrollback. */
@@ -134,8 +134,8 @@ export interface Layout {
   /** The rest: the active tab's screen (inside the pane frame when there is one). */
   slot: Region;
   /**
-   * The container around the slot: its sides and bottom row; its top edge is
-   * the tab bar's bottom rule. Null when the terminal has no room for it.
+   * The box around the slot, its top border on the row under the tab bar.
+   * Null when the terminal has no room for it.
    */
   paneFrame: Region | null;
   /** Bottom row, full width; zero rows when the terminal is too short (dropped before the header). */
@@ -145,33 +145,29 @@ export interface Layout {
 /**
  * The regions of a `cols` by `rows` terminal: the sidebar's width and the
  * tab bar's height stay fixed while there is room. Rows beyond the slot's
- * minimum go to the tab bar's labels row, then the header, then the tab
- * bar's other two rows, then the footer.
+ * minimum go to the tab bar's row, then the header, then the footer.
  */
 export function computeLayout(cols: number, rows: number): Layout {
   const sidebarCols = Math.min(SIDEBAR_COLS, Math.max(0, cols - MIN_SLOT_COLS));
   let spare = Math.max(0, rows - MIN_SLOT_ROWS);
-  // The tab bar's labels row, then the header (its buttons stay reachable), then the tab bar's borders, then the footer.
-  let tabBarRows = Math.min(1, spare);
+  // The tab bar's row, then the header (its buttons stay reachable), then the footer.
+  const tabBarRows = Math.min(TAB_BAR_ROWS, spare);
   spare -= tabBarRows;
   const headerRows = Math.min(HEADER_ROWS, spare);
   spare -= headerRows;
-  const borderRows = Math.min(TAB_BAR_ROWS - tabBarRows, spare);
-  tabBarRows += borderRows;
-  spare -= borderRows;
   const footerRows = Math.min(FOOTER_ROWS, spare);
   const rightCols = Math.max(0, cols - sidebarCols);
   const middleRows = Math.max(0, rows - headerRows - footerRows);
   const slot = { x: sidebarCols, y: headerRows + tabBarRows, cols: rightCols, rows: Math.max(0, middleRows - tabBarRows) };
-  // The frame needs the tab bar's rule as its top edge and costs two columns and a row.
-  const framed = tabBarRows === TAB_BAR_ROWS && slot.cols - 2 >= MIN_SLOT_COLS && slot.rows - 1 >= MIN_SLOT_ROWS;
+  // The frame is a box around the slot: two columns and two rows.
+  const framed = slot.cols - 2 >= MIN_SLOT_COLS && slot.rows - 2 >= MIN_SLOT_ROWS;
   return {
     cols,
     rows,
     header: { x: 0, y: 0, cols, rows: headerRows },
     sidebar: { x: 0, y: headerRows, cols: sidebarCols, rows: middleRows },
     tabBar: { x: sidebarCols, y: headerRows, cols: rightCols, rows: tabBarRows },
-    slot: framed ? { x: slot.x + 1, y: slot.y, cols: slot.cols - 2, rows: slot.rows - 1 } : slot,
+    slot: framed ? { x: slot.x + 1, y: slot.y + 1, cols: slot.cols - 2, rows: slot.rows - 2 } : slot,
     paneFrame: framed ? slot : null,
     footer: { x: 0, y: rows - footerRows, cols, rows: footerRows },
   };

@@ -9,7 +9,7 @@ import {
 const ROLES: ThemeRole[] = [
   'chrome.border', 'chrome.borderFocus', 'chrome.title', 'chrome.titleFocus', 'chrome.meta',
   'text.primary', 'text.muted', 'text.accent', 'text.edge',
-  'row.cursor', 'button', 'button.attention', 'tab.active', 'tab.close', 'error',
+  'row.cursor', 'button', 'button.attention', 'tab.active', 'tab.inactive', 'tab.close', 'error',
   'status.active', 'status.active.badge', 'status.attention', 'status.attention.badge',
   'status.warn', 'status.warn.badge', 'status.error', 'status.error.badge', 'status.idle', 'status.idle.badge',
 ];
@@ -109,6 +109,7 @@ describe('built-in themes', () => {
       'button': cell({ underline: true, fg: palette(6) }), // EXPLORER_BUTTON
       'button.attention': cell({ bold: true, inverse: true, fg: palette(3) }), // ATTENTION_BUTTON
       'tab.active': cell({ bold: true, inverse: true }),
+      'tab.inactive': PLAIN,
       'tab.close': cell({ fg: palette(1) }),
       'error': cell({ bold: true, fg: palette(1) }), // ERROR
       // STATE_COLOR: running green, connecting cyan, stopped yellow, stale/incompatible red

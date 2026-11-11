@@ -8,19 +8,20 @@ A widget asks for a role, never for a colour (`lib/cockpit2/theme.ts`). A role's
 
 | Role | Used for |
 |---|---|
-| `chrome.border` | Box borders (sidebar cards, tab bar, inactive tabs), the tab bar's rule |
-| `chrome.borderFocus` | The border of the focused sidebar card and of the active tab while the slot has the keys |
+| `chrome.border` | Box borders (sidebar cards, the pane frame) |
+| `chrome.borderFocus` | The border of the focused sidebar card and of the pane frame while the slot has the keys |
 | `chrome.title` | Card titles (`[ AGENTS ]`), the first line of a message in the slot |
 | `chrome.titleFocus` | The focused card's title |
 | `chrome.meta` | A card's top-right count (`3 live`) |
-| `text.primary` | Ordinary text: the header's project name, sidebar rows, inactive tab labels, the footer's `project › tab` |
+| `text.primary` | Ordinary text: the header's project name, sidebar rows, the footer's `project › tab` |
 | `text.muted` | Secondary text: separators, footer actions, run times, an agent's activity, `+N more`, tab bar notices and markers |
-| `text.accent` | `ORC` in the header, footer keys, agent names, the active tab's label (inverse while the slot has the keys) |
+| `text.accent` | `ORC` in the header, footer keys, agent names |
 | `text.edge` | The marker column and row past the edge of a pane smaller than the slot |
 | `row.cursor` | The focused card's cursor row (its attributes and background over the row's own colours) |
 | `button` | Header entries (`tasks`) |
 | `button.attention` | The header's attention badge (`! N`) |
-| `tab.active` | The active tab's label row, filled inside its border |
+| `tab.active` | The active tab's block in the tab strip |
+| `tab.inactive` | The other tabs' blocks in the tab strip |
 | `tab.close` | A tab's `×` |
 | `error` | Errors in the tab bar (a refused tab change, a failed save) |
 | `status.active`, `status.attention`, `status.warn`, `status.error`, `status.idle` | A state's text and an expanded agent's border |
@@ -64,7 +65,7 @@ A file that cannot be read or parsed, or names an unknown base, is reported and 
 
 ```
 ┌ header: 1 row, full width ─────────────────────────────────┐
-│ sidebar   │ tab bar: 3 rows                                │
+│ sidebar   │ tab strip: 1 row                               │
 │ 34 cols   │┌──────────────────────────────────────────────┐│
 │ Project   ││ slot: the active tab's pane, in the pane     ││
 │ Other     ││ frame                                        ││
@@ -73,8 +74,8 @@ A file that cannot be read or parsed, or names an unknown base, is reported and 
 └ footer: 1 row, full width ─────────────────────────────────┘
 ```
 
-`computeLayout` in `lib/cockpit2/app.ts`. The slot keeps at least 20 columns and 3 rows. On a short terminal rows go, in this order: the footer, the tab bar's two border rows, the header, then the tab bar's labels row. On a narrow one the sidebar narrows.
+`computeLayout` in `lib/cockpit2/app.ts`. The slot keeps at least 20 columns and 3 rows. On a short terminal rows go, in this order: the footer, the header, then the tab strip. On a narrow one the sidebar narrows.
 
-The pane frame (`paneFrame`, drawn by `drawPaneFrame` in `lib/cockpit2/chrome.ts`) is a container around the slot: its sides and bottom row in `chrome.border` (`chrome.borderFocus` while the slot has the keys), its top edge the tab bar's bottom rule, whose ends become corners (`┌` `┐`) or, where a tab meets the edge, junctions (`├` `┤`, or a straight `│` under the active tab's open side). It costs two columns and a row, so it is drawn only with the full 3-row tab bar and while the slot inside it keeps 20x3; otherwise the slot takes the whole area. At 80x24 the area under the tab bar is 46x19 at (34,4) and the slot inside the frame 44x18 at (35,4); the frame's cells take no clicks.
+The tab strip is one row of solid blocks, one per tab, the tabs' side borders drawn as blank gaps: the active tab in `tab.active`, the others in `tab.inactive`, a tab's badge and `×` keeping their colour on its fill; overflow markers and notices are in `text.muted`, and an error takes the whole row. The pane frame (`paneFrame`, drawn by `drawPaneFrame` in `lib/cockpit2/chrome.ts`) is a plain box around the slot, its top border on its own row under the tab strip, in `chrome.border` (`chrome.borderFocus` while the slot has the keys). It costs two columns and two rows, so it is drawn only while the slot inside it keeps 20x3; otherwise the slot takes the whole area. At 80x24 the header is row 0, the tab strip row 1, the frame rows 2 to 22 (46x21 at (34,2)), the slot inside it 44x19 at (35,3) and the footer row 23; the frame's cells take no clicks.
 
 The sidebar is three cards (`lib/cockpit2/sidebarCards.ts`): Project (the active project's coordinator state, worker capacity and, only while there is one, a notice row), Other projects (one row each) and Agents (one row each, a second row for an agent needing attention; a row too narrow for the agent's role drops the role whole rather than cutting it). Space or a click on an agent's `[+]` expands it into a box with its task, phase, provider, activity or question and the open key. When rows run short, Other projects shrinks to a `+N more` line before Agents loses rows; the cursor's row (an expanded agent's whole block) stays in view.

@@ -12,7 +12,7 @@
  */
 import { stringWidth } from '../cellWidth.ts';
 import { fitText } from '../tui/sidebar.ts';
-import { cellAt, drawText, type Frame, type Region } from './frame.ts';
+import { drawText, type Frame, type Region } from './frame.ts';
 import type { CellStyle } from './screen.ts';
 import { badgeRole, styleOf, type StatusRole, type Theme, type ThemeRole } from './theme.ts';
 
@@ -106,32 +106,16 @@ export function collapseMarker(expanded: boolean): string {
   return expanded ? '[-]' : '[+]';
 }
 
-/** What a tab rule glyph becomes where the pane frame's side meets it: a plain rule turns into a corner, a tab's edge into a junction. */
-const FRAME_JOIN: Readonly<Record<'left' | 'right', Readonly<Record<string, string>>>> = {
-  left: { '─': '┌', '┘': '│', '┴': '├', '└': '├' },
-  right: { '─': '┐', '└': '│', '┴': '┤', '┘': '┤' },
-};
-
-/**
- * The container around the slot: `region` is the slot with its frame (the
- * frame's top edge is the tab bar's rule on the row above `region`). Draws the
- * sides and the bottom in `style` and turns the rule's ends into the corners
- * or junctions that join them, keeping the rule's own style there.
- */
+/** The box around the slot: `region` is the slot with its frame. */
 export function drawPaneFrame(frame: Frame, region: Region, style: CellStyle): void {
-  if (region.cols < 2 || region.rows < 1) return;
+  if (region.cols < 2 || region.rows < 2) return;
   const left = region.x;
   const right = region.x + region.cols - 1;
   const bottom = region.y + region.rows - 1;
-  for (let y = region.y; y < bottom; y += 1) {
+  drawText(frame, left, region.y, `┌${'─'.repeat(region.cols - 2)}┐`, style, region.cols);
+  for (let y = region.y + 1; y < bottom; y += 1) {
     drawText(frame, left, y, '│', style, 1);
     drawText(frame, right, y, '│', style, 1);
   }
   drawText(frame, left, bottom, `└${'─'.repeat(region.cols - 2)}┘`, style, region.cols);
-  const ruleY = region.y - 1;
-  for (const [x, side] of [[left, 'left'], [right, 'right']] as const) {
-    const cell = cellAt(frame, x, ruleY);
-    const joined = cell ? FRAME_JOIN[side][cell.text] : undefined;
-    if (cell && joined) drawText(frame, x, ruleY, joined, cell.style, 1);
-  }
 }
