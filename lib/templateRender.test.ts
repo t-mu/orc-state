@@ -44,10 +44,10 @@ describe('renderTemplate', () => {
     const toolNames = new Set(TOOLS.map((tool) => tool.name));
     // Snake_case identifiers the bootstrap uses that are not tools: event types and payload fields.
     const nonTools = new Set([
-      'agent_id', 'after_seq', 'body_markdown', 'event_type', 'has_more', 'idle_ms', 'input_requested', 'input_response',
+      'agent_id', 'after_seq', 'body_markdown', 'dispatch_stalled', 'event_type', 'ready_task_refs', 'task_dispatch_blocked', 'task_reasons', 'has_more', 'idle_ms', 'input_requested', 'input_response',
       'last_notification_seq', 'last_seq', 'no_progress', 'notifications_only', 'permission_prompt',
       'phase_started', 'provider_interactive_prompt', 'remediation_policy', 'run_cancelled', 'run_failed',
-      'run_finished', 'session_not_running', 'waiting_input', 'worker_needs_attention',
+      'run_finished', 'session_not_running', 'session_start_failed', 'waiting_input', 'worker_needs_attention',
     ]);
     const mentioned = [...new Set(rendered.match(/\b[a-z]+(?:_[a-z]+)+\b/g))];
     expect(mentioned.filter((name) => toolNames.has(name)).length).toBeGreaterThan(10);

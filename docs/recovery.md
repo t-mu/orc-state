@@ -67,6 +67,8 @@ orc doctor
 | Worker blocked on `run-input-request` | `orc runs --state=waiting-input` | `orc run-input-respond --run-id=<id> --agent-id=<id> --response="…"`; otherwise it fails on timeout and is requeued |
 | Task `blocked` | `orc status`, `orc project task show <ref>` | fix the cause, `orc task-unblock <ref>` |
 | Task never dispatched | `orc project task show <ref>` (`depends_on`) | finish the dependency; `orc task-reset <dep-ref>` if it is stuck |
+| Task `blocked` with `injection_scan: …` | `orc events --event=task_dispatch_blocked` (`findings`) | remove the listed code points or phrases with `orc project task edit`; the clean revision returns it to `todo` |
+| `dispatch_stalled` (free slots, ready tasks, no runs) | the event's `task_reasons`; `orc events --event=session_start_failed`, `orc doctor` | fix the named cause (worker launch, dispatch error); dispatch resumes on its own |
 | `finalization_state=blocked_finalize` | `orc status`, `orc run-info <run_id>` | [Finalization Failure](#finalization-failure-blocked_finalize) |
 
 ### Finalization Failure (`blocked_finalize`)

@@ -7,6 +7,17 @@ export class InjectionScanError extends Error {
   }
 }
 
+/** `blocked_reason` prefix of a task the coordinator blocked because its spec failed the scan at dispatch. */
+export const INJECTION_SCAN_BLOCK_PREFIX = 'injection_scan';
+
+export function injectionScanBlockedReason(error: InjectionScanError): string {
+  return `${INJECTION_SCAN_BLOCK_PREFIX}: ${error.findings.join('; ')}`;
+}
+
+export function isInjectionScanBlockedReason(reason: string | null | undefined): boolean {
+  return reason === INJECTION_SCAN_BLOCK_PREFIX || (reason ?? '').startsWith(`${INJECTION_SCAN_BLOCK_PREFIX}:`);
+}
+
 export interface ScanResult {
   safe: boolean;
   findings: string[];

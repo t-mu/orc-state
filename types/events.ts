@@ -42,6 +42,22 @@ export interface TaskDispatchBlockedEvent extends BaseEvent {
   payload: { reason: string; findings: string[]; [key: string]: unknown };
 }
 
+/**
+ * For `threshold` consecutive ticks the pool had free slots and dispatch-ready tasks but claimed no run.
+ * Emitted once per stall; re-armed after a run is claimed or the stall otherwise ends.
+ */
+export interface DispatchStalledEvent extends BaseEvent {
+  event: 'dispatch_stalled';
+  payload: {
+    free_slots: number;
+    ready_task_refs: string[];
+    /** Last known dispatch failure per ready task (e.g. `injection_scan`, `session_start_failed`, `dispatch_error`). */
+    task_reasons: Record<string, string>;
+    consecutive_ticks: number;
+    [key: string]: unknown;
+  };
+}
+
 // ── Claim events ─────────────────────────────────────────────────────────────
 
 export interface ClaimCreatedEvent extends BaseEvent {
@@ -475,6 +491,7 @@ export type OrcEvent =
   | TaskCancelledEvent
   | TaskDelegatedEvent
   | TaskDispatchBlockedEvent
+  | DispatchStalledEvent
   | ClaimCreatedEvent
   | ClaimExpiredEvent
   | TaskEnvelopeSentEvent

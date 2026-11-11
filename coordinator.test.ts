@@ -1639,6 +1639,61 @@ describe('worker session lifecycle', () => {
   });
 });
 
+describe('dispatch stalls (coordinator/dispatch-scan-stall)', () => {
+  // The fixture stores specs without the authoring-time scan, like a spec stored before it existed.
+  const SCAN_FAILING_TASK = { ...DISPATCHABLE_TASK, ref: 'proj/emoji', title: 'Emoji', priority: 'high', description: 'Family: \u{1F468}\u200D\u{1F469}' };
+
+  it('blocks a top-priority task that fails the injection scan and gives the slot to other ready work on the next tick', async () => {
+    seedState(dir, { tasks: [SCAN_FAILING_TASK, DISPATCHABLE_TASK] });
+    process.env.ORC_MAX_WORKERS = '1';
+    process.env.ORC_WORKER_PROVIDER = 'codex';
+    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'tmux:new-worker', provider_ref: null });
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart, send: vi.fn().mockResolvedValue('') }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock());
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+    const tasks = () => Object.fromEntries(readBacklog(dir).features.flatMap((feature) => feature.tasks).map((task) => [task.ref, task]));
+    expect(tasks()['proj/emoji']).toMatchObject({ status: 'blocked' });
+    expect(String(tasks()['proj/emoji'].blocked_reason)).toMatch(/^injection_scan: .*U\+200D/);
+    expect(readAgents(dir).filter((agent) => agent.role === 'worker')).toHaveLength(0);
+    const blocked = readEvents(dir).filter((event) => event.event === 'task_dispatch_blocked');
+    expect(blocked).toHaveLength(1);
+    expect(blocked[0]).toMatchObject({ task_ref: 'proj/emoji', payload: { reason: 'injection_scan', task_status: 'blocked' } });
+
+    await tick();
+    expect(tasks()['proj/fix-bug']).toMatchObject({ status: 'claimed' });
+    expect(mockStart).toHaveBeenCalledOnce();
+    await tick();
+    expect(readEvents(dir).filter((event) => event.event === 'task_dispatch_blocked')).toHaveLength(1);
+  });
+
+  it('tells the master once when free capacity and ready work produce no run for 3 ticks', async () => {
+    seedState(dir, { tasks: [DISPATCHABLE_TASK] });
+    process.env.ORC_MAX_WORKERS = '1';
+    process.env.ORC_WORKER_PROVIDER = 'codex';
+    const mockStart = vi.fn().mockRejectedValue(new Error('spawn failed'));
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock());
+
+    const { tick } = await import('./coordinator.ts');
+    const stalls = () => readEvents(dir).filter((event) => event.event === 'dispatch_stalled');
+    await tick();
+    await tick();
+    expect(stalls()).toHaveLength(0);
+    await tick();
+    expect(mockStart).toHaveBeenCalledTimes(3);
+    expect(stalls()).toHaveLength(1);
+    expect(stalls()[0]).toMatchObject({
+      actor_type: 'coordinator',
+      payload: { free_slots: 1, ready_task_refs: ['proj/fix-bug'], task_reasons: { 'proj/fix-bug': 'session_start_failed' }, consecutive_ticks: 3 },
+    });
+    await tick();
+    await tick();
+    expect(stalls()).toHaveLength(1);
+  });
+});
+
 describe('stale worker removal', () => {
   it('removes a worker whose heartbeat is older than 2 hours and that has no active claim', async () => {
     const staleTs = new Date(Date.now() - (2 * 60 * 60 * 1000 + 10_000)).toISOString();

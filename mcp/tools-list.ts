@@ -335,7 +335,7 @@ export const TOOLS = [
         event_type: { type: 'string', description: 'Filter by event type' },
         notifications_only: {
           type: 'boolean',
-          description: 'Only notification-class events: run_finished, run_failed, run_cancelled, worker_needs_attention, input_requested, input_response',
+          description: 'Only notification-class events: run_finished, run_failed, run_cancelled, worker_needs_attention, input_requested, input_response, task_dispatch_blocked, dispatch_stalled',
         },
         after_seq: { type: 'integer', minimum: 0, description: 'Cursor: return events with seq > after_seq, oldest first' },
         limit: { type: 'integer', minimum: 1, maximum: 100, description: 'Events per page (default 25, max 100)' },
