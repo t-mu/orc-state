@@ -11,10 +11,43 @@
  * go through the same path and the later one wins.
  */
 import xtermHeadless from '@xterm/headless';
-import type { IBufferCell, IDisposable } from '@xterm/headless';
+import type { IBufferCell, IDisposable, IUnicodeVersionProvider } from '@xterm/headless';
+import { codePointWidth } from '../cellWidth.ts';
 
 const { Terminal } = xtermHeadless;
 const ESC = '\x1b';
+
+// ── cell widths ───────────────────────────────────────────────────────────────
+
+const AFTER_ZWJ = 1;
+const ODD_FLAG = 2;
+const isFlag = (cp: number) => cp >= 0x1f1e6 && cp <= 0x1f1ff;
+/** xterm's packed char properties: (state << 3) | (width << 1) | shouldJoin. */
+const props = (state: number, width: number, join: boolean) => (state << 3) | ((width & 3) << 1) | (join ? 1 : 0);
+
+/**
+ * An xterm Unicode version provider that measures like lib/cellWidth.ts, so the
+ * screen lays out text as frames and the renderer do. xterm's built-in Unicode
+ * 6 tables count emoji as one column and do not join ZWJ sequences or flags;
+ * here a ZWJ joins the next code point, a regional indicator pair joins, VS16
+ * and a keycap widen, VS15 narrows.
+ */
+export const cellWidthUnicodeProvider: IUnicodeVersionProvider = {
+  version: 'cellWidth',
+  wcwidth: (cp) => codePointWidth(cp),
+  charProperties(cp, preceding) {
+    const own = codePointWidth(cp);
+    const prevWidth = (preceding >> 1) & 3;
+    const prevState = preceding >> 3;
+    if (preceding !== 0 && prevState === AFTER_ZWJ) return props(cp === 0x200d ? AFTER_ZWJ : 0, prevWidth, true);
+    if (preceding !== 0 && prevState === ODD_FLAG && isFlag(cp)) return props(0, 2, true);
+    if (own === 0 && prevWidth > 0 && cp >= 0x20) {
+      const width = cp === 0xfe0f || cp === 0x20e3 ? 2 : cp === 0xfe0e ? 1 : prevWidth;
+      return props(cp === 0x200d ? AFTER_ZWJ : 0, width, true);
+    }
+    return props(isFlag(cp) ? ODD_FLAG : 0, own, false);
+  },
+};
 
 /** A pane's terminal modes as tmux reports them (pane format flags); Step 1's `paneModes()` returns this shape. */
 export interface PaneModes {
@@ -138,6 +171,8 @@ export function modeSequences(modes: PaneModes): string {
 
 export function createScreen({ cols, rows, scrollback }: ScreenOptions): Screen {
   const term = new Terminal({ cols, rows, scrollback, allowProposedApi: true });
+  term.unicode.register(cellWidthUnicodeProvider);
+  term.unicode.activeVersion = cellWidthUnicodeProvider.version;
   let mouseEncoding: MouseEncoding = 'default';
   let cursorVisible = true;
 

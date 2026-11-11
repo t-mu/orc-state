@@ -1,10 +1,9 @@
 import xtermHeadless from '@xterm/headless';
-import type { IBufferCell, IUnicodeVersionProvider } from '@xterm/headless';
+import type { IBufferCell } from '@xterm/headless';
 import { afterEach, describe, expect, it } from 'vitest';
-import { codePointWidth } from '../cellWidth.ts';
 import { createFrame, DEFAULT_STYLE, drawText, fillRect, type Frame } from './frame.ts';
 import { renderDiff, sgrTransition } from './render.ts';
-import type { Cell, CellStyle, Color } from './screen.ts';
+import { cellWidthUnicodeProvider, type Cell, type CellStyle, type Color } from './screen.ts';
 
 const { Terminal } = xtermHeadless;
 const ESC = '\x1b';
@@ -111,32 +110,6 @@ describe('renderDiff', () => {
 
 // ── replaying into a terminal emulator ────────────────────────────────────────
 
-/**
- * xterm's built-in Unicode 6 tables count emoji as one column and do not join
- * ZWJ sequences or flags. This provider measures like lib/cellWidth.ts: a ZWJ
- * joins the next code point, a regional indicator pair joins, VS16 and a keycap widen.
- */
-const AFTER_ZWJ = 1;
-const ODD_FLAG = 2;
-const isFlag = (cp: number) => cp >= 0x1f1e6 && cp <= 0x1f1ff;
-const props = (state: number, width: number, join: boolean) => (state << 3) | ((width & 3) << 1) | (join ? 1 : 0);
-const graphemeProvider: IUnicodeVersionProvider = {
-  version: 'cellWidth',
-  wcwidth: (cp) => codePointWidth(cp),
-  charProperties(cp, preceding) {
-    const own = codePointWidth(cp);
-    const prevWidth = (preceding >> 1) & 3;
-    const prevState = preceding >> 3;
-    if (preceding !== 0 && prevState === AFTER_ZWJ) return props(cp === 0x200d ? AFTER_ZWJ : 0, prevWidth, true);
-    if (preceding !== 0 && prevState === ODD_FLAG && isFlag(cp)) return props(0, 2, true);
-    if (own === 0 && prevWidth > 0 && cp >= 0x20) {
-      const width = cp === 0xfe0f || cp === 0x20e3 ? 2 : cp === 0xfe0e ? 1 : prevWidth;
-      return props(cp === 0x200d ? AFTER_ZWJ : 0, width, true);
-    }
-    return props(isFlag(cp) ? ODD_FLAG : 0, own, false);
-  },
-};
-
 function colorOf(isDefault: boolean, isPalette: boolean, isRgb: boolean, value: number): Color {
   if (isPalette) return { type: 'palette', index: value };
   if (isRgb && !isDefault) return { type: 'rgb', r: (value >> 16) & 255, g: (value >> 8) & 255, b: value & 255 };
@@ -167,8 +140,8 @@ afterEach(() => {
 
 function terminal(cols: number, rows: number): Term {
   const term = new Terminal({ cols, rows, scrollback: 0, allowProposedApi: true });
-  term.unicode.register(graphemeProvider);
-  term.unicode.activeVersion = 'cellWidth';
+  term.unicode.register(cellWidthUnicodeProvider);
+  term.unicode.activeVersion = cellWidthUnicodeProvider.version;
   terms.push(term);
   return term;
 }

@@ -152,4 +152,21 @@ describe('blitScreen', () => {
       screen.dispose();
     }
   });
+  it('a wide emoji from a real screen keeps its continuation cell and the next char', async () => {
+    const screen = createScreen({ cols: 6, rows: 1, scrollback: 0 });
+    try {
+      await screen.write('😀x✅y');
+      const frame = createFrame(6, 1);
+      blitScreen(frame, screen, { x: 0, y: 0, cols: 6, rows: 1 }, { edge: false });
+      expect(cellAt(frame, 0, 0)).toMatchObject({ text: '😀', width: 2 });
+      expect(cellAt(frame, 1, 0)!.width).toBe(0);
+      expect(cellAt(frame, 2, 0)).toMatchObject({ text: 'x', width: 1 });
+      expect(cellAt(frame, 3, 0)).toMatchObject({ text: '✅', width: 2 });
+      expect(cellAt(frame, 4, 0)!.width).toBe(0);
+      expect(cellAt(frame, 5, 0)).toMatchObject({ text: 'y', width: 1 });
+      expectValid(frame);
+    } finally {
+      screen.dispose();
+    }
+  });
 });
