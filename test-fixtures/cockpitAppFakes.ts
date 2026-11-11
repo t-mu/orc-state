@@ -111,10 +111,21 @@ export async function waitForTabBar(terminal: FakeTerminal, y: number, part: str
   }
 }
 
-/** The sidebar's rows as the real terminal shows them. */
+/** The sidebar's rows as the real terminal shows them (0 its first row, below the header). */
 export async function sidebarRows(terminal: FakeTerminal): Promise<string[]> {
   const screen = await shown(terminal);
-  return Array.from({ length: terminal.rows }, (_, y) => text(screen, y, 0, SIDEBAR_COLS));
+  const { sidebar } = computeLayout(terminal.cols, terminal.rows);
+  return Array.from({ length: sidebar.rows }, (_, y) => text(screen, sidebar.y + y, sidebar.x, sidebar.cols));
+}
+
+/** Waits until the footer (the terminal's last row) contains `part`. */
+export async function waitForFooter(terminal: FakeTerminal, part: string): Promise<void> {
+  const until = Date.now() + 2_000;
+  const footer = async () => text(await shown(terminal), computeLayout(terminal.cols, terminal.rows).footer.y);
+  while (!(await footer()).includes(part)) {
+    if (Date.now() > until) throw new Error(`timed out waiting for ${JSON.stringify(part)} in the footer: ${await footer()}`);
+    await sleep(25);
+  }
 }
 
 /** Waits until some sidebar row contains `part`. */

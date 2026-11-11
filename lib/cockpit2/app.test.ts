@@ -16,7 +16,7 @@ import type { PaneReport } from './tmuxControl.ts';
 import { DEFAULT_VIEW_STATE, addProject, type TmuxTarget } from './viewState.ts';
 import {
   ESC, F12, FakeTerminal, FakeWatcher, MASTER_TARGET, MemoryStore, W1_TARGET, apps, projectState, shown, sidebarRows, sleep, slotRows, text,
-  waitFor, waitForSidebar, waitForSlotLine, waitForSlotText, waitForTabBar,
+  waitFor, waitForFooter, waitForSidebar, waitForSlotLine, waitForSlotText, waitForTabBar,
 } from '../../test-fixtures/cockpitAppFakes.ts';
 
 // ── layout ────────────────────────────────────────────────────────────────────
@@ -569,11 +569,11 @@ describe('runApp tabs and projects (fake tmux clients)', () => {
     expect(worker.sent).toEqual([]);
     expect(worker.pastes).toEqual([]);
     expect(clients[0].sent).toEqual([]);
-    await waitForSidebar(terminal, '[view] i: type · q/Esc: close');
+    await waitForFooter(terminal, '[view] i: type · q/Esc: close');
     await waitForTabBar(terminal, 1, '○ w1');
 
     terminal.type('i');
-    await waitForSidebar(terminal, '[typing] Ctrl-]: stop typing');
+    await waitForFooter(terminal, '[typing] Ctrl-]: stop typing');
     await waitForTabBar(terminal, 1, '✎ w1');
     expect(worker.sent).toEqual([]); // i itself only starts typing
     terminal.type(`q\x04\x03${ESC}[A`);
@@ -582,7 +582,7 @@ describe('runApp tabs and projects (fake tmux clients)', () => {
     expect(worker.pastes).toEqual(['%2 pasted']);
 
     terminal.type('\x1d'); // Ctrl-] back to view mode
-    await waitForSidebar(terminal, '[view]');
+    await waitForFooter(terminal, '[view]');
     terminal.type('x');
     expect(worker.sent).toHaveLength(4);
     expect(app.tabs().projects[0].tabs).toEqual(['w1']);
@@ -817,7 +817,8 @@ async function columnOf(terminal: FakeTerminal, y: number, grapheme: string, fro
 }
 async function sidebarRow(terminal: FakeTerminal, part: string): Promise<number> {
   await waitForSidebar(terminal, part);
-  return (await sidebarRows(terminal)).findIndex((row) => row.includes(part));
+  // A frame row: the sidebar's rows start below the header.
+  return computeLayout(terminal.cols, terminal.rows).sidebar.y + (await sidebarRows(terminal)).findIndex((row) => row.includes(part));
 }
 
 describe('runApp sidebar and tab bar (fake tmux clients)', () => {
@@ -839,11 +840,12 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     const wide = rows.findIndex((row) => row.includes(WIDE_AGENT));
     expect(rows[wide]).toContain('QUESTION');
     expect(wide).toBeLessThan(rows.findIndex((row) => row.includes('w1 ')));
-    expect(rows[1].endsWith('╮')).toBe(true); // row 0 is the header
+    expect(rows[0].endsWith('╮')).toBe(true);
     // Every box row ends on the sidebar's right border, wide names or not.
     const screen = await shown(terminal);
     for (let y = 1; y < 15; y++) expect(screen.row(y)[SIDEBAR_COLS - 1].text).toMatch(/[╮│╯]/);
-    expect(rows[23]).toContain('[master] keys go to the master');
+    expect(rows.some((row) => row.includes('[master]'))).toBe(false); // the mode is the footer's
+    expect(text(screen, 23)).toContain('[master] keys go to the master');
   });
 
   it('opens an agent on a click on its row, shows a tab on a click and closes it on its close marker, the worker untouched', async () => {
@@ -853,7 +855,7 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     terminal.type(click(3, await sidebarRow(terminal, 'w1 ')));
     expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: ['w1'], active: 'w1' });
     // The opened tab takes the keys, as after a tab click: its view mode's keys work at once.
-    await waitForSidebar(terminal, '[view] i: type');
+    await waitForFooter(terminal, '[view] i: type');
     await waitForSlotText(terminal, '$ hello from orc-w1');
     // The second row of an agent opens it too; a wide name's tab lays out by display width.
     terminal.type(click(3, (await sidebarRow(terminal, WIDE_AGENT)) + 1));
@@ -905,12 +907,12 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     await attached(terminal);
     const master = clients[0];
     terminal.type(F10);
-    await waitForSidebar(terminal, '↑↓ Tab · Enter: open · Esc: pane');
+    await waitForFooter(terminal, '↑↓ Tab · Enter: open · Esc: pane');
     // The cursor starts on the first agent (the one needing attention); down moves to w1, Enter opens it.
     terminal.type(`${ESC}[B\r`);
     expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: ['w1'], active: 'w1' });
     // The opened tab has the keys, as after a click: view mode, so i then a key reach the worker, and nothing the master.
-    await waitForSidebar(terminal, '[view] i: type · q/Esc: close');
+    await waitForFooter(terminal, '[view] i: type · q/Esc: close');
     await attached(terminal, 'orc-w1');
     const worker = clients.find((fake) => fake.target.session === 'orc-w1')!;
     terminal.type('ix');
@@ -919,18 +921,18 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
 
     // Back in the sidebar (its cursor kept on w1): k moves up, Enter opens the wide-named agent.
     terminal.type(F10);
-    await waitForSidebar(terminal, 'Enter: open');
+    await waitForFooter(terminal, 'Enter: open');
     terminal.type('k\r');
     expect(app.tabs().projects[0].active).toBe(WIDE_AGENT);
-    await waitForSidebar(terminal, '[view] i: type');
+    await waitForFooter(terminal, '[view] i: type');
 
     // Tab to the projects box: down and Enter switch project, and its master takes the keys.
     terminal.type(F10);
-    await waitForSidebar(terminal, 'Enter: open');
+    await waitForFooter(terminal, 'Enter: open');
     terminal.type('\tj\r');
     expect(app.tabs().activeProject).toBe('other');
     await waitForSidebar(terminal, '▸ 日本語');
-    await waitForSidebar(terminal, '[master] keys go to the master');
+    await waitForFooter(terminal, '[master] keys go to the master');
     await attached(terminal, 'orc-master-other');
     const other = clients.find((fake) => fake.target.session === 'orc-master-other')!;
     terminal.type('y');
@@ -938,9 +940,9 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
 
     // Esc returns from the sidebar to the pane without opening anything.
     terminal.type(F10);
-    await waitForSidebar(terminal, 'Enter: open');
+    await waitForFooter(terminal, 'Enter: open');
     terminal.type(ESC);
-    await waitForSidebar(terminal, '[master] keys go to the master');
+    await waitForFooter(terminal, '[master] keys go to the master');
     terminal.type('z');
     expect(other.sent).toEqual([`${other.paneId} y`, `${other.paneId} z`]);
   });
@@ -949,17 +951,17 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     const { terminal, client } = withWorkers();
     await attached(terminal);
     terminal.type(`${F12}o`);
-    await waitForSidebar(terminal, 'Enter: open');
+    await waitForFooter(terminal, 'Enter: open');
     let screen = await shown(terminal);
     expect(screen.cursor().visible).toBe(false); // the pane's cursor is not shown while the sidebar has the keys
     terminal.type(`${F12}o`);
-    await waitForSidebar(terminal, '[master]');
+    await waitForFooter(terminal, '[master]');
     terminal.type('a');
     expect(client().sent).toEqual(['%1 a']);
     terminal.type(F10);
-    await waitForSidebar(terminal, 'Enter: open');
+    await waitForFooter(terminal, 'Enter: open');
     terminal.type(click(50, 10));
-    await waitForSidebar(terminal, '[master]');
+    await waitForFooter(terminal, '[master]');
     screen = await shown(terminal);
     expect(screen.cursor().visible).toBe(true);
   });
@@ -1050,7 +1052,7 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     // The explorer's window is the cockpit's own: sized to the slot, not an ignore-size view.
     expect(fake.ignoreSize).toBe(false);
     await waitForTabBar(terminal, 1, '2 tasks ×');
-    await waitForSidebar(terminal, '[tasks] Ctrl-] or ×: close');
+    await waitForFooter(terminal, '[tasks] Ctrl-] or ×: close');
     expect(text(await shown(terminal), 2, SIDEBAR_COLS)).not.toContain('tasks Ctrl-q'); // no entry while it is shown
     // Its own keys reach it; i is not the typing key here.
     terminal.type(`j${ESC}[Bi\r`);
@@ -1066,7 +1068,7 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     expect(fake.closed).toBe(1);
     expect(app.tabs()).toEqual(before);
     expect(clients[0].sent).toEqual([]); // nothing typed reached the master
-    await waitForSidebar(terminal, '[master] keys go to the master');
+    await waitForFooter(terminal, '[master] keys go to the master');
   });
 
   it('opens on a click on the tasks entry, closes on its close marker, and gives way to any tab change', async () => {
@@ -1146,7 +1148,7 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     await attached(terminal);
     expect(app.tabs()).toEqual(before);
     expect(clients[0].sent).toEqual([]); // nothing reached the master
-    await waitForSidebar(terminal, '[master] keys go to the master');
+    await waitForFooter(terminal, '[master] keys go to the master');
   });
 
   it('sends keys that arrive in one read to the explorer one at a time, each after the one before reached it', async () => {
@@ -1215,12 +1217,12 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     const worker = clients[1];
     // i, F1 (the master), F2 (back to w1): view mode again, so Ctrl-D closes the tab and reaches no agent.
     terminal.type('i');
-    await waitForSidebar(terminal, '[typing]');
+    await waitForFooter(terminal, '[typing]');
     terminal.type(`${ESC}OP`);
     await attached(terminal);
     terminal.type(`${ESC}OQ`);
     await attached(terminal, 'orc-w1');
-    await waitForSidebar(terminal, '[view] i: type');
+    await waitForFooter(terminal, '[view] i: type');
     terminal.type('\x04');
     await attached(terminal);
     expect(app.tabs().projects[0].tabs).toEqual([]);
@@ -1230,21 +1232,21 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     app.apply((state) => openAgent(state, 'demo', 'w1'));
     await attached(terminal, 'orc-w1');
     terminal.type('i');
-    await waitForSidebar(terminal, '[typing]');
+    await waitForFooter(terminal, '[typing]');
     terminal.type(`${F12}t`);
     await attached(terminal, 'explorer-demo');
     terminal.type('\x1d');
     await attached(terminal, 'orc-w1');
-    await waitForSidebar(terminal, '[view] i: type');
+    await waitForFooter(terminal, '[view] i: type');
 
     // An attention jump (F11 to w2) leaves w1 view-only too.
     terminal.type('i');
-    await waitForSidebar(terminal, '[typing]');
+    await waitForFooter(terminal, '[typing]');
     terminal.type(F11);
     await attached(terminal, 'orc-w2');
     terminal.type(`${ESC}OQ`);
     await attached(terminal, 'orc-w1');
-    await waitForSidebar(terminal, '[view] i: type');
+    await waitForFooter(terminal, '[view] i: type');
     expect(clients.filter((fake) => fake.target.session === 'orc-w1').flatMap((fake) => fake.sent)).toEqual([]);
   });
 
@@ -1273,7 +1275,7 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     await attached(terminal, 'orc-w2');
     expect(app.tabs().activeProject).toBe('demo');
     expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: ['w2'], active: 'w2' });
-    await waitForSidebar(terminal, '[view] i: type'); // it opens view-only, with the keys
+    await waitForFooter(terminal, '[view] i: type'); // it opens view-only, with the keys
     // The badge: the next one is in the other project, added with the agent's tab.
     terminal.type(click(await columnOf(terminal, 2, '!', SIDEBAR_COLS), 2));
     await attached(terminal, 'orc-o1');
@@ -1296,7 +1298,7 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
 });
 
 describe('runApp pane mouse (fake tmux clients)', () => {
-  // The slot at 80x24 starts at frame cell (34, 3).
+  // The slot at 80x24 starts at frame cell (34, 4).
   const SX = 34;
   const SY = 4;
 
@@ -1409,7 +1411,7 @@ describe('runApp pane mouse (fake tmux clients)', () => {
     await sleep(40);
     expect(worker.sent).toEqual([]);
     terminal.type('i');
-    await waitForSidebar(terminal, '[typing]');
+    await waitForFooter(terminal, '[typing]');
     terminal.type(sgr(0, SX + 1, SY));
     expect(worker.sent).toEqual([`%2 ${ESC}[<0;2;1M`]);
   });
