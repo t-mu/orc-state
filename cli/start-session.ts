@@ -281,10 +281,13 @@ async function openCockpit(agent: NonNullable<typeof master>, sessionName: strin
   let launch;
   try {
     // Loaded only for a cockpit: --no-cockpit and a run without a TTY never load the renderer.
-    const { cockpitOpeningHint, launchCockpit } = await import('./cockpit.ts');
+    const { cockpitOpeningHint, cockpitTheme, launchCockpit } = await import('./cockpit.ts');
+    const { theme, problems: themeProblems } = cockpitTheme();
+    for (const problem of themeProblems) console.warn(`Warning: ${problem}.`);
     launch = await launchCockpit({
       projectId: project.id,
       keys,
+      theme,
       onClaimed: (replaced) => {
         if (replaced) console.log(`\nAsked the cockpit running in another terminal (pid ${replaced.pid}) to exit.`);
         console.log(`\nOpening the cockpit on master '${agent.agent_id}' (${project.name}). ${cockpitOpeningHint(keys)}.`);

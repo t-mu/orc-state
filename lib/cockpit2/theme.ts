@@ -257,7 +257,8 @@ export function resolveTheme(base: Theme, overrides: unknown): { theme: Theme; p
  * `ORC_COCKPIT_THEME` is a built-in name, or the path of a JSON file
  * `{ "base"?: "<built-in>", "roles"?: { "<role>": { ... } } }` read with
  * `readText` (null when it cannot be read); a file that cannot be read, is not
- * JSON or names an unknown base is a problem and gives `amber`. Unset gives `amber`.
+ * JSON or names an unknown base is a problem and gives `amber`. Any other field
+ * of the file is a problem and is skipped. Unset gives `amber`.
  */
 export function themeFromEnv(
   env: Record<string, string | undefined>,
@@ -279,8 +280,9 @@ export function themeFromEnv(
   if (!isRecord(parsed)) return fail(`${value} must hold a JSON object with optional "base" and "roles"`);
   const base = parsed.base === undefined ? 'amber' : parsed.base;
   if (!isBuiltInName(base)) return fail(`${value}: unknown base ${JSON.stringify(base)} (built-in themes: ${Object.keys(BUILT_IN_THEMES).join(', ')})`);
+  const unknownFields = Object.keys(parsed).filter((key) => key !== 'base' && key !== 'roles').map((key) => `unknown field '${key}' (fields: base, roles)`);
   const { theme, problems } = resolveTheme(BUILT_IN_THEMES[base], parsed.roles);
-  return { theme, problems: problems.map((problem) => `ORC_COCKPIT_THEME ${value}: ${problem}`) };
+  return { theme, problems: [...unknownFields, ...problems].map((problem) => `ORC_COCKPIT_THEME ${value}: ${problem}`) };
 }
 
 const DEFAULT_COLOR: Color = Object.freeze({ type: 'default' });

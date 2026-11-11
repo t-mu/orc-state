@@ -136,23 +136,23 @@ export function readTextOrNull(path: string): string | null {
 
 /**
  * The theme the cockpit draws in, from `NO_COLOR` and `ORC_COCKPIT_THEME`
- * (theme.ts `themeFromEnv`). Each problem is reported as `Warning: …`, as
- * invalid cockpit keys are, and never stops the cockpit: a theme that cannot
- * be used falls back to `amber`.
+ * (theme.ts `themeFromEnv`), and its problems. The entry points resolve it
+ * beside the cockpit keys and print each problem as they print the key
+ * problems; a problem never stops the cockpit (a theme that cannot be used
+ * gives `amber`).
  */
 export function cockpitTheme(
   env: Record<string, string | undefined> = process.env,
   readText: (path: string) => string | null = readTextOrNull,
-  warn: (message: string) => void = (message) => console.error(message),
-): Theme {
-  const { theme, problems } = themeFromEnv(env, readText);
-  for (const problem of problems) warn(`Warning: ${problem}`);
-  return theme;
+): { theme: Theme; problems: string[] } {
+  return themeFromEnv(env, readText);
 }
 
 export interface CockpitOptions {
   projectId: string;
   keys: CockpitKeys;
+  /** The theme the cockpit draws in (`cockpitTheme`). */
+  theme: Theme;
   /** orc's data home (default: `projectDataHome()`). */
   dataHome?: string;
   /** Called once this cockpit holds the instance lock, before it takes the terminal: `replaced` is the running cockpit asked to exit. */
@@ -174,8 +174,6 @@ export interface CockpitResult {
  */
 export async function runCockpit(options: CockpitOptions): Promise<CockpitResult> {
   const { lockPath, store } = cockpitFiles(options.dataHome ?? projectDataHome());
-  // Resolved here, when this process runs a cockpit (a takeover resolves anew), and before the terminal is taken, so its warnings stay readable.
-  const theme = cockpitTheme();
   const self = thisProcess();
   // Listening before the lock names this process: SIGUSR2's default action ends it, and a
   // wake-up can come before the app runs (it is then handled once the app does).
@@ -212,7 +210,7 @@ export async function runCockpit(options: CockpitOptions): Promise<CockpitResult
       projectId: options.projectId,
       keys: options.keys,
       colorDepth: colorDepthFromEnv(process.env),
-      theme,
+      theme: options.theme,
       explorer: tmuxExplorerHost({ tmuxBinary: tmuxBinary(), command: (projectId) => explorerCommand(thisOrc(), projectId) }),
     });
     if (wokenEarly) wake();
@@ -290,10 +288,11 @@ async function main(): Promise<void> {
   requireProjectScope();
   if (!process.stdin.isTTY || !process.stdout.isTTY) cliError('orc cockpit needs a terminal (stdin and stdout must be a TTY)');
   const { keys, problems } = resolveCockpitKeys();
-  for (const problem of problems) console.error(`Warning: ${problem}`);
+  const { theme, problems: themeProblems } = cockpitTheme();
+  for (const problem of [...problems, ...themeProblems]) console.error(`Warning: ${problem}`);
   if (!ACTIVE_PROJECT) cliError('orc cockpit needs a registered project; run it inside one');
   try {
-    const launch = await launchCockpit({ projectId: ACTIVE_PROJECT.id, keys });
+    const launch = await launchCockpit({ projectId: ACTIVE_PROJECT.id, keys, theme });
     if (launch.kind === 'added') {
       console.log(launch.running
         ? `Added ${ACTIVE_PROJECT.name} to the cockpit (pid ${launch.running.pid}); it shows the project now.`

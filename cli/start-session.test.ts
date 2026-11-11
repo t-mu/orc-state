@@ -149,6 +149,7 @@ function mockProcessExit() {
 interface CockpitLaunchCall {
   projectId: string;
   keys: { prefix: string; quit: string | null; direct: Record<string, string | null> };
+  theme: { name: string };
 }
 
 /**
@@ -227,10 +228,13 @@ function mockTmux(spawnMock: ReturnType<typeof vi.fn>, { available = true } = {}
   }));
   vi.doMock('./cockpit.ts', async () => {
     const { quitHint } = await vi.importActual<typeof import('../lib/cockpit2/app.ts')>('../lib/cockpit2/app.ts');
+    const { themeFromEnv } = await vi.importActual<typeof import('../lib/cockpit2/theme.ts')>('../lib/cockpit2/theme.ts');
     return {
       cockpitOpeningHint: vi.fn().mockImplementation(quitHint),
+      // The real resolution, with no theme file readable.
+      cockpitTheme: vi.fn().mockImplementation(() => themeFromEnv(process.env, () => null)),
       launchCockpit: vi.fn().mockImplementation((options: CockpitLaunchCall & { onClaimed?(replaced: unknown): void }) => {
-        tmuxFake.cockpitLaunches.push({ projectId: options.projectId, keys: options.keys });
+        tmuxFake.cockpitLaunches.push({ projectId: options.projectId, keys: options.keys, theme: options.theme });
         if (tmuxFake.cockpitFails) return Promise.reject(new Error('the cockpit running as pid 4242 did not exit within 5 s'));
         if (tmuxFake.insideOrcTmux) return Promise.resolve({ kind: 'added', running: tmuxFake.cockpitRunning });
         options.onClaimed?.(tmuxFake.cockpitRunning);
@@ -1159,6 +1163,42 @@ describe('cli/start-session.ts', () => {
       expect(lines.join('\n')).toContain('Ctrl-a d: quit');
     });
 
+    /** start-session run with `ORC_COCKPIT_THEME=theme` (and no NO_COLOR): the cockpit launch and the warnings. */
+    async function launchWithTheme(theme: string) {
+      seedState();
+      mockSpawn();
+      withTty();
+      mockBinaryCheck(true);
+      const warnings: string[] = [];
+      vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => warnings.push(args.join(' ')));
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      setEnv(dir);
+      seedCoordinatorRunning();
+      const noColor = process.env.NO_COLOR;
+      delete process.env.NO_COLOR;
+      process.env.ORC_COCKPIT_THEME = theme;
+      try {
+        process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+        await import('./start-session.ts');
+      } finally {
+        delete process.env.ORC_COCKPIT_THEME;
+        if (noColor !== undefined) process.env.NO_COLOR = noColor;
+      }
+      return { launch: tmuxFake.cockpitLaunches[0], warnings };
+    }
+
+    it('opens the cockpit in the theme ORC_COCKPIT_THEME names', async () => {
+      const { launch, warnings } = await launchWithTheme('mono');
+      expect(launch.theme.name).toBe('mono');
+      expect(warnings.join('\n')).not.toContain('ORC_COCKPIT_THEME');
+    });
+
+    it('reports a theme it cannot use as the key problems are, and opens the cockpit in amber', async () => {
+      const { launch, warnings } = await launchWithTheme('/no/such-theme.json');
+      expect(launch.theme.name).toBe('amber');
+      expect(warnings).toContainEqual(expect.stringMatching(/^Warning: ORC_COCKPIT_THEME: '\/no\/such-theme\.json' is not a built-in theme .*; using amber\.$/));
+    });
+
     it('says the cockpit moved when another terminal took it over, and leaves the master running', async () => {
       seedState();
       mockSpawn();
@@ -1265,6 +1305,14 @@ describe('cli/start-session.ts', () => {
       expect(lines.join('\n')).toMatch(/Added .* to the cockpit \(pid 4242\); it shows the project now/);
       expect(lines.join('\n')).not.toContain('Opening the cockpit');
       expect(readAgents()[0]).toMatchObject({ status: 'running', session_handle: 'tmux:master' });
+    });
+
+    it('reports a bad theme on a nested add too, as it reports bad keys', async () => {
+      tmuxFake.insideOrcTmux = true;
+      const { launch, warnings } = await launchWithTheme('/no/such-theme.json');
+      expect(launch.theme.name).toBe('amber');
+      expect(tmuxFake.attaches).toHaveLength(0);
+      expect(warnings).toContainEqual(expect.stringMatching(/^Warning: ORC_COCKPIT_THEME: '\/no\/such-theme\.json' is not a built-in theme/));
     });
 
     it('says where the added project opens when no cockpit runs', async () => {

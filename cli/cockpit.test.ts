@@ -105,10 +105,9 @@ describe('explorerCommand', () => {
 
 describe('cockpitTheme', () => {
   const resolve = (env: Record<string, string | undefined>, files: Record<string, string> = {}) => {
-    const warnings: string[] = [];
     const read: string[] = [];
-    const theme = cockpitTheme(env, (path) => { read.push(path); return files[path] ?? null; }, (message) => warnings.push(message));
-    return { theme, warnings, read };
+    const { theme, problems } = cockpitTheme(env, (path) => { read.push(path); return files[path] ?? null; });
+    return { theme, warnings: problems, read };
   };
 
   it('draws in amber with no setting, in a named built-in theme, and in mono under NO_COLOR', () => {
@@ -131,10 +130,10 @@ describe('cockpitTheme', () => {
   it('warns about an unreadable or invalid theme file and draws in amber', () => {
     const missing = resolve({ ORC_COCKPIT_THEME: '/no/such.json' });
     expect(missing.theme).toBe(BUILT_IN_THEMES.amber);
-    expect(missing.warnings).toEqual([expect.stringMatching(/^Warning: ORC_COCKPIT_THEME: '\/no\/such\.json' is not a built-in theme .* or a readable file; using amber$/)]);
+    expect(missing.warnings).toEqual([expect.stringMatching(/^ORC_COCKPIT_THEME: '\/no\/such\.json' is not a built-in theme .* or a readable file; using amber$/)]);
     const broken = resolve({ ORC_COCKPIT_THEME: '/t.json' }, { '/t.json': '{ nope' });
     expect(broken.theme).toBe(BUILT_IN_THEMES.amber);
-    expect(broken.warnings).toEqual([expect.stringMatching(/^Warning: ORC_COCKPIT_THEME: \/t\.json is not valid JSON/)]);
+    expect(broken.warnings).toEqual([expect.stringMatching(/^ORC_COCKPIT_THEME: \/t\.json is not valid JSON/)]);
   });
 
   it('warns once per bad role and keeps the rest of the file', () => {
@@ -143,7 +142,7 @@ describe('cockpitTheme', () => {
       { '/t.json': '{ "roles": { "chrome.nope": {}, "chrome.border": { "fg": "red" }, "text.muted": { "bold": true } } }' },
     );
     expect(warnings).toHaveLength(2);
-    for (const warning of warnings) expect(warning).toMatch(/^Warning: ORC_COCKPIT_THEME \/t\.json: /);
+    for (const warning of warnings) expect(warning).toMatch(/^ORC_COCKPIT_THEME \/t\.json: /);
     expect(theme.roles['chrome.border']).toEqual(BUILT_IN_THEMES.amber.roles['chrome.border']);
     expect(theme.roles['text.muted']).toEqual({ ...BUILT_IN_THEMES.amber.roles['text.muted'], bold: true });
   });
@@ -195,7 +194,7 @@ describe('addToCockpit', () => {
   it('a launch from inside orc\'s tmux servers adds the project instead of running a cockpit', async () => {
     home = mkdtempSync(join(tmpdir(), 'orc-cockpit-add-'));
     const env = { TMUX: `${join(process.env.TMUX_TMPDIR || '/tmp', `tmux-${process.getuid?.() ?? 0}`)}/orc-0123456789ab,1,0` };
-    const launch = await launchCockpit({ projectId: 'nested', keys: DEFAULT_COCKPIT_KEYS, dataHome: home, env });
+    const launch = await launchCockpit({ projectId: 'nested', keys: DEFAULT_COCKPIT_KEYS, theme: BUILT_IN_THEMES.amber, dataHome: home, env });
     expect(launch).toEqual({ kind: 'added', running: null });
     const { viewStatePath, viewStateLockPath } = cockpitPaths(home);
     expect(createViewStateStore({ path: viewStatePath, lockPath: viewStateLockPath }).load().tabs.activeProject).toBe('nested');
