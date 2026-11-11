@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { stringWidth } from '../cellWidth.ts';
 import type { SidebarAgent, SidebarModel, SidebarProject } from '../tui/sidebar.ts';
-import { CLOSE_MARKER, buildTabBarModel, tabBarClickTarget, type TabBarState } from '../tui/tabBarModel.ts';
+import { fitText } from '../tui/sidebar.ts';
+import { CLOSE_MARKER, buildTabBarModel, layoutTabBar, tabBarClickTarget, type TabBarState } from '../tui/tabBarModel.ts';
 import { computeLayout } from './app.ts';
 import { createFrame, type Frame } from './frame.ts';
 import { BUILT_IN_THEMES, styleOf } from './theme.ts';
 import {
-  EXPLORER_TAB, INITIAL_SIDEBAR_NAV, TYPING_MARK, VIEW_MARK, drawFooter, drawSidebar, drawTabBar, navigateSidebar, sidebarClick, sidebarView, tabBarButtonAt,
-  tabBarView, withExplorerTab, withModeMarks, type FooterHint, type SidebarNav, type TabBarButton,
+  EXPLORER_TAB, INITIAL_SIDEBAR_NAV, TYPING_MARK, VIEW_MARK, HEADER_MARK, drawFooter, drawHeader, drawSidebar, drawTabBar, headerButtonAt, headerView, navigateSidebar, sidebarClick,
+  sidebarView, tabBarView, withExplorerTab, withModeMarks, type FooterHint, type HeaderButton, type SidebarNav,
 } from './widgets.ts';
 
 /** Today's look: every cell drawn as before the theme roles. */
@@ -188,7 +189,7 @@ const TABS: TabBarState = { activeProject: 'p1', projects: [{ projectId: 'p1', t
 function renderTabBar(cols: number, rows: number, state: TabBarState = TABS, slotFocused = true, typing = new Set([EMOJI_AGENT])) {
   const layout = computeLayout(cols, rows);
   const frame = createFrame(cols, rows);
-  const bar = tabBarView(withModeMarks(buildTabBarModel(state, new Map([['w3', 'permission_prompt' as const]])), (id) => typing.has(id)), layout.tabBar.cols, 'Ctrl-q: quit');
+  const bar = tabBarView(withModeMarks(buildTabBarModel(state, new Map([['w3', 'permission_prompt' as const]])), (id) => typing.has(id)), layout.tabBar.cols);
   drawTabBar(frame, layout.tabBar, bar, { slotFocused, error: null, theme: CLASSIC });
   const lines = [0, 1, 2].map((y) => rowText(frame, layout.tabBar.y + y, layout.tabBar.x, layout.tabBar.cols));
   return { frame, layout, bar, lines };
@@ -201,7 +202,7 @@ describe('drawTabBar', () => {
     expect(lines[1]).toContain(` 2 ${VIEW_MARK} ${CJK_AGENT} ${CLOSE_MARKER} │`);
     expect(lines[1]).toContain(` 3 ${TYPING_MARK} ${EMOJI_AGENT} ${CLOSE_MARKER} │`);
     expect(lines[1]).toContain(` 4 ${VIEW_MARK} w3 PERMISSION ${CLOSE_MARKER} │`);
-    expect(lines[1].trimEnd().endsWith('Ctrl-q: quit')).toBe(true);
+    expect(lines[1]).not.toContain('quit'); // the quit key is in the footer
     // Each tab's borders line up across the three rows: display widths, not string lengths.
     for (const cell of bar.layout.cells) {
       expect(columnOf(lines[0], cell.x)).toBe('╭');
@@ -224,16 +225,14 @@ describe('drawTabBar', () => {
     expect(unfocused.frame.cells[2 * 200 + x + 2].style.bold).toBe(true); // still the active tab
   });
 
-  it('fits 80x24 with overflow markers, the active tab always shown and the quit hint kept in view', () => {
+  it('fits 80x24 with overflow markers and the active tab always shown, the tabs taking the full width', () => {
     const { lines, bar } = renderTabBar(80, 24);
     expect(bar.layout.hiddenLeft + bar.layout.hiddenRight).toBeGreaterThan(0);
     expect(bar.layout.cells.some((cell) => cell.index === 1)).toBe(true);
-    expect(lines[1]).toMatch(/^‹ 1 .* 2 › +Ctrl-q: quit$/); // the master tab left of the shown one, two tabs right of it
     for (const line of lines) expect(stringWidth(line)).toBe(46);
-    expect(lines[1].endsWith(' Ctrl-q: quit')).toBe(true);
-    expect(lines[1]).not.toContain('│Ctrl-q'); // the tabs end before it
-    // A bar too narrow for both keeps the tabs.
-    expect(tabBarView(buildTabBarModel(TABS), 30, 'Ctrl-q: quit').hint).toBeNull();
+    expect(bar.layout).toEqual(layoutTabBar(bar.model, 46)); // nothing reserved for buttons or a hint
+    expect(lines[1]).not.toContain('quit');
+    expect(lines[1]).not.toContain('tasks');
   });
 
   it('shows the error on the bottom row and a notice without tabs', () => {
@@ -242,48 +241,71 @@ describe('drawTabBar', () => {
     drawTabBar(frame, layout.tabBar, tabBarView(buildTabBarModel(TABS), 46), { slotFocused: true, error: 'The master tab stays open.', theme: CLASSIC });
     expect(rowText(frame, 3, 34, 46).trimEnd()).toBe('The master tab stays open.');
     const empty = createFrame(80, 24);
-    drawTabBar(empty, layout.tabBar, tabBarView(buildTabBarModel({ activeProject: null, projects: [] }), 46, 'x'), { slotFocused: true, error: null, theme: CLASSIC });
+    drawTabBar(empty, layout.tabBar, tabBarView(buildTabBarModel({ activeProject: null, projects: [] }), 46), { slotFocused: true, error: null, theme: CLASSIC });
     expect(rowText(empty, 2, 34, 46)).toContain('No project is open');
   });
 });
 
-describe('tab bar buttons and the explorer tab', () => {
-  const BUTTONS: TabBarButton[] = [{ action: 'explorer', text: 'tasks' }, { action: 'attention', text: '! 2' }];
+describe('header', () => {
+  const BUTTONS: HeaderButton[] = [{ action: 'explorer', text: 'tasks' }, { action: 'attention', text: '! 2' }];
+  const NAME = 'a-project-with-a-name-long-enough-to-cut-at-sixty';
 
-  for (const [cols, rows] of [[80, 24], [200, 60]] as const) {
-    it(`draws the tasks entry and the attention badge left of the quit hint and hit-tests them at ${cols}x${rows}`, () => {
-      const layout = computeLayout(cols, rows);
-      const frame = createFrame(cols, rows);
-      const bar = tabBarView(buildTabBarModel(TABS), layout.tabBar.cols, 'Ctrl-q: quit', BUTTONS);
-      drawTabBar(frame, layout.tabBar, bar, { slotFocused: true, error: null, theme: CLASSIC });
-      const line = rowText(frame, layout.tabBar.y + 1, layout.tabBar.x, layout.tabBar.cols);
-      expect(line.endsWith(' tasks ! 2 Ctrl-q: quit')).toBe(true);
-      expect(stringWidth(line)).toBe(layout.tabBar.cols);
-      // The tabs end before the buttons.
-      const used = stringWidth(bar.layout.leftMarker) + bar.layout.cells.reduce((sum, cell) => sum + cell.width, 0) + stringWidth(bar.layout.rightMarker);
-      expect(used).toBeLessThan(bar.buttons[0].x);
-      const tasks = bar.buttons[0].x;
-      const badge = bar.buttons[1].x;
-      expect([tasks, tasks + 4].map((x) => tabBarButtonAt(bar, x))).toEqual(['explorer', 'explorer']);
-      expect([badge, badge + 2].map((x) => tabBarButtonAt(bar, x))).toEqual(['attention', 'attention']);
-      expect(tabBarButtonAt(bar, tasks - 1)).toBeNull();
-      expect(tabBarButtonAt(bar, layout.tabBar.cols - 1)).toBeNull(); // the quit hint
-      expect(frame.cells[(layout.tabBar.y + 1) * cols + layout.tabBar.x + badge].style.inverse).toBe(true);
-    });
+  function renderHeader(cols: number, name: string | null = NAME, buttons: HeaderButton[] = BUTTONS, theme = CLASSIC) {
+    const frame = createFrame(cols, 1);
+    const view = headerView(cols, name, buttons);
+    drawHeader(frame, { x: 0, y: 0, cols, rows: 1 }, view, theme);
+    return { frame, view, line: rowText(frame, 0, 0, cols) };
   }
 
-  it('drops the buttons, the first given first, before the quit hint on a narrow bar, and has none without a project', () => {
-    expect(tabBarView(buildTabBarModel(TABS), 40, 'Ctrl-q: quit', BUTTONS).buttons.map((button) => button.action)).toEqual(['attention']);
-    expect(tabBarView(buildTabBarModel(TABS), 37, 'Ctrl-q: quit', [BUTTONS[0]])).toMatchObject({ buttons: [], hint: 'Ctrl-q: quit' });
-    expect(tabBarView(buildTabBarModel(TABS), 36, 'Ctrl-q: quit', BUTTONS)).toMatchObject({ buttons: [], hint: null });
-    expect(tabBarView(buildTabBarModel({ activeProject: null, projects: [] }), 46, 'x', BUTTONS).buttons).toEqual([]);
+  it('shows the mark, the project and the buttons flush right at 80 columns', () => {
+    const { line, view } = renderHeader(80);
+    expect(line).toBe(`ORC │ ${NAME}`.padEnd(80 - ' tasks ! 2'.length) + ' tasks ! 2');
+    expect(view.buttons.map((button) => [button.action, button.x])).toEqual([['explorer', 71], ['attention', 77]]);
   });
 
+  it('cuts the project name first, then drops the explorer button, then the attention button', () => {
+    expect(renderHeader(60).line).toBe(`ORC │ ${fitText(NAME, 44)} tasks ! 2`);
+    expect(renderHeader(40).line).toBe(`ORC │ ${fitText(NAME, 24)} tasks ! 2`);
+    const narrow = renderHeader(20);
+    expect(narrow.line).toBe(`ORC │ ${fitText(NAME, 10)} ! 2`);
+    expect(narrow.view.buttons.map((button) => button.action)).toEqual(['attention']);
+    // Only the attention button left: it goes once the name would keep fewer than 6 columns.
+    expect(renderHeader(16).view.buttons.map((button) => button.action)).toEqual(['attention']);
+    expect(renderHeader(15).view.buttons).toEqual([]);
+    expect(renderHeader(15).line).toBe(`ORC │ ${fitText(NAME, 9)}`);
+    // A short name is not cut before the buttons go.
+    expect(renderHeader(20, 'demo').line).toBe('ORC │ demo tasks ! 2');
+  });
+
+  it('shows only the mark with no project open', () => {
+    expect(renderHeader(40, null, []).line).toBe('ORC'.padEnd(40));
+  });
+
+  it('hit-tests the buttons on their text only', () => {
+    const { view } = renderHeader(80);
+    const [tasks, badge] = view.buttons.map((button) => button.x);
+    expect([tasks, tasks + 4].map((x) => headerButtonAt(view, x))).toEqual(['explorer', 'explorer']);
+    expect([badge, badge + 2].map((x) => headerButtonAt(view, x))).toEqual(['attention', 'attention']);
+    expect([tasks - 1, tasks + 5, 0].map((x) => headerButtonAt(view, x))).toEqual([null, null, null]);
+  });
+
+  it('draws the mark bold in text.accent, the name in text.primary and the buttons in their roles', () => {
+    const AMBER = BUILT_IN_THEMES.amber;
+    const { frame, view } = renderHeader(80, NAME, BUTTONS, AMBER);
+    expect(frame.cells[0].text).toBe(HEADER_MARK[0]);
+    expect(frame.cells[0].style).toEqual({ ...styleOf(AMBER, 'text.accent'), bold: true });
+    expect(frame.cells[6].style).toEqual(styleOf(AMBER, 'text.primary'));
+    expect(frame.cells[view.buttons[0].x].style).toEqual(styleOf(AMBER, 'button'));
+    expect(frame.cells[view.buttons[1].x].style).toEqual(styleOf(AMBER, 'button.attention'));
+  });
+});
+
+describe('the explorer tab', () => {
   it('shows the explorer as the active, closable tab after the project\'s tabs', () => {
     const model = withExplorerTab(buildTabBarModel(TABS));
     expect(model.tabs.map((tab) => [tab.label, tab.active])).toEqual([['master', false], [CJK_AGENT, false], [EMOJI_AGENT, false], ['w3', false], ['tasks', true]]);
     expect(model.tabs.at(-1)).toMatchObject({ agentId: EXPLORER_TAB, number: 5, closable: true });
-    const bar = tabBarView(model, 200, null);
+    const bar = tabBarView(model, 200);
     const cell = bar.layout.cells.at(-1)!;
     expect(tabBarClickTarget(bar.model, bar.layout, cell.closeX!)).toEqual({ kind: 'close', tab: model.tabs.at(-1) });
     const empty = buildTabBarModel({ activeProject: null, projects: [] });
@@ -400,7 +422,7 @@ describe('full-style snapshot at 80x24', () => {
   const agents = [...KINDS.map((kind) => agent(`a-${kind}`, { attention: kind, detail: `${kind} detail` })), agent('plain', { elapsed: null, detail: null })];
   const tabAgents = KINDS.map((kind) => `a-${kind}`);
   const tabAttention = new Map(KINDS.map((kind) => [`a-${kind}`, kind]));
-  const BUTTONS: TabBarButton[] = [{ action: 'explorer', text: 'tasks' }, { action: 'attention', text: '! 4' }];
+  const BUTTONS: HeaderButton[] = [{ action: 'explorer', text: 'tasks' }, { action: 'attention', text: '! 4' }];
 
   function draw(sidebar: SidebarModel, focus: 'projects' | 'agents' | null, nav: SidebarNav, activeTab: string, slotFocused: boolean, error: string | null, explorer = false): string[] {
     const layout = computeLayout(80, 24);
@@ -408,7 +430,8 @@ describe('full-style snapshot at 80x24', () => {
     drawSidebar(frame, layout.sidebar, sidebarView(sidebar, layout.sidebar.rows, nav), { focus, theme: CLASSIC });
     const tabs = buildTabBarModel({ activeProject: 'p1', projects: [{ projectId: 'p1', tabs: tabAgents, active: activeTab }] }, tabAttention);
     const marked = withModeMarks(tabs, (id) => id === 'a-question');
-    drawTabBar(frame, layout.tabBar, tabBarView(explorer ? withExplorerTab(marked) : marked, layout.tabBar.cols, 'Ctrl-q: quit', BUTTONS), { slotFocused, error, theme: CLASSIC });
+    drawHeader(frame, layout.header, headerView(80, 'p1', explorer ? BUTTONS.slice(1) : BUTTONS), CLASSIC);
+    drawTabBar(frame, layout.tabBar, tabBarView(explorer ? withExplorerTab(marked) : marked, layout.tabBar.cols), { slotFocused, error, theme: CLASSIC });
     drawFooter(frame, layout.footer, { mode: '[sidebar] ↑↓ move · Enter open', breadcrumb: { project: 'p1', tab: explorer ? 'tasks' : activeTab }, hints: FOOTER_HINTS, theme: CLASSIC });
     return serialiseFrame(frame);
   }

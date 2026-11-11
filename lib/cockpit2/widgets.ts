@@ -248,20 +248,65 @@ export function drawSidebar(frame: Frame, region: Region, view: SidebarView, opt
   if (hiddenAgents > 0) line(y + 2 * layout.agents.length, [[`+${hiddenAgents} more`, MUTED]]);
 }
 
+// ── header ───────────────────────────────────────────────────────────────────
+
+/** A clickable entry flush right in the header: the task explorer, or the count of agents needing attention. */
+export interface HeaderButton { action: 'explorer' | 'attention'; text: string }
+/** A button as placed: `x` is its first column in the header. */
+export interface PlacedHeaderButton extends HeaderButton { x: number }
+
+/** The header as it is drawn: the active project's name as it fits (null with none open) and the buttons that fit, flush right. */
+export interface HeaderView { project: string | null; buttons: PlacedHeaderButton[] }
+
+/** The orc mark, first in the header. */
+export const HEADER_MARK = 'ORC';
+const HEADER_SEPARATOR = ' │ ';
+/** The project name is cut down to this many columns (or its own width) before a button is dropped. */
+const MIN_HEADER_NAME_COLS = 6;
+
+/**
+ * Lays the header out in `cols`: the orc mark, a separator and the project's
+ * name on the left, the `buttons` flush right, each after a space. A narrow
+ * header cuts the name first (down to 6 columns), then drops buttons, the
+ * first given first.
+ */
+export function headerView(cols: number, projectName: string | null, buttons: readonly HeaderButton[]): HeaderView {
+  const left = stringWidth(HEADER_MARK) + (projectName === null ? 0 : stringWidth(HEADER_SEPARATOR) + Math.min(stringWidth(projectName), MIN_HEADER_NAME_COLS));
+  const width = (list: readonly HeaderButton[]) => list.reduce((sum, button) => sum + stringWidth(button.text) + 1, 0);
+  let kept = buttons;
+  while (kept.length > 0 && left + width(kept) > cols) kept = kept.slice(1);
+  const reserve = width(kept);
+  let x = cols - reserve + 1;
+  const placed = kept.map((button) => {
+    const at = { ...button, x };
+    x += stringWidth(button.text) + 1;
+    return at;
+  });
+  const nameCols = cols - reserve - stringWidth(HEADER_MARK) - stringWidth(HEADER_SEPARATOR);
+  return { project: projectName === null ? null : fitText(projectName, Math.max(0, nameCols)), buttons: placed };
+}
+
+/** The header button at column `x`, or null. */
+export function headerButtonAt(view: HeaderView, x: number): HeaderButton['action'] | null {
+  return view.buttons.find((button) => x >= button.x && x < button.x + stringWidth(button.text))?.action ?? null;
+}
+
+/** Draws the header into `region`'s first row: the mark (`text.accent`, bold), the project's name (`text.primary`) and the buttons. */
+export function drawHeader(frame: Frame, region: Region, view: HeaderView, theme: Theme): void {
+  if (region.cols <= 0 || region.rows <= 0) return;
+  const runs: Run[] = [[HEADER_MARK, roleWith(theme, 'text.accent', { bold: true })]];
+  if (view.project) runs.push([HEADER_SEPARATOR, styleOf(theme, 'text.muted')], [view.project, styleOf(theme, 'text.primary')]);
+  drawRuns(frame, region.x, region.y, runs, region.cols);
+  for (const button of view.buttons) {
+    const width = stringWidth(button.text);
+    drawText(frame, region.x + button.x, region.y, button.text, styleOf(theme, button.action === 'attention' ? 'button.attention' : 'button'), width);
+  }
+}
+
 // ── tab bar ──────────────────────────────────────────────────────────────────
 
-/** A clickable entry flush right in the tab bar, left of the quit hint: the task explorer, or the count of agents needing attention. */
-export interface TabBarButton { action: 'explorer' | 'attention'; text: string }
-/** A button as placed: `x` is its first column in the bar. */
-export interface PlacedTabBarButton extends TabBarButton { x: number }
-
-/** The tab bar as it is drawn: the model, which tabs fit, the hint flush right of them (null when it has no room), and the buttons left of the hint. */
-export interface TabBarView { model: TabBarModel; layout: TabBarLayout; hint: string | null; buttons: PlacedTabBarButton[] }
-
-/** The tabs keep at least this many columns; a narrower bar drops the hint instead. */
-const MIN_TAB_COLS = 24;
-/** The tabs keep at least this many columns next to the buttons; a narrower bar drops buttons, the first given first. */
-const MIN_TAB_COLS_WITH_BUTTONS = 20;
+/** The tab bar as it is drawn: the model and which tabs fit. */
+export interface TabBarView { model: TabBarModel; layout: TabBarLayout }
 
 /** The explorer tab's id in the tab bar model: not an agent id (agent ids hold no control characters). */
 export const EXPLORER_TAB = '\u0000tasks';
@@ -282,33 +327,9 @@ export function withExplorerTab(model: TabBarModel): TabBarModel {
   return { ...model, tabs: [...tabs, { agentId: EXPLORER_TAB, number: tabs.length + 1, label: EXPLORER_LABEL, active: true, attention: null, closable: true }] };
 }
 
-/**
- * Lays the tabs out in `cols`, minus room for `hint` (the quit key) flush
- * right and the `buttons` left of it, so the hint stays visible however many
- * tabs are open: tabs that do not fit go behind the overflow markers. Buttons
- * are left out (the first given first) when the tabs would keep fewer than
- * 20 columns, the hint when they would keep fewer than 24.
- */
-export function tabBarView(model: TabBarModel, cols: number, hint: string | null = null, buttons: TabBarButton[] = []): TabBarView {
-  const shownHint = hint && cols - (stringWidth(hint) + 1) >= MIN_TAB_COLS ? hint : null;
-  const hintReserve = shownHint ? stringWidth(shownHint) + 1 : 0;
-  const width = (list: TabBarButton[]) => list.reduce((sum, button) => sum + stringWidth(button.text) + 1, 0);
-  // The quit hint comes first: a bar with no room for it has none for the buttons.
-  let kept = model.notice || (hint && !shownHint) ? [] : buttons;
-  while (kept.length > 0 && cols - hintReserve - width(kept) < MIN_TAB_COLS_WITH_BUTTONS) kept = kept.slice(1);
-  const reserve = hintReserve + width(kept);
-  let x = cols - reserve + 1;
-  const placed = kept.map((button) => {
-    const at = { ...button, x };
-    x += stringWidth(button.text) + 1;
-    return at;
-  });
-  return { model, layout: layoutTabBar(model, cols - reserve), hint: shownHint, buttons: placed };
-}
-
-/** The button at column `x` of the bar (any row), or null. */
-export function tabBarButtonAt(view: TabBarView, x: number): TabBarButton['action'] | null {
-  return view.buttons.find((button) => x >= button.x && x < button.x + stringWidth(button.text))?.action ?? null;
+/** Lays the tabs out in the bar's full width: tabs that do not fit go behind the overflow markers. */
+export function tabBarView(model: TabBarModel, cols: number): TabBarView {
+  return { model, layout: layoutTabBar(model, cols) };
 }
 
 export interface TabBarDrawOptions {
@@ -346,15 +367,6 @@ export function drawTabBar(frame: Frame, region: Region, view: TabBarView, optio
   rows.forEach((segments, offset) => {
     drawRuns(frame, region.x, region.y + offset, segments.map((segment): Run => [segment.text, segmentStyle(segment, model, options.slotFocused, options.theme)]), region.cols);
   });
-  if (model.notice) return;
-  const y = region.y + (region.rows >= 3 ? 1 : 0);
-  for (const button of view.buttons) {
-    const width = stringWidth(button.text);
-    drawText(frame, region.x + button.x, y, button.text, styleOf(options.theme, button.action === 'attention' ? 'button.attention' : 'button'), width);
-  }
-  if (!view.hint) return;
-  const hintWidth = stringWidth(view.hint);
-  drawText(frame, region.x + region.cols - hintWidth, y, view.hint, styleOf(options.theme, 'chrome.meta'), hintWidth);
 }
 
 // ── footer ───────────────────────────────────────────────────────────────────

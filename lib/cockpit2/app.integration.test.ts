@@ -6,7 +6,7 @@ import { DEFAULT_COCKPIT_KEYS } from '../cockpitKeys.ts';
 import { runApp } from './app.ts';
 import { tmuxExplorerHost, type ExplorerHost } from './explorer.ts';
 import { EDGE_ROW } from './frame.ts';
-import { FakeTerminal, FakeWatcher, F12, MemoryStore, apps, projectState, shown, slotRows, waitFor, waitForSlotLine, waitForTabBar } from '../../test-fixtures/cockpitAppFakes.ts';
+import { FakeTerminal, FakeWatcher, F12, MemoryStore, apps, projectState, shown, slotRows, text, waitFor, waitForSlotLine, waitForTabBar } from '../../test-fixtures/cockpitAppFakes.ts';
 
 // ── the app against a private tmux server ────────────────────────────────────
 
@@ -143,7 +143,7 @@ describe.skipIf(!hasTmux)('runApp (private tmux server)', () => {
     await waitForSlotLine(terminal, '$');
     expect(app.tabs()).toEqual(before);
     expect(tmux('capture-pane', '-p', '-t', `=${master}:`).stdout).not.toContain('jjk');
-    await waitForTabBar(terminal, 1, 'tasks Ctrl-q: quit');
+    await waitFor(async () => text(await shown(terminal), 0).endsWith(' tasks')); // its header entry is back
 
     // Opened again, it closes with the cockpit.
     terminal.type(`${F12}t`);

@@ -24,14 +24,17 @@
  * app; masters, workers and coordinators keep running, and closing a tab only
  * detaches its view.
  *
- * The terminal's top row is the header (reserved, blank for now) and its last
- * row the footer: the mode, `project › tab` and the cockpit keys; a terminal
- * too short drops the footer, then the header, before the slot shrinks. The
- * sidebar, the tab bar and the footer are drawn by widgets.ts, the first two
- * from the pure models of lib/tui. The keys belong to the slot or to a sidebar box: the dashboard key
+ * The terminal's top row is the header: the orc mark, the active project's
+ * name, and flush right the task explorer entry and the count of agents
+ * needing attention (both clickable). Its last row is the footer: the mode,
+ * `project › tab` and the cockpit keys; a terminal too short drops the
+ * footer, then the header, before the slot shrinks. The header, the
+ * sidebar, the tab bar and the footer are drawn by widgets.ts, the sidebar
+ * and the tab bar from the pure models of lib/tui. The keys belong to the slot or to a sidebar box: the dashboard key
  * (F10 by default) or the prefix then `o` focus the sidebar, where arrows (or
  * j/k), Tab, Enter and Esc navigate, open and return to the pane. Clicks on a
- * sidebar row open that project or agent, on a tab show it, on a tab's close
+ * sidebar row open that project or agent, on a header button open the
+ * explorer or jump to attention, on a tab show it, on a tab's close
  * marker close it (only the view: the agent keeps running). What Enter or a
  * click opens takes the keys.
  *
@@ -50,7 +53,7 @@
  * in the slot keeps the mouse until its release, wherever the pointer goes.
  *
  * The task explorer (explorer.ts) is a tab of its own: the prefix then `t`,
- * or the `tasks` entry of the tab bar, starts it for the active project in a
+ * or the header's `tasks` entry, starts it for the active project in a
  * session on the cockpit's private tmux server and shows it after the
  * project's tabs. It owns its keys: Esc, `q`, `h` and Backspace go back from
  * a task's detail, and `q` or Esc in its list quit it, which ends its session
@@ -65,7 +68,7 @@
  * shows a message instead of its screen (starting, failed), `q` or Esc close
  * it. Any change of the shown tab (another tab or project, the explorer, an
  * attention jump) returns the tab left to view mode. The attention key (F11) and the
- * tab bar's attention badge (`! N`, the count of agents needing a human across
+ * header's attention badge (`! N`, the count of agents needing a human across
  * projects) show the next of those agents (`nextAttention`).
  */
 import { tmuxSessionTarget, type ProjectConnectionState, type ProjectWatchState, type ProjectWatchUpdate, type StatusView } from '../../client.ts';
@@ -92,8 +95,8 @@ import type { TerminalSession } from './terminal.ts';
 import { TmuxControlClient } from './tmuxControl.ts';
 import { mergeProjects, type TmuxTarget, type ViewState, type ViewStateStore } from './viewState.ts';
 import {
-  EXPLORER_LABEL, EXPLORER_TAB, INITIAL_SIDEBAR_NAV, drawFooter, drawSidebar, drawTabBar, navigateSidebar, sidebarClick, sidebarView, tabBarButtonAt, tabBarView,
-  withExplorerTab, withModeMarks, type FooterHint, type SidebarBox, type TabBarButton, type SidebarCommand, type SidebarNav, type SidebarStep,
+  EXPLORER_LABEL, EXPLORER_TAB, INITIAL_SIDEBAR_NAV, drawFooter, drawHeader, drawSidebar, drawTabBar, headerButtonAt, headerView, navigateSidebar, sidebarClick, sidebarView, tabBarView,
+  withExplorerTab, withModeMarks, type FooterHint, type HeaderButton, type SidebarBox, type SidebarCommand, type SidebarNav, type SidebarStep,
 } from './widgets.ts';
 
 // ── layout ────────────────────────────────────────────────────────────────────
@@ -292,14 +295,9 @@ export function quitHint(keys: CockpitKeys): string {
   return [...(keys.quit ? [`${keyLabel(keys.quit)}: quit`] : []), `${keyLabel(keys.prefix)} d: quit`].join(' · ');
 }
 
-/** How to quit in one key, as the tab bar keeps it in view: the quit key, else the prefix then d. */
-export function shortQuitHint(keys: CockpitKeys): string {
-  return keys.quit ? `${keyLabel(keys.quit)}: quit` : `${keyLabel(keys.prefix)} d: quit`;
-}
-
 /**
- * The footer's key hints from the resolved keys: quit (as the tab bar shows
- * it), the dashboard key (else the prefix then o) and the attention key (left
+ * The footer's key hints from the resolved keys: quit (the quit key, else
+ * the prefix then d), the dashboard key (else the prefix then o) and the attention key (left
  * out when it has no direct key).
  */
 export function footerHints(keys: CockpitKeys): FooterHint[] {
@@ -540,12 +538,24 @@ export function runApp(options: AppOptions): App {
     const project = tabs.activeProject;
     const model = buildTabBarModel(tabs, tabAttention(buildProjectViews([...watched.values()]), project));
     const marked = withModeMarks(model, (agentId) => project !== null && typingTabs.has(tabKey({ projectId: project, agentId })));
+    return tabBarView(explorer ? withExplorerTab(marked) : marked, layout.tabBar.cols);
+  }
+
+  /** The header as drawn now: the active project's name, the explorer entry and the count of agents needing attention (none with no project open). */
+  function currentHeader() {
+    const project = tabs.activeProject;
+    if (project === null) return headerView(layout.header.cols, null, []);
     const waiting = attentionQueue(tabs, [...watched.values()]).length;
-    const buttons: TabBarButton[] = [
+    const buttons: HeaderButton[] = [
       ...(explorer || !options.explorer ? [] : [{ action: 'explorer' as const, text: EXPLORER_LABEL }]),
       ...(waiting > 0 ? [{ action: 'attention' as const, text: `! ${waiting}` }] : []),
     ];
-    return tabBarView(explorer ? withExplorerTab(marked) : marked, layout.tabBar.cols, shortQuitHint(keys), buttons);
+    return headerView(layout.header.cols, projectName(project), buttons);
+  }
+
+  /** The project's name as the watcher has it, else its id. */
+  function projectName(projectId: string): string {
+    return watched.get(projectId)?.project.name ?? projectId;
   }
 
   /** The footer's `project › tab`: the active project's name and the shown tab's label (the explorer's while it is shown). */
@@ -553,7 +563,7 @@ export function runApp(options: AppOptions): App {
     const project = tabs.activeProject;
     if (project === null) return null;
     const active = buildTabBarModel(tabs).tabs.find((tab) => tab.active);
-    return { project: watched.get(project)?.project.name ?? project, tab: explorer ? EXPLORER_LABEL : active?.label ?? '' };
+    return { project: projectName(project), tab: explorer ? EXPLORER_LABEL : active?.label ?? '' };
   }
 
   /** The keys' context: the shown tab's mode, and whether the sidebar has the keys. */
@@ -588,6 +598,7 @@ export function runApp(options: AppOptions): App {
     if (closed) return;
     lastRender = Date.now();
     const frame = createFrame(layout.cols, layout.rows);
+    drawHeader(frame, layout.header, currentHeader(), theme);
     drawSidebar(frame, layout.sidebar, currentSidebar(), { focus: focus === 'slot' ? null : focus, theme });
     drawTabBar(frame, layout.tabBar, currentTabBar(), {
       slotFocused: focus === 'slot',
@@ -753,6 +764,12 @@ export function runApp(options: AppOptions): App {
 
   /** Sidebar and tab bar clicks give the slot the keys, and so does a press in it; slot events go to onSlotMouse (mouse.ts routeSlotMouse). */
   const mouseHandlers: MouseHandlers = {
+    header: (event, at) => {
+      if (!isClick(event)) return;
+      const button = headerButtonAt(currentHeader(), at.x);
+      if (button === 'explorer') openExplorer();
+      else if (button === 'attention') jumpToAttention();
+    },
     sidebar: (event, at) => {
       if (!isClick(event)) return;
       const step = sidebarClick(currentSidebar(), nav, at.y);
@@ -764,9 +781,6 @@ export function runApp(options: AppOptions): App {
     tabBar: (event, at) => {
       if (!isClick(event)) return;
       const view = currentTabBar();
-      const button = tabBarButtonAt(view, at.x);
-      if (button === 'explorer') { openExplorer(); return; }
-      if (button === 'attention') { jumpToAttention(); return; }
       const click = tabBarClickTarget(view.model, view.layout, at.x);
       if (!click) return;
       if (click.tab.agentId === EXPLORER_TAB) {
