@@ -2,6 +2,8 @@
 /**
  * Stream a provider terminal (by run, or by agent id: a worker, a scout or the master) or an
  * independent worktree shell. Input needs --write; --takeover takes the lease from its holder.
+ * --view-first (a cockpit agent tab) opens read-only and takes the lease only while typing
+ * (lib/terminalKeys.ts has its keys).
  */
 import { randomUUID } from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
@@ -10,6 +12,7 @@ import { ControlClient, controlSocketFromEnv } from '../lib/controlClient.ts';
 import { ControlError } from '../lib/controlProtocol.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { MOUSE_RESET, TerminalMouseFilter } from '../lib/terminalMouseFilter.ts';
+import { MODE_NOTICE, STOP_KEY, TERMINAL_CLOSED_EXIT, terminalKeyAction, type TerminalMode } from '../lib/terminalKeys.ts';
 import { cliError } from './shared.ts';
 import { readProjectDescriptor } from '../lib/projectContext.ts';
 import { formatProjectIdentity } from '../lib/projectHealth.ts';
@@ -30,6 +33,7 @@ const client = new ControlClient(STATE_DIR, { socketPath: controlSocketFromEnv()
 // Identity on stderr: stdout carries the raw terminal stream.
 console.error(formatProjectIdentity(readProjectDescriptor(STATE_DIR)));
 const writable = boolFlag('write');
+const viewFirst = boolFlag('view-first');
 const once = boolFlag('once') || !process.stdout.isTTY;
 const abort = new AbortController();
 let leaseId: string | null = null;
@@ -38,6 +42,9 @@ let renewTimer: NodeJS.Timeout | null = null;
 let closing = false;
 let pending = Promise.resolve();
 let terminalId = '';
+let inputStarted = false;
+/** Draws the view-first mode line again (after a snapshot redrew the screen). */
+const viewer: { showMode?: () => void } = {};
 
 const cleanup = async (code = 0) => {
   if (closing) return;
@@ -70,6 +77,8 @@ async function sendInput(lease: string, data: string): Promise<void> {
 }
 
 try {
+  if (writable && viewFirst) throw new Error('Use --write or --view-first, not both');
+  if (viewFirst && (!process.stdin.isTTY || !process.stdout.isTTY)) throw new Error('--view-first requires a terminal');
   terminalId = (byRun
     ? await client.openTerminal(positional[0] as 'provider' | 'shell', positional[1])
     : await client.openAgentTerminal(positional[0])).terminal.terminal_id;
@@ -95,7 +104,11 @@ try {
       if (once) { process.stdout.write(frame.screen); break; }
       // Reset mouse reporting, clear, draw the captured screen, then put the cursor where the pane has it.
       process.stdout.write(`${MOUSE_RESET}\x1b[H\x1b[2J${frame.screen.replace(/\n$/, '').replace(/\n/g, '\r\n')}\x1b[${frame.cursor_y + 1};${frame.cursor_x + 1}H`);
+      viewer.showMode?.();
+      if (inputStarted) continue;
+      inputStarted = true;
       if (leaseId) startWriter(leaseId);
+      else if (viewFirst) startViewer();
       else console.error('\r\n[read-only; Ctrl-C detaches]');
     } else if (frame.type === 'output') {
       process.stdout.write(mouseFilter.filter(decoder.write(Buffer.from(frame.data, 'base64'))));
@@ -124,7 +137,81 @@ function startWriter(writerLease: string): void {
   process.stdin.resume();
   process.stdin.on('data', (chunk: Buffer) => {
     const data = chunk.toString('utf8');
-    if (data === '\x1d') { void cleanup(); return; }
+    if (data === STOP_KEY) { void cleanup(); return; }
     enqueue(() => sendInput(writerLease, data));
+  });
+}
+
+/**
+ * View-first input: no lease and no key reaches the agent until `i`; the close
+ * keys end this process with TERMINAL_CLOSED_EXIT. Typing holds the lease;
+ * Ctrl-] releases it and returns to view mode. A lost lease returns to view mode too.
+ */
+function startViewer(): void {
+  let mode: TerminalMode = 'view';
+  /**
+   * The mode line, on the bottom line, the cursor saved and restored around it so
+   * the agent's relative cursor moves stay right; the agent's next repaint of
+   * that line covers it until the next mode change or snapshot.
+   */
+  const drawMode = (message?: string) => {
+    const text = `${message ? `[${message}] ` : ''}${MODE_NOTICE[mode]}`;
+    process.stderr.write(`\x1b7\x1b[${process.stdout.rows ?? 24};1H\x1b[2K${text}\x1b8`);
+  };
+  viewer.showMode = () => drawMode();
+  const toView = async (message?: string) => {
+    mode = 'view';
+    if (renewTimer) clearInterval(renewTimer);
+    renewTimer = null;
+    const lease = leaseId;
+    leaseId = null;
+    drawMode(message);
+    if (lease) await client.releaseTerminal(terminalId, lease).catch(() => undefined);
+  };
+  /** Runs a lease action; a failure (the lease was taken over or expired) returns to view mode. */
+  const withLease = (action: (lease: string) => Promise<void>) => {
+    pending = pending.then(async () => {
+      const lease = leaseId;
+      if (!lease || closing) return;
+      try { await action(lease); }
+      catch (error) { if (leaseId === lease) await toView(`input stopped: ${(error as Error).message}`); }
+    });
+  };
+  const startTyping = () => {
+    // Keys typed until the lease arrives are dropped, close keys included.
+    mode = 'starting';
+    drawMode();
+    pending = pending.then(async () => {
+      if (leaseId || closing) return;
+      try {
+        leaseId = (await client.acquireTerminal(terminalId, `cli:${process.pid}:${randomUUID()}`)).lease_id;
+      } catch (error) {
+        mode = 'view';
+        drawMode(`cannot type: ${(error as Error).message}`);
+        return;
+      }
+      mode = 'typing';
+      drawMode();
+      const lease = leaseId;
+      renewTimer = setInterval(() => { withLease((current) => client.renewTerminal(terminalId, current)); }, 10_000);
+      await client.resizeTerminal(terminalId, lease, process.stdout.columns ?? 80, process.stdout.rows ?? 24).catch(() => undefined);
+    });
+  };
+  process.stdout.on('resize', () => {
+    withLease((lease) => client.resizeTerminal(terminalId, lease, process.stdout.columns ?? 80, process.stdout.rows ?? 24));
+  });
+  drawMode();
+  process.stdin.setRawMode(true);
+  raw = true;
+  process.stdin.resume();
+  process.stdin.on('data', (chunk: Buffer) => {
+    const action = terminalKeyAction(mode, chunk.toString('utf8'));
+    if (action.type === 'close') void cleanup(TERMINAL_CLOSED_EXIT);
+    else if (action.type === 'start-typing') startTyping();
+    else if (action.type === 'stop-typing') {
+      // View mode at once: keys typed while the release is pending stay here.
+      mode = 'view';
+      pending = pending.then(() => toView());
+    } else if (action.type === 'send') withLease((lease) => sendInput(lease, action.data));
   });
 }

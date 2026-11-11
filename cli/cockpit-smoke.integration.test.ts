@@ -3,7 +3,7 @@
  * the one-window cockpit (`ensureCockpitWindow`) with the real `orc watch`
  * sidebar, the tab bar and a fake-provider master in the slot; a worker that
  * raises `orc run-input-request` (its badge in the sidebar's Agents and
- * Projects boxes); Enter on the worker making its `orc terminal --write` tab
+ * Projects boxes); Enter on the worker making its `orc terminal --view-first` tab
  * the active one in the slot; switching to a second, stopped project and back
  * from the sidebar, which restores the worker's tab; and `orc run-input-respond`
  * answering it, which clears the badge. Both projects are registered.
@@ -247,14 +247,14 @@ describe.skipIf(!tmuxOk)('cockpit smoke: question → badges → agent tab → o
     expect(projectRow(capture(sidebar), 'beta')).not.toContain('!');
 
     // Enter on the worker (it needs attention, so it is listed first and selected) makes its tab the active one:
-    // `orc terminal worker-a --write` in the slot, in the master's place; the tab bar lists it.
+    // `orc terminal worker-a --view-first` in the slot, in the master's place; the tab bar lists it.
     await press(sidebar, 'Enter');
     await waitFor('the worker tab in the slot', () => slot().agent === 'worker-a');
     expect(frameRole('sidebar')).toBe(sidebar);
     await waitFor('the sidebar to report it', () => capture(sidebar).includes('Opened worker-a in a new tab.'));
     await waitFor('the tab bar to list it', () => capture(tabbar).includes('worker-a'));
     const tabPane = slot().id;
-    await waitFor('the worker screen in its tab', () => capture(tabPane).includes('WORKER-READY') && capture(tabPane).includes('writer lease acquired'));
+    await waitFor('the worker screen in its tab', () => capture(tabPane).includes('WORKER-READY') && capture(tabPane).includes('[view] i: type'));
 
     // Beta, from the Projects box: it is not running, so the slot says how to start it.
     await press(sidebar, 'Tab', 'Down', 'Enter');
