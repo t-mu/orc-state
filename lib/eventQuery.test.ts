@@ -71,6 +71,7 @@ describe('queryEventsPage', () => {
     seed('worker_needs_attention', { payload: { reason: 'stale', idle_ms: 0 } });
     seed('run_failed', { payload: { policy: 'requeue' } });
     seed('run_cancelled');
+    seed('claim_expired', { payload: { policy: 'requeue', code: 'ERR_INPUT_TIMEOUT', reason: 'ERR_INPUT_TIMEOUT' } });
     seed('input_response', { payload: { response: 'yes', request_id: 'r1' } });
     seed('task_dispatch_blocked', { actor_type: 'coordinator', actor_id: 'coordinator', payload: { reason: 'injection_scan', findings: ['x'] } });
     seed('dispatch_stalled', {
@@ -79,12 +80,16 @@ describe('queryEventsPage', () => {
     });
     const page = queryEventsPage(dir, { notifications_only: true, after_seq: 0 });
     expect(page.events.map((event) => event.event)).toEqual([
-      'run_finished', 'input_requested', 'worker_needs_attention', 'run_failed', 'run_cancelled', 'input_response',
-      'task_dispatch_blocked', 'dispatch_stalled',
+      'run_finished', 'input_requested', 'worker_needs_attention', 'run_failed', 'run_cancelled', 'claim_expired',
+      'input_response', 'task_dispatch_blocked', 'dispatch_stalled',
     ]);
-    expect(page.last_seq).toBe(10);
+    expect(page.last_seq).toBe(11);
+    expect(page.events.find((event) => event.event === 'claim_expired')).toMatchObject({
+      run_id: expect.any(String), agent_id: expect.any(String), task_ref: expect.any(String),
+      payload: expect.objectContaining({ code: 'ERR_INPUT_TIMEOUT' }),
+    });
     expect(queryEventsPage(dir, { notifications_only: true, after_seq: 5 }).events.map((event) => event.event))
-      .toEqual(['run_failed', 'run_cancelled', 'input_response', 'task_dispatch_blocked', 'dispatch_stalled']);
+      .toEqual(['run_failed', 'run_cancelled', 'claim_expired', 'input_response', 'task_dispatch_blocked', 'dispatch_stalled']);
   });
 
   it('filters by run_id, agent_id, task_ref, event_type and fts_query', () => {

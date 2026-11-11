@@ -28,8 +28,10 @@ last_seq, and call again while has_more is true. Then react:
 
 - run_finished (success): do not ask about each one. Report successful runs
   together in one short summary (task ref, one line each).
-- run_failed / run_cancelled: tell the user the task, worker and reason; offer
-  to look into it (get_run, query_events for the run, terminal_snapshot).
+- run_failed / run_cancelled / claim_expired: tell the user the task, worker
+  and reason (claim_expired: payload.code, ERR_LEASE_EXPIRED or
+  ERR_INPUT_TIMEOUT); offer to look into it (get_run, query_events for the
+  run, terminal_snapshot).
 - worker_needs_attention: report agent, task, payload.reason and idle_ms.
   stale = the worker went quiet; no_progress = active but no phase change,
   commit or lifecycle event for a long time (a long implement phase looks the
@@ -45,7 +47,8 @@ last_seq, and call again while has_more is true. Then react:
   permission"), not a question; respond_input cannot approve it. Look at it
   with terminal_snapshot, tell the user what it asks, and point them to
   `orc attach <agent_id> --write` to answer it.
-- input_response: informational.
+- input_response: informational (payload.resolution: a provider prompt was
+  answered in the worker's terminal).
 - task_dispatch_blocked: the task's spec failed the prompt-injection scan at
   dispatch and the task is now blocked. Tell the user the task and
   payload.findings; offer to remove them with update_task (the clean revision

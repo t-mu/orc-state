@@ -601,6 +601,7 @@ export function closeRun(stateDir: string, { run_id, reason = null, actor_id = '
     claim.finished_at = now;
     claim.input_state = null;
     claim.input_requested_at = null;
+    claim.input_source = null;
     claim.finalization_state = null;
     claim.finalization_retry_count = 0;
     claim.finalization_blocked_reason = null;

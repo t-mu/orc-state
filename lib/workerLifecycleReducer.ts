@@ -89,6 +89,52 @@ export function authoritativeTs(
   return new Date(effectiveMs).toISOString();
 }
 
+// ── Provider-prompt waits ──────────────────────────────────────────────────
+
+/**
+ * Lifecycle events that show a worker session is working again. Input events are
+ * left out: a request starts a wait, and an answer is not the worker's own activity.
+ */
+const WORKER_ACTIVITY_EVENTS = new Set([
+  'run_started',
+  'phase_started',
+  'phase_finished',
+  'heartbeat',
+  'activity_note',
+  'review_submitted',
+  'work_complete',
+  'finalize_rebase_started',
+  'ready_to_merge',
+  'blocked',
+  'unblocked',
+  'need_input',
+]);
+
+/**
+ * When `event` shows the run's worker active after the provider prompt the coordinator
+ * recorded (`input_source: provider_prompt`), the time of that activity; otherwise null.
+ * The activity is the worker's own (actor `agent`) or a phase the coordinator inferred from
+ * the worker's hook activity (its `payload.evidence_ts`); other coordinator events say
+ * nothing about the worker. A `worker_request` wait is never resolved this way: a worker
+ * blocked in `orc run-input-request` keeps heartbeating while it waits.
+ */
+export function providerPromptActivityTs(event: LifecycleEventInput, claim: Claim | null, nowIso: string): string | null {
+  if (!claim || claim.input_state !== 'awaiting_input' || claim.input_source !== 'provider_prompt') return null;
+  if (!['claimed', 'in_progress'].includes(claim.state)) return null;
+  if (!WORKER_ACTIVITY_EVENTS.has(event.event) || event.run_id !== claim.run_id || event.agent_id !== claim.agent_id) return null;
+  let activityTs: string;
+  if (event.actor_type === 'agent') {
+    activityTs = coerceEventTs(event.ts, nowIso);
+  } else if (event.actor_type === 'coordinator' && event.event === 'phase_started' && typeof event.payload?.evidence_ts === 'string') {
+    activityTs = coerceEventTs(event.payload.evidence_ts, nowIso);
+  } else {
+    return null;
+  }
+  const requestedMs = Date.parse(claim.input_requested_at ?? '');
+  if (!Number.isFinite(requestedMs) || Date.parse(activityTs) <= requestedMs) return null;
+  return authoritativeTs(activityTs, null, nowIso);
+}
+
 // ── Reducer ────────────────────────────────────────────────────────────────
 
 /**

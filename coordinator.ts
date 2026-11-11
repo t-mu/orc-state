@@ -23,7 +23,7 @@ type DistributiveOmit<T, K extends string> = T extends unknown ? Omit<T, K> : ne
 // Allow processTerminalRunEvents to accept events without seq/actor fields (e.g. in tests)
 type ProcessableEvent = DistributiveOmit<OrcEvent, 'seq' | 'actor_type' | 'actor_id' | 'event_id'>
   & { seq?: number; actor_type?: ActorType; actor_id?: string; event_id?: string };
-import { expireStaleLeasesDetailed, claimTask, finishRun, heartbeat, renewLeaseOnly, markTaskEnvelopeSent, setEscalationNotified, setRunFinalizationState, setRunInputState, startRun, setPrRef, setPrCreatedAt } from './lib/claimManager.ts';
+import { expireStaleLeasesDetailed, claimTask, finishRun, heartbeat, renewLeaseOnly, markTaskEnvelopeSent, resolveProviderPromptWait, setEscalationNotified, setRunFinalizationState, setRunInputState, startRun, setPrRef, setPrCreatedAt } from './lib/claimManager.ts';
 import { getAgent, listCoordinatorAgents, updateAgentRuntime, nextAvailableWorkerName, removeAgent } from './lib/agentRegistry.ts';
 import { getGitHostAdapter } from './lib/gitHosts/index.ts';
 import { createAdapter } from './adapters/index.ts';
@@ -75,7 +75,7 @@ import { fileURLToPath } from 'node:url';
 import { findTask, readBacklog, readJson } from './lib/stateReader.ts';
 import { closeSync, constants, existsSync, openSync, readdirSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
-import { reduceLifecycleEvent } from './lib/workerLifecycleReducer.ts';
+import { providerPromptActivityTs, reduceLifecycleEvent } from './lib/workerLifecycleReducer.ts';
 import { resolveOrcBinSh } from './lib/orcBin.ts';
 import { builtinPolicies, evaluateRemediationPolicies, loadRemediationConfig } from './lib/remediationPolicies.ts';
 import type { RemediationSignals } from './lib/remediationPolicies.ts';
@@ -860,6 +860,7 @@ function recordCoordinatorInputRequest(claim: Claim, question: string, reason: s
     setRunInputState(STATE_DIR, claim.run_id, claim.agent_id, {
       inputState: 'awaiting_input',
       requestedAt: nowIso,
+      source: 'provider_prompt',
     });
   } catch {
     return false;
@@ -879,6 +880,42 @@ function recordCoordinatorInputRequest(claim: Claim, question: string, reason: s
   });
   log(`run ${claim.run_id} is awaiting input: ${reason}`);
   return true;
+}
+
+/**
+ * Runs whose provider-prompt wait this coordinator has seen on the worker's screen. Only a
+ * prompt once seen there can be seen gone: one known only from a permission hook event may
+ * not be recognisable on screen, and its wait clears on worker activity instead.
+ */
+const providerPromptSeenOnScreen = new Set<string>();
+
+/**
+ * Clear a provider-prompt wait whose prompt has left the worker's screen (answered in the
+ * terminal). Reads the screen only for a live session; a worker request wait is left alone.
+ */
+function resolveGoneProviderPrompt(claim: Claim, agent: Agent | undefined) {
+  if (claim.input_source !== 'provider_prompt') {
+    providerPromptSeenOnScreen.delete(claim.run_id);
+    return;
+  }
+  if (!agent?.session_handle || agent.status === 'offline' || workerLiveness.get(claim.run_id)?.verdict !== 'alive') return;
+  if (detectBlockingPromptQuestion(getAdapter(agent.provider), agent.session_handle)) {
+    providerPromptSeenOnScreen.add(claim.run_id);
+    return;
+  }
+  if (!providerPromptSeenOnScreen.delete(claim.run_id)) return;
+  if (resolveProviderPromptWaitSafe(claim, new Date().toISOString(), 'prompt_gone')) {
+    log(`run ${claim.run_id} provider prompt resolved: no longer on screen`);
+  }
+}
+
+/** resolveProviderPromptWait for `claim`, false on a race with a terminal or cleaned-up claim. */
+function resolveProviderPromptWaitSafe(claim: Claim, at: string, resolution: 'worker_activity' | 'prompt_gone') {
+  try {
+    return resolveProviderPromptWait(STATE_DIR, claim.run_id, claim.agent_id, { at, leaseDurationMs: LEASE_CONFIG.default_ms, resolution });
+  } catch {
+    return false;
+  }
 }
 
 function activeClaimAgents(claims: Claim[]) {
@@ -1446,6 +1483,7 @@ async function enforceInProgressLifecycle(
       runInactiveNudgeAtMs.delete(claim.run_id);
       runNudgeCount.delete(claim.run_id);
       runLastPhase.delete(claim.run_id);
+      providerPromptSeenOnScreen.delete(claim.run_id);
       continue;
     }
 
@@ -1458,8 +1496,10 @@ async function enforceInProgressLifecycle(
     if (idleMs == null) continue;
     if (claimAwaitingInput(claim)) {
       runInactiveNudgeAtMs.delete(claim.run_id);
+      if (hookEvents.length === 0) resolveGoneProviderPrompt(claim, byAgent.get(claim.agent_id));
       continue;
     }
+    providerPromptSeenOnScreen.delete(claim.run_id);
     if (claim.finalization_state === 'blocked_finalize') {
       runInactiveNudgeAtMs.delete(claim.run_id);
       continue;
@@ -2265,7 +2305,15 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
       continue;
     }
 
-    const claim = runId ? getClaim(runId) : null;
+    // A provider prompt the worker has moved past (answered in its terminal) no longer
+    // holds the run: clear the wait and renew the lease before the event is reduced.
+    const claimBefore = runId ? getClaim(runId) : null;
+    const promptActivityAt = providerPromptActivityTs(event as Parameters<typeof providerPromptActivityTs>[0], claimBefore, nowIso);
+    if (promptActivityAt && resolveProviderPromptWaitSafe(claimBefore!, promptActivityAt, 'worker_activity')) {
+      log(`run ${runId} provider prompt resolved: ${event.event} at ${promptActivityAt}`);
+    }
+
+    const claim = promptActivityAt && runId ? getClaim(runId) : claimBefore;
     const action = reduceLifecycleEvent(
       event as Parameters<typeof reduceLifecycleEvent>[0],
       claim,

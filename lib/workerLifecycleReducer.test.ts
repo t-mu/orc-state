@@ -3,6 +3,7 @@ import {
   reduceLifecycleEvent as reduceWithLeases,
   coerceEventTs,
   authoritativeTs,
+  providerPromptActivityTs,
   type LifecycleEventInput,
 } from './workerLifecycleReducer.ts';
 import type { Claim } from '../types/claims.ts';
@@ -453,5 +454,48 @@ describe('configured leases', () => {
     expect(phase).toMatchObject({ type: 'heartbeat', leaseDurationMs: 111_000 });
     const done = reduceLifecycleEvent({ event: 'work_complete', run_id: 'run-1', agent_id: 'w', ts: now } as Parameters<typeof reduceLifecycleEvent>[0], claim, now, leases);
     expect(done).toMatchObject({ extendLeaseMs: 222_000 });
+  });
+});
+
+// ── providerPromptActivityTs ───────────────────────────────────────────────
+
+describe('providerPromptActivityTs', () => {
+  const REQUESTED = '2026-03-11T07:30:00.000Z';
+  const waiting = (overrides: Partial<Claim> = {}) => makeClaim({
+    input_state: 'awaiting_input', input_requested_at: REQUESTED, input_source: 'provider_prompt', ...overrides,
+  });
+
+  it('returns the time of worker activity after the provider prompt was recorded', () => {
+    for (const event of ['phase_started', 'heartbeat', 'work_complete', 'activity_note', 'review_submitted']) {
+      expect(providerPromptActivityTs(makeEvent({ event, ts: '2026-03-11T07:45:00.000Z' }), waiting(), NOW)).toBe('2026-03-11T07:45:00.000Z');
+    }
+  });
+
+  it('accepts a coordinator-inferred phase at its evidence time, not other coordinator events', () => {
+    const inferred = makeEvent({ event: 'phase_started', actor_type: 'coordinator', ts: NOW, payload: { evidence_ts: '2026-03-11T07:40:00.000Z' } });
+    expect(providerPromptActivityTs(inferred, waiting(), NOW)).toBe('2026-03-11T07:40:00.000Z');
+    const stale = makeEvent({ event: 'phase_started', actor_type: 'coordinator', ts: NOW, payload: { evidence_ts: '2026-03-11T07:20:00.000Z' } });
+    expect(providerPromptActivityTs(stale, waiting(), NOW)).toBeNull();
+    expect(providerPromptActivityTs(makeEvent({ event: 'activity_note', actor_type: 'coordinator' }), waiting(), NOW)).toBeNull();
+  });
+
+  it('ignores activity before the request, input events, other agents and other runs', () => {
+    expect(providerPromptActivityTs(makeEvent({ ts: '2026-03-11T07:29:59.000Z' }), waiting(), NOW)).toBeNull();
+    expect(providerPromptActivityTs(makeEvent({ event: 'input_requested' }), waiting(), NOW)).toBeNull();
+    expect(providerPromptActivityTs(makeEvent({ event: 'input_response' }), waiting(), NOW)).toBeNull();
+    expect(providerPromptActivityTs(makeEvent({ agent_id: 'orc-2' }), waiting(), NOW)).toBeNull();
+    expect(providerPromptActivityTs(makeEvent({ run_id: 'run-other' }), waiting(), NOW)).toBeNull();
+  });
+
+  it('never resolves a worker request wait, a legacy wait without a source, or a run not waiting', () => {
+    expect(providerPromptActivityTs(makeEvent(), waiting({ input_source: 'worker_request' }), NOW)).toBeNull();
+    const { input_source: _source, ...legacy } = waiting();
+    expect(providerPromptActivityTs(makeEvent(), legacy, NOW)).toBeNull();
+    expect(providerPromptActivityTs(makeEvent(), makeClaim(), NOW)).toBeNull();
+    expect(providerPromptActivityTs(makeEvent(), null, NOW)).toBeNull();
+  });
+
+  it('clamps a future-dated event to coordinator time', () => {
+    expect(providerPromptActivityTs(makeEvent({ ts: '2026-03-11T09:00:00.000Z' }), waiting(), NOW)).toBe(NOW);
   });
 });

@@ -53,7 +53,7 @@ Project state directory: `<data-home>/projects/<project_id>/` (sessions receive 
 |--------|-------|
 | [backlog.schema.json](../schemas/backlog.schema.json) | `status`: `todo\|claimed\|in_progress\|blocked\|done\|cancelled`; `task_type`: `implementation\|refactor`; `priority`: `low\|normal\|high\|critical`; `planning_state`: `ready_for_dispatch\|archived`; `review_level`: `none\|light\|full`; `merge_strategy`: `direct\|pr`; `required_provider`: `codex\|claude\|gemini` |
 | [agents.schema.json](../schemas/agents.schema.json) | `status`: `idle\|running\|offline\|dead` (`dead` is never set; such records are removed); `role`: `worker\|reviewer\|master\|scout`; `provider`: `codex\|claude\|gemini\|human` |
-| [claims.schema.json](../schemas/claims.schema.json) | `state`: `claimed\|in_progress\|done\|failed`; `finalization_state`: `awaiting_finalize\|finalize_rebase_requested\|finalize_rebase_in_progress\|ready_to_merge\|blocked_finalize\|pr_created\|pr_review_in_progress\|pr_merged\|pr_failed\|null`; `input_state`: `awaiting_input\|null` |
+| [claims.schema.json](../schemas/claims.schema.json) | `state`: `claimed\|in_progress\|done\|failed`; `finalization_state`: `awaiting_finalize\|finalize_rebase_requested\|finalize_rebase_in_progress\|ready_to_merge\|blocked_finalize\|pr_created\|pr_review_in_progress\|pr_merged\|pr_failed\|null`; `input_state`: `awaiting_input\|null`; `input_source`: `worker_request\|provider_prompt\|null` |
 | [event.schema.json](../schemas/event.schema.json) | see **Events** |
 | [run-worktrees.schema.json](../schemas/run-worktrees.schema.json), [event-checkpoint.schema.json](../schemas/event-checkpoint.schema.json), [snapshot.schema.json](../schemas/snapshot.schema.json) | — |
 
@@ -121,6 +121,7 @@ Direct mode: after work-complete the coordinator merges, or requests a finalize 
 - Lease: `leases.default_ms` (30 min); `leases.finalize_ms` (60 min) once work is complete; `coordinator.pr_finalize_lease_ms` (24 h) for PR finalization.
 - Renewal: the coordinator extends the lease when it processes the run's lifecycle/phase events. Claude hook activity renews only when newer than `last_heartbeat_at` and the lease is half used or the heartbeat half a lease old (`shouldRenewFromHookActivity`, `lib/runActivity.ts`); otherwise it only updates `run-activity.json`. Workers send no periodic heartbeat.
 - Expiry: claim → `failed` (`ERR_LEASE_EXPIRED`), task requeued with backoff, blocked after 5 attempts; `claim_expired` emitted. A run whose task is already `done` (finalize window) is skipped. An input wait over 1 h expires with `ERR_INPUT_TIMEOUT`.
+- Input waits: `input_source` says what a wait is for. `worker_request` (`orc run-input-request`) clears only when answered (`input_response`); the waiting worker's heartbeats do not clear it. `provider_prompt` (the coordinator recorded a provider prompt, `remediation_policy:permission_prompt` or `provider_interactive_prompt`) also clears, with the lease renewed from now, once the worker shows life after the request (a lifecycle event of its own, or a phase inferred from its hook activity, `providerPromptActivityTs` in `lib/workerLifecycleReducer.ts`) or the prompt the coordinator once saw on screen is gone; the coordinator then emits `input_response` with `request_id: null` and `payload.resolution` `worker_activity` or `prompt_gone`. A prompt known only from a permission hook event clears on worker activity only. A provider prompt does not relabel a pending worker request. An unanswered provider prompt still expires after 1 h.
 - Liveness: each tick probes the session (`adapterProbeLiveness`) — `tmux:` asks the private tmux server for the pane process; a legacy `pty:` handle from an older orc always probes dead. A probe is `alive`, `dead` (no tmux server, no such session, or the pane process exited) or `indeterminate` (tmux spawn error, its 10 s timeout, any other tmux error, or a probe that throws). A run is treated as dead only after 2 dead probes in a row (`CONSECUTIVE_DEAD_PROBES`, `countDeadProbe` in `lib/sessionSupervisor.ts`, the same rule as the master); a live probe resets the count, an indeterminate one neither counts nor resets, so tmux trouble never ends a run. This check is the only dead-session path for a run with a session; the `session_dead` remediation acts only on an offline or handle-less worker. The lease is renewed on a live probe only while the run's session is `running`: a `recoverable` or `unknown` session gets no renewals and, after `SESSION_OWNER_TTL_MS` (2 min) in that state, one `worker_needs_attention {reason: session_not_running}`; if the worker stays silent its lease then expires (`ERR_LEASE_EXPIRED`). A dead process goes through one resume-or-requeue decision (`resumeOrRequeue` in `coordinator.ts`, rules in `lib/sessionResume.ts`):
   - Resumed in place when all hold: `sessions.resume` is `auto`; the provider supports resume (Claude CLI, Codex `app:`); a provider conversation id was recorded; the exit was a crash (a signal or a non-zero exit code); the run worktree exists; the run has resumed fewer than 2 times. The claim, `session_id`, worktree, env, `--settings` and MCP isolation are kept; the secret rotates (the old one is rejected); `generation` and `resume_count` go up by 1; `session_resumed` is emitted. The bootstrap is not resent: the worker gets a `SESSION_RESUMED` nudge with its phase and last progress time.
   - Otherwise the session is cleared, the claim expires and the task is requeued, as before. A spent budget or a failed relaunch also emits `session_resume_failed`.
@@ -175,8 +176,8 @@ Worker identity: `run_id` is the stable key for one piece of a worker's work. Ag
 | `blocked`, `unblocked` | Worker | only via `orc progress` |
 | `need_input` | Coordinator / Worker | run-start or in-progress nudge sent; validates `run-input-request` |
 | `input_provided` | Master | legacy, via `orc progress` |
-| `input_requested` | Worker | `orc run-input-request` |
-| `input_response` | Master, operator | `orc run-input-respond` / `respond_input` |
+| `input_requested` | Worker / Coordinator | `orc run-input-request`; coordinator: a provider prompt on the worker's screen (`payload.reason`) |
+| `input_response` | Master, operator / Coordinator | `orc run-input-respond` / `respond_input`; coordinator: a provider prompt resolved in the worker's terminal (`payload.resolution`) |
 | `agent_online` | Coordinator | session confirmed alive |
 | `reported_for_duty` | Worker (`report-for-duty`) or coordinator (session-start hook) | session ready; `payload`: `session_token`, and from the hook `source: 'hook'` and `provider_conversation_id` |
 | `agent_offline` | Coordinator | session lost, or unclaimed record removed (`reason: worker_record_removed`, `code`) |
@@ -200,7 +201,7 @@ Worker identity: `run_id` is the stable key for one piece of a worker's work. Ag
 | `activity_note` | Coordinator | to-do/note label changed (`label`, `source`); ≤ 1 per 30 s per run |
 | `stop_blocked` | Coordinator | `Stop` hook refused (`phase`, `count`, `stop_hook_active`) |
 
-- Notification events (master polling): `run_finished`, `run_failed`, `run_cancelled`, `worker_needs_attention`, `input_requested`, `input_response`, `task_dispatch_blocked`, `dispatch_stalled`.
+- Notification events (master polling): `run_finished`, `run_failed`, `run_cancelled`, `claim_expired`, `worker_needs_attention`, `input_requested`, `input_response`, `task_dispatch_blocked`, `dispatch_stalled`.
 - Task outcome fields on `run_failed` and `claim_expired`: `task_status` (resulting status: `todo` when requeued, `blocked` after `--policy=block` or the fifth attempt, unchanged when an operator already moved the task), `attempt_count`, `requeue_eligible_after`, `blocked_reason` (only when `blocked`). `policy` is what was asked for; `task_status` is what happened. Events written before these fields existed lack them, and a stored `claim_expired` from before `agent_id` was required still reads back (the rule applies on append).
 - A terminal run event (`run_finished`, `run_failed`, `run_cancelled`, `claim_expired`) also clears the run's finalization fields; no `finalization_changed` is emitted for that.
 - Lease renewals are snapshot-only: a renewal without a `heartbeat` event (coordinator phase-signal or PID-probe renewal, finalize lease) changes `lease_expires_at` with no event; read it from `/v1/snapshot`.
@@ -488,7 +489,7 @@ With `--json`, `task-cancel`, `task-reset`, `task-unblock`, `task-mark-done`, `d
 | Contract | Source |
 |---|---|
 | Event names and payloads | the [Events](#events) table and [schemas/event.schema.json](../schemas/event.schema.json); a new event type is a minor change, removing or renaming one is major |
-| Notification events | `run_finished`, `run_failed`, `run_cancelled`, `worker_needs_attention`, `input_requested`, `input_response`, `task_dispatch_blocked`, `dispatch_stalled` |
+| Notification events | `run_finished`, `run_failed`, `run_cancelled`, `claim_expired`, `worker_needs_attention`, `input_requested`, `input_response`, `task_dispatch_blocked`, `dispatch_stalled` |
 
 ---
 

@@ -598,6 +598,7 @@ const NOTIFICATION_EVENT_TYPES = [
   'run_finished',
   'run_failed',
   'run_cancelled',
+  'claim_expired',
   'worker_needs_attention',
   'input_requested',
   'input_response',

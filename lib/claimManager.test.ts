@@ -13,6 +13,7 @@ import {
   finishRun,
   setRunFinalizationState,
   setRunInputState,
+  resolveProviderPromptWait,
   setPrRef,
   setPrCreatedAt,
   expireStaleLeases,
@@ -1037,5 +1038,71 @@ describe('requeue backoff — task scheduler skips', () => {
       { ...makeTask('orch/a'), requeue_eligible_after: futureEligible },
     ]);
     expect(nextEligibleTaskFromBacklog(bl, null)).toBeNull();
+  });
+});
+
+describe('input wait source (coordinator/provider-prompt-input-clear)', () => {
+  function startWaitingRun(source: 'provider_prompt' | 'worker_request', requestedAt = pastDate(10 * 60_000)) {
+    seed(dir);
+    const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
+    startRun(dir, run_id, 'agent-01');
+    setRunInputState(dir, run_id, 'agent-01', { inputState: 'awaiting_input', requestedAt, source });
+    return run_id;
+  }
+
+  it('records the wait source, defaulting to worker_request, and drops it when the wait clears', () => {
+    const run_id = startWaitingRun('provider_prompt');
+    expect(readClaims(dir).claims[0].input_source).toBe('provider_prompt');
+    setRunInputState(dir, run_id, 'agent-01', { inputState: null });
+    expect(readClaims(dir).claims[0].input_source).toBeNull();
+    setRunInputState(dir, run_id, 'agent-01', { inputState: 'awaiting_input' });
+    expect(readClaims(dir).claims[0].input_source).toBe('worker_request');
+  });
+
+  it('a provider prompt does not relabel a pending worker request; a worker request relabels a provider prompt', () => {
+    const run_id = startWaitingRun('worker_request');
+    setRunInputState(dir, run_id, 'agent-01', { inputState: 'awaiting_input', source: 'provider_prompt' });
+    expect(readClaims(dir).claims[0].input_source).toBe('worker_request');
+
+    setRunInputState(dir, run_id, 'agent-01', { inputState: null });
+    setRunInputState(dir, run_id, 'agent-01', { inputState: 'awaiting_input', source: 'provider_prompt' });
+    setRunInputState(dir, run_id, 'agent-01', { inputState: 'awaiting_input' });
+    expect(readClaims(dir).claims[0].input_source).toBe('worker_request');
+  });
+
+  it('resolveProviderPromptWait clears a provider-prompt wait, renews a lapsed lease and records an input_response', () => {
+    const run_id = startWaitingRun('provider_prompt');
+    const claims = readClaims(dir);
+    claims.claims[0].lease_expires_at = pastDate(5_000);
+    writeFileSync(join(dir, 'claims.json'), JSON.stringify(claims));
+    const at = pastDate(60_000);
+
+    expect(resolveProviderPromptWait(dir, run_id, 'agent-01', { at, leaseDurationMs: 30 * 60_000, resolution: 'worker_activity' })).toBe(true);
+
+    const claim = readClaims(dir).claims[0];
+    expect(claim.input_state).toBeNull();
+    expect(claim.input_requested_at).toBeNull();
+    expect(claim.input_source).toBeNull();
+    expect(claim.last_heartbeat_at).toBe(at);
+    expect(Date.parse(claim.lease_expires_at)).toBeGreaterThan(Date.now() + 29 * 60_000);
+    expect(expireStaleLeases(dir)).toEqual([]);
+    const response = readEvents(dir).find((e) => e.event === 'input_response');
+    expect(response).toMatchObject({ actor_type: 'coordinator', run_id, agent_id: 'agent-01' });
+    expect(response.payload).toMatchObject({ resolution: 'worker_activity', request_id: null, activity_at: at });
+  });
+
+  it('resolveProviderPromptWait leaves a worker request wait alone', () => {
+    const run_id = startWaitingRun('worker_request');
+    expect(resolveProviderPromptWait(dir, run_id, 'agent-01', { at: new Date().toISOString(), leaseDurationMs: 60_000, resolution: 'prompt_gone' })).toBe(false);
+    expect(readClaims(dir).claims[0].input_state).toBe('awaiting_input');
+    expect(readEvents(dir).some((e) => e.event === 'input_response')).toBe(false);
+  });
+
+  it('an unanswered provider prompt still expires after INPUT_WAIT_TIMEOUT_MS with ERR_INPUT_TIMEOUT', () => {
+    const run_id = startWaitingRun('provider_prompt', new Date(Date.now() - 3_600_001).toISOString());
+    expect(expireStaleLeases(dir)).toEqual([run_id]);
+    const claim = readClaims(dir).claims[0];
+    expect(claim.failure_reason).toBe('ERR_INPUT_TIMEOUT');
+    expect(claim.input_source).toBeNull();
   });
 });
