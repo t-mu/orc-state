@@ -277,7 +277,7 @@ function agentLines(blocks: CardLine[][], body: number, cursor: number): CardLin
  * projects goes unless the cursor is in it, until the Agents card holds the
  * cursor agent's row (an expanded agent's whole block, and a `+N more` line
  * when there are other agents). Rows the Agents window leaves unused go back
- * to a shrunk Other projects, or, once it is dropped, to the Project card.
+ * to a shrunk Project card, then to a shrunk Other projects.
  * Each card's lines keep the cursor's row in view.
  */
 export function sidebarCardsLayout(model: SidebarModel, rows: number, nav: SidebarNav, cols: number): SidebarCardsLayout {
@@ -302,20 +302,23 @@ export function sidebarCardsLayout(model: SidebarModel, rows: number, nav: Sideb
   let other = othersFull;
   if (project + other + agentsFull > rows) other = Math.max(othersMin, Math.min(othersFull, rows - project - agentsFull));
   if (rows - project - other < agentsMin) project = Math.max(MIN_CARD_ROWS, rows - other - agentsMin);
-  if (rows - project - other < agentsMin && !inOthers && other > 0) {
-    other = 0;
-    // The rows Other projects gave up that the agents leave unused go back to the Project card.
-    project = Math.max(project, Math.min(PROJECT_ROWS, rows - agentsFull));
-  }
+  if (rows - project - other < agentsMin && !inOthers) other = 0;
   // A sidebar too short for every card: the top ones keep their rows, the rest are cut.
   project = Math.max(0, Math.min(project, rows));
   other = Math.max(0, Math.min(other, rows - project));
   let agents = Math.max(0, rows - project - other);
 
   const body = (cardRows: number) => Math.max(0, cardRows - BORDERS);
-  // An expanded block can leave the Agents window well short of its card: a shrunk Other projects takes those rows back.
-  if (other > 0 && other < othersFull && model.agents.some((agent) => nav.expanded.has(agent.key))) {
-    const spare = Math.min(othersFull - other, body(agents) - agentLines(blocks, body(agents), cursor.agentIndex).length);
+  const unused = () => body(agents) - agentLines(blocks, body(agents), cursor.agentIndex).length;
+  // An expanded block can leave the Agents window well short of its card: a shrunk Project card takes those rows
+  // back first, then a shrunk Other projects, the reverse of the order they shrank in.
+  const anyExpanded = model.agents.some((agent) => nav.expanded.has(agent.key));
+  if (anyExpanded && project < PROJECT_ROWS && model.projects.length > 0) {
+    const spare = Math.min(PROJECT_ROWS - project, unused());
+    if (spare > 0) { project += spare; agents -= spare; }
+  }
+  if (anyExpanded && other > 0 && other < othersFull) {
+    const spare = Math.min(othersFull - other, unused());
     if (spare > 0) { other += spare; agents -= spare; }
   }
   const otherCursor = inOthers ? others.indexOf(cursor.projectIndex) : -1;

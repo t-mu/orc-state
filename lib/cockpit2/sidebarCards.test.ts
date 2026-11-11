@@ -441,6 +441,12 @@ describe('expanded agents', () => {
     const layout = sidebarCardsLayout(one, 12, at('p1/a2', ['p1/a2']), COLS);
     expect(rowsOf(layout)).toEqual([4, 8]);
     expect(card(layout, 'project')!.lines.map((line) => line.kind)).toEqual(['coordinator', 'workers']);
+    // Two expanded agents, the cursor on the second: the window shows its block and `+1 more`, the row it leaves goes to the Project card.
+    const two = details(1);
+    two.agents = two.agents.slice(1, 3);
+    const both = sidebarCardsLayout(two, 13, at('p1/a3', ['p1/a2', 'p1/a3']), COLS);
+    expect(rowsOf(both)).toEqual([4, 9]);
+    expect(card(both, 'agents')!.lines.length).toBe(7);
   });
 
   it('leaves out the activity line when it only repeats the task', () => {

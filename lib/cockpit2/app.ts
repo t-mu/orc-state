@@ -29,10 +29,11 @@
  * needing attention (both clickable). Its last row is the footer: the mode,
  * `project › tab` and the cockpit keys; a terminal too short drops the
  * footer, then the tab bar's borders, then the header, before the slot
- * shrinks. The header, the tab bar and the footer are drawn by widgets.ts, the sidebar's Project, Other
- * projects and Agents cards by sidebarCards.ts, from the pure models of
- * lib/tui. The keys belong to the slot or to a sidebar box: the dashboard key
- * (F10 by default) or the prefix then `o` focus the sidebar, where arrows (or
+ * shrinks. The header, the tab bar and the footer are drawn by widgets.ts,
+ * the sidebar's Project, Other projects and Agents cards by sidebarCards.ts,
+ * from the pure models of lib/tui. The keys belong to the slot or to a
+ * sidebar box: the dashboard key (F10 by default) or the prefix then `o`
+ * focus the sidebar, where arrows (or
  * j/k), Tab, Enter, Space and Esc navigate, open, expand or collapse an agent
  * and return to the pane. Clicks on a sidebar row open that project or agent
  * (on an agent's collapse marker expand or collapse it), on a header button open the
