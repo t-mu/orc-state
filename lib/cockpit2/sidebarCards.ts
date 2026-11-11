@@ -12,22 +12,29 @@
  *   └──────────────────────────────┘
  *   ┌─ [ AGENTS ] ─────── 3 live ──┐   Agents: one collapsed row each; an agent
  *   │ [+] grommash worker [PERMI…] │   needing attention keeps its question or
- *   │     ? may I run npm test     │   reason on a second row
+ *   │     ? may I run npm test     │   reason on a second row. An expanded agent
+ *   │┌ [-] boin worker 3m [IMPL…] ┐│   (Plan 7 Step 9: Space or a click on its
+ *   ││ task  cockpit-style/foo    ││   marker) is a box in its status role: the
+ *   ││ implement · claude         ││   row, its task, phase and provider, its
+ *   ││ editing app.ts             ││   activity or question (at most two lines)
+ *   ││ Enter: open tab            ││   and the open key
+ *   │└────────────────────────────┘│
  *   └──────────────────────────────┘
  *
  * The keys move in two boxes, as before: projects (the active one is the
  * Project card's coordinator row, the others their Other projects rows) and
- * agents. The layout (`sidebarCardsLayout`) is pure: it sizes the cards to the
- * rows (Other projects shrinks to a `+N more` line before Agents loses rows),
- * keeps the cursor's row in view and lists every body row, which drawing
- * (`drawSidebarCards`) and clicks (`sidebarCardTarget`) both read.
+ * agents, by agent. The layout (`sidebarCardsLayout`) is pure: it sizes the
+ * cards to the rows (Other projects shrinks to a `+N more` line before Agents
+ * loses rows), keeps the cursor's row (an expanded agent's whole block) in
+ * view and lists every body row, which drawing (`drawSidebarCards`) and clicks
+ * (`sidebarCardTarget`) both read.
  */
 import { stringWidth } from '../cellWidth.ts';
 import { ATTENTION_BADGE, fitRow, fitText, type SidebarAgent, type SidebarModel } from '../tui/sidebar.ts';
-import { windowStart } from '../tui/taskList.ts';
+import { windowStart, wrapText } from '../tui/taskList.ts';
 import { collapseMarker, drawBadge, drawBox } from './chrome.ts';
-import type { SidebarKey } from './dispatch.ts';
-import { fillRect, type Frame, type Region } from './frame.ts';
+import { sidebarKeyName, type SidebarKey } from './dispatch.ts';
+import { drawText, fillRect, type Frame, type Region } from './frame.ts';
 import type { CellStyle } from './screen.ts';
 import { attentionRole, badgeRole, phaseRole, projectStateRole, styleOf, type StatusRole, type Theme } from './theme.ts';
 import { drawRuns, type Run } from './widgets.ts';
@@ -42,9 +49,11 @@ export interface SidebarNav {
   box: SidebarBox;
   projectKey: string | null;
   agentKey: string | null;
+  /** The keys of the agents drawn expanded; in memory only (not in view-state.json), pruned by `pruneExpanded`. */
+  expanded: ReadonlySet<string>;
 }
 
-export const INITIAL_SIDEBAR_NAV: SidebarNav = Object.freeze({ box: 'agents', projectKey: null, agentKey: null });
+export const INITIAL_SIDEBAR_NAV: SidebarNav = Object.freeze({ box: 'agents', projectKey: null, agentKey: null, expanded: new Set<string>() });
 
 /** What navigation needs: the model and the cursor's indices into its projects and agents (0 for an empty list). */
 export interface SidebarCursor {
@@ -78,7 +87,8 @@ export function sidebarCursor(model: SidebarModel, nav: SidebarNav): SidebarCurs
 /**
  * A navigation key: up and down move the cursor in the focused box (stopping
  * at either end), switchBox moves between the projects and agents boxes, open
- * opens the project or agent under the cursor, back returns to the pane.
+ * opens the project or agent under the cursor, toggle expands or collapses the
+ * agent under the cursor (nothing in the projects box), back returns to the pane.
  */
 export function navigateSidebar(view: SidebarCursor, nav: SidebarNav, key: SidebarKey): SidebarStep {
   const { model } = view;
@@ -98,14 +108,33 @@ export function navigateSidebar(view: SidebarCursor, nav: SidebarNav, key: Sideb
       if (length === 0) return { nav, command: null };
       return projects ? openProjectStep(nav, model, current) : openAgentStep(nav, model, current);
     }
+    case 'toggle': {
+      if (projects || length === 0) return { nav, command: null };
+      return { nav: toggleAgent(nav, model.agents[current].key), command: null };
+    }
   }
+}
+
+/** `nav` with the agent `key` expanded if it was collapsed, else collapsed; the cursor goes to it. */
+function toggleAgent(nav: SidebarNav, key: string): SidebarNav {
+  const expanded = new Set(nav.expanded);
+  if (!expanded.delete(key)) expanded.add(key);
+  return { ...nav, box: 'agents', agentKey: key, expanded };
+}
+
+/** `nav` without the expanded keys of agents no longer in `model` (the same object when none went). */
+export function pruneExpanded(nav: SidebarNav, model: SidebarModel): SidebarNav {
+  if (nav.expanded.size === 0) return nav;
+  const live = new Set(model.agents.map((agent) => agent.key));
+  const kept = [...nav.expanded].filter((key) => live.has(key));
+  return kept.length === nav.expanded.size ? nav : { ...nav, expanded: new Set(kept) };
 }
 
 function openProjectStep(nav: SidebarNav, model: SidebarModel, index: number): SidebarStep {
   const project = model.projects[index];
   // Another project lists other agents: the agents cursor starts at the top again.
   const agentKey = project.project_id === model.activeProjectId ? nav.agentKey : null;
-  return { nav: { box: 'projects', projectKey: project.project_id, agentKey }, command: { type: 'openProject', projectId: project.project_id } };
+  return { nav: { ...nav, box: 'projects', projectKey: project.project_id, agentKey }, command: { type: 'openProject', projectId: project.project_id } };
 }
 
 function openAgentStep(nav: SidebarNav, model: SidebarModel, index: number): SidebarStep {
@@ -118,11 +147,16 @@ function openAgentStep(nav: SidebarNav, model: SidebarModel, index: number): Sid
 
 export type SidebarCard = 'project' | 'otherProjects' | 'agents';
 
+/** The rows of an expanded agent's block, top to bottom (`detail` up to twice). */
+export type BlockPart = 'top' | 'task' | 'phase' | 'detail' | 'hint' | 'bottom';
+
 /** A card's body row: what is drawn there and what a click on it hits. */
 export type CardLine =
   | { kind: 'coordinator' } | { kind: 'workers' } | { kind: 'notice' } | { kind: 'noProjects' }
   | { kind: 'project'; index: number }
   | { kind: 'agent'; index: number } | { kind: 'detail'; index: number }
+  /** A row of an expanded agent's block; a `detail` part carries its wrapped line. */
+  | { kind: 'block'; index: number; part: BlockPart; text?: string }
   | { kind: 'more'; count: number }
   | { kind: 'empty' };
 
@@ -147,7 +181,37 @@ const PROJECT_ROWS = BORDERS + 3;
 /** The fewest rows a card keeps when space runs short: one body row. */
 const MIN_CARD_ROWS = BORDERS + 1;
 
-const agentHeight = (agent: SidebarAgent): number => (agent.attention ? 2 : 1);
+/** Columns of an expanded block's text: the card's inner width less the block's borders and a column of padding inside each. */
+const blockTextCols = (cols: number): number => Math.max(1, cols - BORDERS - 4);
+/** The most rows an expanded block gives the activity or question. */
+const BLOCK_DETAIL_LINES = 2;
+
+/** `text` wrapped to `width` in at most two lines, the second cut (with an ellipsis) when there is more. */
+function blockDetail(text: string | null, width: number): string[] {
+  if (!text) return [];
+  const wrapped = wrapText(text, width);
+  const lines = wrapped.length > BLOCK_DETAIL_LINES
+    ? [...wrapped.slice(0, BLOCK_DETAIL_LINES - 1), wrapped.slice(BLOCK_DETAIL_LINES - 1).join(' ')]
+    : wrapped;
+  // wrapText counts code units: a line of wide graphemes is cut again by display width.
+  return lines.map((line) => fitText(line, width));
+}
+
+/**
+ * Each agent's rows in a card `cols` wide: collapsed, its row and (when it
+ * needs attention) its question or reason; expanded, its block.
+ */
+function agentBlocks(agents: SidebarAgent[], expanded: ReadonlySet<string>, cols: number): CardLine[][] {
+  return agents.map((agent, index): CardLine[] => {
+    if (!expanded.has(agent.key)) return agent.attention ? [{ kind: 'agent', index }, { kind: 'detail', index }] : [{ kind: 'agent', index }];
+    const part = (name: BlockPart, text?: string): CardLine => (text === undefined ? { kind: 'block', index, part: name } : { kind: 'block', index, part: name, text });
+    return [
+      part('top'), part('task'), part('phase'),
+      ...blockDetail(agent.detail, blockTextCols(cols)).map((text) => part('detail', text)),
+      part('hint'), part('bottom'),
+    ];
+  });
+}
 
 /** The Other projects body in `body` rows: a window around `cursor` (an index into `others`) and a `+N more` line for the rest. */
 function otherLines(others: number[], body: number, cursor: number): CardLine[] {
@@ -161,25 +225,26 @@ function otherLines(others: number[], body: number, cursor: number): CardLine[] 
 }
 
 /**
- * The Agents body in `body` rows: every agent when they fit, else a window
- * that starts as high as the cursor's agent allows and a `+N more` line for
+ * The Agents body in `body` rows from each agent's rows (`blocks`): every
+ * agent when they fit, else a window that starts as high as the cursor's
+ * agent allows (its whole block in view when it fits) and a `+N more` line for
  * the agents left out.
  */
-function agentLines(agents: SidebarAgent[], body: number, cursor: number): CardLine[] {
+function agentLines(blocks: CardLine[][], body: number, cursor: number): CardLine[] {
   if (body <= 0) return [];
-  if (agents.length === 0) return [{ kind: 'empty' }];
-  const block = (index: number): CardLine[] => (agents[index].attention ? [{ kind: 'agent', index }, { kind: 'detail', index }] : [{ kind: 'agent', index }]);
-  const total = agents.reduce((sum, agent) => sum + agentHeight(agent), 0);
-  if (total <= body) return agents.flatMap((_, index) => block(index));
+  if (blocks.length === 0) return [{ kind: 'empty' }];
+  const height = (index: number): number => blocks[index].length;
+  const total = blocks.reduce((sum, block) => sum + block.length, 0);
+  if (total <= body) return blocks.flat();
   const room = body >= 2 ? body - 1 : body;
   let start = 0;
-  let used = agents.slice(0, cursor + 1).reduce((sum, agent) => sum + agentHeight(agent), 0);
-  while (used > room && start < cursor) used -= agentHeight(agents[start++]);
+  let used = blocks.slice(0, cursor + 1).reduce((sum, block) => sum + block.length, 0);
+  while (used > room && start < cursor) used -= height(start++);
   let end = cursor + 1;
-  while (end < agents.length && used + agentHeight(agents[end]) <= room) used += agentHeight(agents[end++]);
-  while (start > 0 && used + agentHeight(agents[start - 1]) <= room) used += agentHeight(agents[--start]);
-  const lines = agents.slice(start, end).flatMap((_, offset) => block(start + offset)).slice(0, room);
-  const hidden = agents.length - (end - start);
+  while (end < blocks.length && used + height(end) <= room) used += height(end++);
+  while (start > 0 && used + height(start - 1) <= room) used += height(--start);
+  const lines = blocks.slice(start, end).flat().slice(0, room);
+  const hidden = blocks.length - (end - start);
   if (hidden > 0 && lines.length < body) lines.push({ kind: 'more', count: hidden });
   return lines;
 }
@@ -189,8 +254,10 @@ function agentLines(agents: SidebarAgent[], body: number, cursor: number): CardL
  * projects one per other project, Agents the rest. When rows run out Other
  * projects shrinks first (down to a `+N more` line, or the cursor's row and
  * that line), then the Project card (down to its coordinator row), then Other
- * projects goes unless the cursor is in it. Each card's lines keep the
- * cursor's row in view.
+ * projects goes unless the cursor is in it, until the Agents card holds the
+ * cursor agent's row (an expanded agent's whole block, and a `+N more` line
+ * when there are other agents). Rows the Agents window leaves unused go back
+ * to a shrunk Other projects. Each card's lines keep the cursor's row in view.
  */
 export function sidebarCardsLayout(model: SidebarModel, rows: number, nav: SidebarNav, cols: number): SidebarCardsLayout {
   const cursor = sidebarCursor(model, nav);
@@ -202,19 +269,30 @@ export function sidebarCardsLayout(model: SidebarModel, rows: number, nav: Sideb
 
   const othersFull = others.length > 0 ? BORDERS + others.length : 0;
   const othersMin = others.length === 0 ? 0 : BORDERS + (inOthers && others.length > 1 ? 2 : 1);
-  const agentsFull = BORDERS + Math.max(1, model.agents.reduce((sum, agent) => sum + agentHeight(agent), 0));
+  const blocks = agentBlocks(model.agents, nav.expanded, cols);
+  const agentsFull = BORDERS + Math.max(1, blocks.reduce((sum, block) => sum + block.length, 0));
+  const cursorAgent = model.agents[cursor.agentIndex];
+  // The Agents card's least: one body row, or the cursor's expanded block (and a `+N more` line for the other agents).
+  const agentsMin = cursorAgent && nav.expanded.has(cursorAgent.key)
+    ? BORDERS + blocks[cursor.agentIndex].length + (model.agents.length > 1 ? 1 : 0)
+    : MIN_CARD_ROWS;
 
   let project = PROJECT_ROWS;
   let other = othersFull;
   if (project + other + agentsFull > rows) other = Math.max(othersMin, Math.min(othersFull, rows - project - agentsFull));
-  if (rows - project - other < MIN_CARD_ROWS) project = Math.max(MIN_CARD_ROWS, rows - other - MIN_CARD_ROWS);
-  if (rows - project - other < MIN_CARD_ROWS && !inOthers) other = 0;
+  if (rows - project - other < agentsMin) project = Math.max(MIN_CARD_ROWS, rows - other - agentsMin);
+  if (rows - project - other < agentsMin && !inOthers) other = 0;
   // A sidebar too short for every card: the top ones keep their rows, the rest are cut.
   project = Math.max(0, Math.min(project, rows));
   other = Math.max(0, Math.min(other, rows - project));
-  const agents = Math.max(0, rows - project - other);
+  let agents = Math.max(0, rows - project - other);
 
   const body = (cardRows: number) => Math.max(0, cardRows - BORDERS);
+  // An expanded block can leave the Agents window well short of its card: a shrunk Other projects takes those rows back.
+  if (other > 0 && other < othersFull && model.agents.some((agent) => nav.expanded.has(agent.key))) {
+    const spare = Math.min(othersFull - other, body(agents) - agentLines(blocks, body(agents), cursor.agentIndex).length);
+    if (spare > 0) { other += spare; agents -= spare; }
+  }
   const otherCursor = inOthers ? others.indexOf(cursor.projectIndex) : -1;
   // With no project at all the card says so (`(none)`, as the old projects box did) above the notice that tells why.
   const projectLines: CardLine[] = (model.projects.length === 0
@@ -222,7 +300,7 @@ export function sidebarCardsLayout(model: SidebarModel, rows: number, nav: Sideb
     : [{ kind: 'coordinator' }, { kind: 'workers' }, { kind: 'notice' }] as CardLine[]).slice(0, body(project));
   const cards: CardLayout[] = [{ card: 'project', y: 0, rows: project, lines: projectLines }];
   if (other > 0) cards.push({ card: 'otherProjects', y: project, rows: other, lines: otherLines(others, body(other), otherCursor) });
-  cards.push({ card: 'agents', y: project + other, rows: agents, lines: agentLines(model.agents, body(agents), cursor.agentIndex) });
+  cards.push({ card: 'agents', y: project + other, rows: agents, lines: agentLines(blocks, body(agents), cursor.agentIndex) });
   return { ...cursor, cols, rows, cursorCard, projectCard, cards };
 }
 
@@ -233,6 +311,8 @@ export interface SidebarCardTarget { card: SidebarCard; index: number; onMarker:
 const PAD = 1;
 /** Columns of the collapse marker, which starts after the left border and its padding. */
 const MARKER_COLS = stringWidth(collapseMarker(false));
+/** The marker's first column on an expanded block's top row: after the card's border, the block's corner and a space. */
+const BLOCK_MARKER_X = 3;
 
 /** The row under (x, y), relative to the sidebar; null on a border, a blank row, a `+N more` or empty-state line. */
 export function sidebarCardTarget(layout: SidebarCardsLayout, x: number, y: number): SidebarCardTarget | null {
@@ -251,14 +331,20 @@ export function sidebarCardTarget(layout: SidebarCardsLayout, x: number, y: numb
     case 'project': return { card: 'otherProjects', index: line.index, onMarker: false };
     case 'agent': return { card: 'agents', index: line.index, onMarker: x >= 1 + PAD && x < 1 + PAD + MARKER_COLS };
     case 'detail': return { card: 'agents', index: line.index, onMarker: false };
+    case 'block': return { card: 'agents', index: line.index, onMarker: line.part === 'top' && x >= BLOCK_MARKER_X && x < BLOCK_MARKER_X + MARKER_COLS };
     default: return null;
   }
 }
 
-/** A click at (x, y) in the sidebar: the row's box gets the cursor and its project or agent opens. Null off the rows. */
+/**
+ * A click at (x, y) in the sidebar: the row's box gets the cursor and its
+ * project or agent opens, or, on an agent's collapse marker, the agent expands
+ * or collapses (no command). Null off the rows.
+ */
 export function sidebarCardClick(layout: SidebarCardsLayout, nav: SidebarNav, x: number, y: number): SidebarStep | null {
   const target = sidebarCardTarget(layout, x, y);
   if (!target) return null;
+  if (target.onMarker) return { nav: toggleAgent(nav, layout.model.agents[target.index].key), command: null };
   return target.card === 'agents' ? openAgentStep(nav, layout.model, target.index) : openProjectStep(nav, layout.model, target.index);
 }
 
@@ -371,7 +457,9 @@ export function drawSidebarCards(frame: Frame, region: Region, layout: SidebarCa
     card.lines.slice(0, Math.min(inner.rows, rows - 1)).forEach((line, offset) => {
       const cursor = focused && isCursorLine(layout, line);
       if (cursor) fillRect(frame, { x: inner.x, y: inner.y + offset, cols: inner.cols, rows: 1 }, { ...role('text.primary'), ...theme.roles['row.cursor'] });
-      drawLine(frame, inner.x + PAD, inner.y + offset, inner.cols - 2 * PAD, line, cursor);
+      // An expanded block's border takes the padding columns: it spans the card's inner width.
+      if (line.kind === 'block') drawBlockLine(frame, inner.x, inner.y + offset, inner.cols, line, cursor);
+      else drawLine(frame, inner.x + PAD, inner.y + offset, inner.cols - 2 * PAD, line, cursor);
     });
   }
 
@@ -403,19 +491,9 @@ export function drawSidebarCards(frame: Frame, region: Region, layout: SidebarCa
         drawCardRow(frame, x, y, cols, { left: project.name, leftRuns: plain, badge: { label: project.state, role: projectStateRole(project.state) }, after, cursor }, theme);
         return;
       }
-      case 'agent': {
-        const agent = model.agents[line.index];
-        drawCardRow(frame, x, y, cols, {
-          left: `${collapseMarker(false)} ${agent.agent_id} ${agent.role}`,
-          leftRuns: (left) => agentRuns(agent, left),
-          before: agent.elapsed ? [[`${agent.elapsed} `, role('text.muted')]] : [],
-          badge: agent.attention
-            ? { label: ATTENTION_BADGE[agent.attention], role: attentionRole(agent.attention) }
-            : { label: agent.phase, role: phaseRole(agent.phase) },
-          cursor, dim: model.agentsStale,
-        }, theme);
+      case 'agent':
+        drawCardRow(frame, x, y, cols, agentRow(model.agents[line.index], false, cursor), theme);
         return;
-      }
       case 'detail': {
         const agent = model.agents[line.index];
         const style = role(agent.attention ? attentionRole(agent.attention) : 'text.muted');
@@ -430,12 +508,63 @@ export function drawSidebarCards(frame: Frame, region: Region, layout: SidebarCa
         drawRuns(frame, x, y, [[fitText(text, cols), role('text.muted')]], cols);
         return;
       }
+      case 'block':
+        return;
     }
   }
 
+  /** An agent's row: marker, name and role left, elapsed time and the attention kind's or the phase's badge flush right. */
+  function agentRow(agent: SidebarAgent, expanded: boolean, cursor: boolean): CardRow {
+    return {
+      left: `${collapseMarker(expanded)} ${agent.agent_id} ${agent.role}`,
+      leftRuns: (left) => agentRuns(agent, expanded, left),
+      before: agent.elapsed ? [[`${agent.elapsed} `, role('text.muted')]] : [],
+      badge: { label: agent.attention ? ATTENTION_BADGE[agent.attention] : agent.phase, role: agentStatusRole(agent) },
+      cursor, dim: model.agentsStale,
+    };
+  }
+
+  /**
+   * One row of an expanded agent's block, `cols` wide: the border in the
+   * agent's status role (dim on a stale list), the agent's row in the top
+   * border, then its task, phase and provider, activity or question (in the
+   * attention kind's role) and the open key, each cut by display width.
+   */
+  function drawBlockLine(frame: Frame, x: number, y: number, cols: number, line: Extract<CardLine, { kind: 'block' }>, cursor: boolean): void {
+    if (cols < 4) return;
+    const agent = model.agents[line.index];
+    const stale = model.agentsStale;
+    const styled = (style: CellStyle): CellStyle => (stale ? { ...style, dim: true } : style);
+    const border = styled(role(agentStatusRole(agent)));
+    if (line.part === 'bottom') {
+      drawText(frame, x, y, `└${'─'.repeat(cols - 2)}┘`, border, cols);
+      return;
+    }
+    const top = line.part === 'top';
+    drawText(frame, x, y, top ? '┌' : '│', border, 1);
+    drawText(frame, x + cols - 1, y, top ? '┐' : '│', border, 1);
+    const textCols = cols - 4;
+    if (textCols <= 0) return;
+    if (top) {
+      drawCardRow(frame, x + 2, y, textCols, agentRow(agent, true, cursor), theme);
+      return;
+    }
+    const muted = styled(role('text.muted'));
+    const primary = styled(role('text.primary'));
+    const labelled = (label: string, value: string): Run[] => {
+      const shown = fitText(`${label}${value}`, textCols);
+      return shown.startsWith(label) ? [[label, muted], [shown.slice(label.length), primary]] : [[shown, muted]];
+    };
+    const runs: Run[] = line.part === 'task' ? labelled('task  ', agent.task_ref ?? '-')
+      : line.part === 'phase' ? [[fitText(`${agent.phase} · ${agent.provider ?? '-'}`, textCols), primary]]
+      : line.part === 'detail' ? [[fitText(line.text ?? '', textCols), styled(role(agent.attention ? attentionRole(agent.attention) : 'text.muted'))]]
+      : [[fitText(`${sidebarKeyName('open')}: open tab`, textCols), muted]];
+    drawRuns(frame, x + 2, y, runs, textCols);
+  }
+
   /** An agent row's left part as runs: the marker, the name (`text.accent`), the role and elapsed time (`text.muted`). */
-  function agentRuns(agent: SidebarAgent, shown: string): Run[] {
-    const marker = `${collapseMarker(false)} `;
+  function agentRuns(agent: SidebarAgent, expanded: boolean, shown: string): Run[] {
+    const marker = `${collapseMarker(expanded)} `;
     const runs: Run[] = [];
     let rest = shown;
     for (const [part, name] of [[marker, 'text.muted'], [agent.agent_id, 'text.accent']] as const) {
@@ -449,12 +578,18 @@ export function drawSidebarCards(frame: Frame, region: Region, layout: SidebarCa
   }
 }
 
-/** Whether `line` is the keys' cursor row (the caller checks its card is the focused one). */
+/** An agent's status role: its attention kind's, else its phase's; an expanded block's border and the agent's badge use it. */
+export function agentStatusRole(agent: SidebarAgent): StatusRole {
+  return agent.attention ? attentionRole(agent.attention) : phaseRole(agent.phase);
+}
+
+/** Whether `line` is the keys' cursor row (the caller checks its card is the focused one); an expanded agent's is its block's top row. */
 function isCursorLine(layout: SidebarCardsLayout, line: CardLine): boolean {
   switch (line.kind) {
     case 'coordinator': return layout.projectCard === 'project';
     case 'project': return line.index === layout.projectIndex;
     case 'agent': return line.index === layout.agentIndex;
+    case 'block': return line.part === 'top' && line.index === layout.agentIndex;
     default: return false;
   }
 }

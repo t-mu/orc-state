@@ -33,8 +33,9 @@
  * projects and Agents cards by sidebarCards.ts, from the pure models of
  * lib/tui. The keys belong to the slot or to a sidebar box: the dashboard key
  * (F10 by default) or the prefix then `o` focus the sidebar, where arrows (or
- * j/k), Tab, Enter and Esc navigate, open and return to the pane. Clicks on a
- * sidebar row open that project or agent, on a header button open the
+ * j/k), Tab, Enter, Space and Esc navigate, open, expand or collapse an agent
+ * and return to the pane. Clicks on a sidebar row open that project or agent
+ * (on an agent's collapse marker expand or collapse it), on a header button open the
  * explorer or jump to attention, on a tab show it, on a tab's close
  * marker close it (only the view: the agent keeps running). What Enter or a
  * click opens takes the keys.
@@ -100,7 +101,7 @@ import {
   withExplorerTab, withModeMarks, type FooterHint, type HeaderButton,
 } from './widgets.ts';
 import {
-  INITIAL_SIDEBAR_NAV, drawSidebarCards, navigateSidebar, sidebarCardClick, sidebarCardsLayout,
+  INITIAL_SIDEBAR_NAV, drawSidebarCards, navigateSidebar, pruneExpanded, sidebarCardClick, sidebarCardsLayout,
   type SidebarBox, type SidebarCommand, type SidebarNav, type SidebarStep,
 } from './sidebarCards.ts';
 
@@ -535,11 +536,12 @@ export function runApp(options: AppOptions): App {
   });
 
   // ── widgets ──
-  /** The sidebar's cards as drawn now: the active project, the other registered projects, the active one's agents. */
+  /** The sidebar's cards as drawn now: the active project, the other registered projects, the active one's agents; an agent that left is no longer expanded. */
   function currentSidebar() {
     const model = buildSidebarModel(buildProjectViews([...watched.values()]), {
       stateDir: '', activeProjectId: tabs.activeProject, nowMs: Date.now(), registryError, agentDetails: true,
     });
+    nav = pruneExpanded(nav, model);
     return sidebarCardsLayout(model, layout.sidebar.rows, nav, layout.sidebar.cols);
   }
 
@@ -783,9 +785,11 @@ export function runApp(options: AppOptions): App {
       if (!isClick(event)) return;
       const step = sidebarCardClick(currentSidebar(), nav, at.x, at.y);
       if (!step) return;
-      // What was clicked is shown and takes the keys, as after a tab click (and a refused open too); the sidebar cursor stays on its row.
       runSidebar(step);
-      setFocus('slot');
+      // What was clicked is shown and takes the keys, as after a tab click (and a refused open too); the sidebar cursor stays on its row.
+      // A click on a collapse marker only expands or collapses: a focused sidebar's keys follow the cursor to the agents box.
+      if (step.command) setFocus('slot');
+      else if (focus !== 'slot') setFocus(step.nav.box);
     },
     tabBar: (event, at) => {
       if (!isClick(event)) return;

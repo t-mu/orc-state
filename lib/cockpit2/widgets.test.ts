@@ -382,17 +382,17 @@ describe('full-style snapshot at 80x24', () => {
 
   it('projects focused: every project state, the cursor row, a notice; a permission tab active with the slot unfocused', () => {
     const sidebar = model({ projects, agents, notice: 'coordinator restarting', status: { coordinator: 'connecting', workers: null, attention: 4 } });
-    expect(draw(sidebar, 'projects', { box: 'projects', projectKey: 'p5', agentKey: null }, 'a-permission_prompt', false, null)).toMatchSnapshot();
+    expect(draw(sidebar, 'projects', { ...INITIAL_SIDEBAR_NAV, box: 'projects', projectKey: 'p5', agentKey: null }, 'a-permission_prompt', false, null)).toMatchSnapshot();
   });
 
   it('agents focused: every attention kind, the cursor on an attention agent; a question tab active and focused', () => {
     const sidebar = model({ projects: projects.slice(0, 2), agents, status: { coordinator: 'stale', workers: { used: 4, total: 4 }, attention: 1 } });
-    expect(draw(sidebar, 'agents', { box: 'agents', projectKey: null, agentKey: 'p1/a-stalled' }, 'a-question', true, null)).toMatchSnapshot();
+    expect(draw(sidebar, 'agents', { ...INITIAL_SIDEBAR_NAV, box: 'agents', projectKey: null, agentKey: 'p1/a-stalled' }, 'a-question', true, null)).toMatchSnapshot();
   });
 
   it('a stale agent list with the cursor on a plain agent; stalled and no-progress tabs with an error line', () => {
     const sidebar = model({ projects: projects.slice(0, 1), agents: [agents[4], agents[2], agents[3]], agentsStale: true, status: { coordinator: 'incompatible', workers: { used: 0, total: 2 }, attention: 0 } });
-    expect(draw(sidebar, 'agents', { box: 'agents', projectKey: null, agentKey: 'p1/plain' }, 'a-stalled', true, 'The master tab stays open.')).toMatchSnapshot();
+    expect(draw(sidebar, 'agents', { ...INITIAL_SIDEBAR_NAV, box: 'agents', projectKey: null, agentKey: 'p1/plain' }, 'a-stalled', true, 'The master tab stays open.')).toMatchSnapshot();
   });
 
   it('no focus, a stopped coordinator with no agents; the explorer tab shown', () => {

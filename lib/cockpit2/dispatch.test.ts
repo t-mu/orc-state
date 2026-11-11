@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_COCKPIT_KEYS, type CockpitKeys } from '../cockpitKeys.ts';
-import { createDispatcher, cursorKeyMirror, modeNotice, type DispatchAction, type DispatchContext } from './dispatch.ts';
+import { createDispatcher, cursorKeyMirror, modeNotice, sidebarKeyName, type DispatchAction, type DispatchContext } from './dispatch.ts';
 import { createTokenizer, type Token } from './input.ts';
 
 const ESC = '\x1b';
@@ -131,12 +131,14 @@ describe('createDispatcher: view and typing modes', () => {
     expect(types(actions)).toEqual(['drop', 'paste', 'forward']);
   });
 
-  it('names the focus or the mode and its keys within the sidebar\'s 32 inner columns', () => {
+  it('names the focus or the mode and its keys, short enough to leave the 80-column footer room', () => {
     expect(modeNotice(VIEW)).toBe('[view] i: type · q/Esc: close');
     expect(modeNotice(TYPING)).toBe('[typing] Ctrl-]: stop typing');
     expect(modeNotice(MASTER)).toContain('master');
-    expect(modeNotice({ ...VIEW, sidebar: true })).toBe('↑↓ Tab · Enter: open · Esc: pane');
-    for (const context of [VIEW, TYPING, MASTER, { ...MASTER, sidebar: true }]) expect(modeNotice(context).length).toBeLessThanOrEqual(32);
+    expect(modeNotice({ ...VIEW, sidebar: true })).toBe('↑↓ Tab · Enter: open · Space: expand · Esc: pane');
+    for (const context of [VIEW, TYPING, MASTER]) expect(modeNotice(context).length).toBeLessThanOrEqual(32);
+    // The sidebar's keys are the most: still under 50 columns, which leaves an 80-column footer its breadcrumb.
+    expect(modeNotice({ ...MASTER, sidebar: true }).length).toBeLessThanOrEqual(48);
   });
 });
 
@@ -148,6 +150,14 @@ describe('createDispatcher: sidebar focus', () => {
       { type: 'sidebar', key: 'up' }, { type: 'sidebar', key: 'down' }, { type: 'sidebar', key: 'up' }, { type: 'sidebar', key: 'down' },
       { type: 'sidebar', key: 'switchBox' }, { type: 'sidebar', key: 'switchBox' }, { type: 'sidebar', key: 'open' }, { type: 'sidebar', key: 'back' },
     ]);
+  });
+
+  it('turns Space into the toggle key, and only while the sidebar has the focus: in the slot it reaches the pane', () => {
+    expect(run(' ', SIDEBAR)).toEqual([{ type: 'sidebar', key: 'toggle' }]);
+    expect(forwarded(run(' ', TYPING))).toEqual([' ']);
+    expect(forwarded(run(' ', MASTER))).toEqual([' ']);
+    expect(run(' ', VIEW)).toEqual([{ type: 'drop', reason: 'view' }]);
+    expect([sidebarKeyName('open'), sidebarKeyName('toggle')]).toEqual(['Enter', 'Space']);
   });
 
   it('lets no key, paste or doubled prefix reach the pane, even from a typing tab', () => {

@@ -862,7 +862,7 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     const { terminal, clients, app } = withWorkers();
     terminal.resizeTo(120, 30); // room for all three tabs
     await waitForSlotText(terminal, '$ hello from orc-master');
-    terminal.type(click(3, await sidebarRow(terminal, 'w1 ')));
+    terminal.type(click(8, await sidebarRow(terminal, 'w1 ')));
     expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: ['w1'], active: 'w1' });
     // The opened tab takes the keys, as after a tab click: its view mode's keys work at once.
     await waitForFooter(terminal, '[view] i: type');
@@ -917,7 +917,7 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     await attached(terminal);
     const master = clients[0];
     terminal.type(F10);
-    await waitForFooter(terminal, '↑↓ Tab · Enter: open · Esc: pane');
+    await waitForFooter(terminal, '↑↓ Tab · Enter: open · Space: expand · Esc: pane');
     // The cursor starts on the first agent (the one needing attention); down moves to w1, Enter opens it.
     terminal.type(`${ESC}[B\r`);
     expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: ['w1'], active: 'w1' });
@@ -955,6 +955,42 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     await waitForFooter(terminal, '[master] keys go to the master');
     terminal.type('z');
     expect(other.sent).toEqual([`${other.paneId} y`, `${other.paneId} z`]);
+  });
+
+  it('expands and collapses the cursor agent with Space in the sidebar and an agent with a click on its marker; Space in the slot reaches the pane', async () => {
+    const { terminal, client, app } = withWorkers();
+    await attached(terminal);
+    const sidebarHas = async (part: string) => (await sidebarRows(terminal)).some((row) => row.includes(part));
+    // With the slot focused Space is typed into the master; nothing expands.
+    terminal.type(' ');
+    expect(client().sent).toEqual(['%1  ']);
+    expect(await sidebarHas('[-]')).toBe(false);
+
+    // Sidebar focused: Space expands the cursor's agent (the one needing attention sorts first) without opening it, and collapses it again.
+    terminal.type(F10);
+    await waitForFooter(terminal, 'Space: expand');
+    terminal.type(' ');
+    await waitForSidebar(terminal, `[-] ${WIDE_AGENT}`);
+    await waitForSidebar(terminal, 'Enter: open tab');
+    await waitForSidebar(terminal, 'Which one?');
+    expect(app.tabs().projects[0].tabs).toEqual([]);
+    terminal.type(' ');
+    await waitFor(async () => !(await sidebarHas('[-]')));
+    terminal.type(ESC);
+    await waitForFooter(terminal, '[master]');
+
+    // A click on w1's marker expands it, opens nothing and leaves the keys where they were; a click elsewhere on its top row opens it.
+    terminal.type(click(3, await sidebarRow(terminal, '[+] w1 ')));
+    await waitForSidebar(terminal, '[-] w1 ');
+    expect(app.tabs().projects[0].tabs).toEqual([]);
+    await waitForFooter(terminal, '[master]');
+    const top = await sidebarRow(terminal, '[-] w1 ');
+    terminal.type(click(10, top));
+    expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: ['w1'], active: 'w1' });
+    // The marker of an expanded block sits one column further in, after the block's corner.
+    terminal.type(click(3, top));
+    await waitForSidebar(terminal, '[+] w1 ');
+    expect(app.tabs().projects[0].active).toBe('w1');
   });
 
   it('toggles the focus with the prefix then o, and a click in the slot gives it the keys', async () => {
