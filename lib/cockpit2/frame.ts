@@ -7,7 +7,7 @@
  * and a wide grapheme that does not fit is drawn as a blank, never half a glyph.
  */
 import { graphemes, graphemeWidth, fitToWidth } from '../cellWidth.ts';
-import type { Cell, CellStyle, Screen } from './screen.ts';
+import type { Cell, CellStyle, Cursor, Screen } from './screen.ts';
 
 export interface Frame {
   readonly cols: number;
@@ -115,4 +115,17 @@ export function blitScreen(frame: Frame, screen: Pick<Screen, 'cols' | 'rows' | 
       else put(frame, fx, fy, ' ', 1, DEFAULT_STYLE);
     }
   }
+}
+
+/**
+ * Where the real terminal's cursor goes for a screen blitted into `region`:
+ * `screen.cursor()` is pane-relative, the renderer wants frame cells. Hidden
+ * (and parked at the region's origin) when the slot has no focus, the program
+ * hid it, the pane is scrolled back, or it falls outside the cropped region.
+ */
+export function slotCursor(screen: Pick<Screen, 'cursor' | 'scrollOffset'>, region: Region, focused: boolean): Cursor {
+  const cursor = screen.cursor();
+  const shown = focused && cursor.visible && screen.scrollOffset === 0
+    && cursor.x >= 0 && cursor.y >= 0 && cursor.x < region.cols && cursor.y < region.rows;
+  return shown ? { x: region.x + cursor.x, y: region.y + cursor.y, visible: true } : { x: region.x, y: region.y, visible: false };
 }
