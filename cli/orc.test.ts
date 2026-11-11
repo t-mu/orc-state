@@ -114,6 +114,12 @@ describe('cli/orc.ts', () => {
     expect(buildNodeArgs('cockpit', '/tmp/cockpit.js', ['bar'])).toEqual(['/tmp/cockpit.js', 'bar']);
   });
 
+  it('dispatches cockpit2 (its task explorer) through tsx/esm from source, not compiled', () => {
+    expect(buildNodeArgs('cockpit2', '/tmp/cockpit2.ts', ['explorer']).slice(0, 1)).toEqual(['--import']);
+    expect(buildNodeArgs('cockpit2', '/tmp/cockpit2.ts', ['explorer']).slice(2)).toEqual(['/tmp/cockpit2.ts', 'explorer']);
+    expect(buildNodeArgs('cockpit2', '/tmp/cockpit2.js', ['explorer'])).toEqual(['/tmp/cockpit2.js', 'explorer']);
+  });
+
   it('dispatches watch without tsx/esm when running compiled', () => {
     expect(buildNodeArgs('watch', '/tmp/watch.js', ['--once'])).toEqual([
       '/tmp/watch.js',

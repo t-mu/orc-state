@@ -5,8 +5,8 @@ import { CLOSE_MARKER, buildTabBarModel, tabBarClickTarget, type TabBarState } f
 import { computeLayout } from './app.ts';
 import { createFrame, type Frame } from './frame.ts';
 import {
-  INITIAL_SIDEBAR_NAV, TYPING_MARK, VIEW_MARK, drawSidebar, drawTabBar, navigateSidebar, sidebarClick, sidebarView, tabBarView, withModeMarks,
-  type SidebarNav,
+  EXPLORER_TAB, INITIAL_SIDEBAR_NAV, TYPING_MARK, VIEW_MARK, drawSidebar, drawTabBar, navigateSidebar, sidebarClick, sidebarView, tabBarButtonAt,
+  tabBarView, withExplorerTab, withModeMarks, type SidebarNav, type TabBarButton,
 } from './widgets.ts';
 
 const CJK_PROJECT = '日本語プロジェクト';
@@ -237,6 +237,50 @@ describe('drawTabBar', () => {
     const empty = createFrame(80, 24);
     drawTabBar(empty, layout.tabBar, tabBarView(buildTabBarModel({ activeProject: null, projects: [] }), 46, 'x'), { slotFocused: true, error: null });
     expect(rowText(empty, 1, 34, 46)).toContain('No project is open');
+  });
+});
+
+describe('tab bar buttons and the explorer tab', () => {
+  const BUTTONS: TabBarButton[] = [{ action: 'explorer', text: 'tasks' }, { action: 'attention', text: '! 2' }];
+
+  for (const [cols, rows] of [[80, 24], [200, 60]] as const) {
+    it(`draws the tasks entry and the attention badge left of the quit hint and hit-tests them at ${cols}x${rows}`, () => {
+      const layout = computeLayout(cols, rows);
+      const frame = createFrame(cols, rows);
+      const bar = tabBarView(buildTabBarModel(TABS), layout.tabBar.cols, 'Ctrl-q: quit', BUTTONS);
+      drawTabBar(frame, layout.tabBar, bar, { slotFocused: true, error: null });
+      const line = rowText(frame, 1, layout.tabBar.x, layout.tabBar.cols);
+      expect(line.endsWith(' tasks ! 2 Ctrl-q: quit')).toBe(true);
+      expect(stringWidth(line)).toBe(layout.tabBar.cols);
+      // The tabs end before the buttons.
+      const used = stringWidth(bar.layout.leftMarker) + bar.layout.cells.reduce((sum, cell) => sum + cell.width, 0) + stringWidth(bar.layout.rightMarker);
+      expect(used).toBeLessThan(bar.buttons[0].x);
+      const tasks = bar.buttons[0].x;
+      const badge = bar.buttons[1].x;
+      expect([tasks, tasks + 4].map((x) => tabBarButtonAt(bar, x))).toEqual(['explorer', 'explorer']);
+      expect([badge, badge + 2].map((x) => tabBarButtonAt(bar, x))).toEqual(['attention', 'attention']);
+      expect(tabBarButtonAt(bar, tasks - 1)).toBeNull();
+      expect(tabBarButtonAt(bar, layout.tabBar.cols - 1)).toBeNull(); // the quit hint
+      expect(frame.cells[1 * cols + layout.tabBar.x + badge].style.inverse).toBe(true);
+    });
+  }
+
+  it('drops the buttons, the first given first, before the quit hint on a narrow bar, and has none without a project', () => {
+    expect(tabBarView(buildTabBarModel(TABS), 40, 'Ctrl-q: quit', BUTTONS).buttons.map((button) => button.action)).toEqual(['attention']);
+    expect(tabBarView(buildTabBarModel(TABS), 37, 'Ctrl-q: quit', [BUTTONS[0]])).toMatchObject({ buttons: [], hint: 'Ctrl-q: quit' });
+    expect(tabBarView(buildTabBarModel(TABS), 36, 'Ctrl-q: quit', BUTTONS)).toMatchObject({ buttons: [], hint: null });
+    expect(tabBarView(buildTabBarModel({ activeProject: null, projects: [] }), 46, 'x', BUTTONS).buttons).toEqual([]);
+  });
+
+  it('shows the explorer as the active, closable tab after the project\'s tabs', () => {
+    const model = withExplorerTab(buildTabBarModel(TABS));
+    expect(model.tabs.map((tab) => [tab.label, tab.active])).toEqual([['master', false], [CJK_AGENT, false], [EMOJI_AGENT, false], ['w3', false], ['tasks', true]]);
+    expect(model.tabs.at(-1)).toMatchObject({ agentId: EXPLORER_TAB, number: 5, closable: true });
+    const bar = tabBarView(model, 200, null);
+    const cell = bar.layout.cells.at(-1)!;
+    expect(tabBarClickTarget(bar.model, bar.layout, cell.closeX!)).toEqual({ kind: 'close', tab: model.tabs.at(-1) });
+    const empty = buildTabBarModel({ activeProject: null, projects: [] });
+    expect(withExplorerTab(empty)).toBe(empty);
   });
 });
 
