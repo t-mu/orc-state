@@ -12,22 +12,32 @@
  * current project and the terminal's colour depth, and it runs the project watcher. Quitting (Ctrl-q, or the
  * prefix then d) never stops a master, a worker or a coordinator.
  *
+ * `runCockpit2` is the cockpit as `orc start-session` runs it too
+ * (`launchCockpit2`): one per user (lib/cockpit2/instance.ts). It takes over
+ * a running cockpit, which exits, and a stale lock silently. Launched from
+ * inside one of orc's tmux servers (the master's shell, which the cockpit
+ * shows), it would nest a cockpit in the cockpit: it adds the project to the
+ * view state instead and wakes the running cockpit (SIGUSR2), which shows it.
+ *
  * `explorer` runs the read-only task explorer (lib/tui/ExplorerView.ts) for
  * the selected project until Esc or q: what the cockpit's explorer tab runs,
  * in a session on its private tmux server (lib/cockpit2/explorer.ts).
  */
-import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { shellQuote, tmuxBinary } from '../adapters/tmux.ts';
+import { shellQuote, tmuxBinary, tmuxSocketPath } from '../adapters/tmux.ts';
 import { ProjectWatcher } from '../client.ts';
-import { resolveCockpitKeys } from '../lib/cockpitKeys.ts';
+import { keyLabel, resolveCockpitKeys, type CockpitKeys } from '../lib/cockpitKeys.ts';
 import { projectDataHome } from '../lib/dataHome.ts';
 import { ACTIVE_PROJECT } from '../lib/paths.ts';
-import { runApp } from '../lib/cockpit2/app.ts';
+import { isSameProcess, readProcessStart } from '../lib/processIdentity.ts';
+import { quitHint, runApp, type AppExit } from '../lib/cockpit2/app.ts';
 import { colorDepthFromEnv } from '../lib/cockpit2/color.ts';
 import { tmuxExplorerHost } from '../lib/cockpit2/explorer.ts';
+import { claimInstance, exitRequested, liveInstance, type InstanceHolder } from '../lib/cockpit2/instance.ts';
 import { fdWriter, openTerminal } from '../lib/cockpit2/terminal.ts';
-import { createViewStateStore } from '../lib/cockpit2/viewState.ts';
+import { addProject, createViewStateStore } from '../lib/cockpit2/viewState.ts';
 import { cliError, requireProjectScope } from './shared.ts';
 
 /** Where cockpit2 keeps its files under orc's data home: the single-instance lock (Plan 6 Step 12), the view state and its write lock. */
@@ -51,6 +61,165 @@ export function explorerCommand(orc: string[], projectId: string): string {
 /** The command that runs this orc (from source or compiled). */
 const thisOrc = (): string[] => [process.execPath, fileURLToPath(new URL(runtimeImportPath('./orc.ts', './orc.js'), import.meta.url))];
 
+/** The tmux server the old tmux-pane cockpit runs (adapters/tmuxCockpit.ts `COCKPIT_SOCKET`); it only hosts views. */
+const OLD_COCKPIT_SOCKET = 'orc-cockpit';
+/** orc's tmux servers: a project's (lib/tmuxNames.ts `tmuxSocketName`), the old cockpit's and cockpit2's explorer server. */
+const ORC_SOCKET = /^orc-(?:[0-9a-f]{12}|cockpit2?)$/;
+
+/**
+ * Whether `TMUX` says this process runs in a pane of one of orc's tmux
+ * servers: an agent's session (the master's shell, which the cockpit shows) or
+ * a cockpit's. A cockpit started there would run inside the cockpit.
+ */
+export function insideOrcTmux(env: NodeJS.ProcessEnv = process.env, socketDir = dirname(tmuxSocketPath('orc'))): boolean {
+  const socket = env.TMUX?.split(',')[0];
+  return !!socket && dirname(socket) === socketDir && ORC_SOCKET.test(basename(socket));
+}
+
+/** What a launch does: run the cockpit in this terminal (taking over a running one), or add the project to the cockpit and wake it. */
+export type CockpitLaunch = 'run' | 'add';
+
+/** From inside orc's tmux servers a cockpit would nest: the project is added instead, whether or not a cockpit runs. */
+export function cockpitLaunch(nested: boolean): CockpitLaunch {
+  return nested ? 'add' : 'run';
+}
+
+/** This process as the instance lock names it. */
+function thisProcess(): InstanceHolder {
+  return { pid: process.pid, start: readProcessStart(process.pid) ?? `pid:${process.pid}` };
+}
+
+/** Wakes a running cockpit: it exits when asked to (an exit request), else reloads its view state. */
+const WAKE_SIGNAL = 'SIGUSR2';
+function wakeCockpit(holder: InstanceHolder): void {
+  try { process.kill(holder.pid, WAKE_SIGNAL); } catch { /* exited meanwhile */ }
+}
+
+/** The cockpit's files and store under `dataHome`. */
+function cockpitFiles(dataHome: string) {
+  const paths = cockpit2Paths(dataHome);
+  return { ...paths, store: createViewStateStore({ path: paths.viewStatePath, lockPath: paths.viewStateLockPath }) };
+}
+
+/**
+ * Adds `projectId` to the cockpit's view state as its active project and wakes
+ * the running cockpit, which then shows it. Resolves with that cockpit, or
+ * null when none runs (the next cockpit opens with the project).
+ */
+export async function addToCockpit(projectId: string, dataHome = projectDataHome()): Promise<InstanceHolder | null> {
+  const { lockPath, store } = cockpitFiles(dataHome);
+  await addProject(store, projectId);
+  const running = liveInstance(lockPath, isSameProcess);
+  if (running) wakeCockpit(running);
+  return running;
+}
+
+export interface Cockpit2Options {
+  projectId: string;
+  keys: CockpitKeys;
+  /** orc's data home (default: `projectDataHome()`). */
+  dataHome?: string;
+  /** Called once this cockpit holds the instance lock, before it takes the terminal: `replaced` is the running cockpit asked to exit. */
+  onClaimed?(replaced: InstanceHolder | null): void;
+}
+
+export interface Cockpit2Result {
+  /** `quit`: the user quit; `takeover`: another cockpit asked this one to exit. */
+  ended: AppExit;
+  /** Why the view state was not saved, already reported; null when it was. */
+  saveError: string | null;
+}
+
+/**
+ * Runs the cockpit in this terminal until it quits or another cockpit takes
+ * over, then restores the terminal and releases the instance lock. Throws,
+ * with the terminal restored, when the lock cannot be taken (a running cockpit
+ * did not exit) or the app fails to start.
+ */
+export async function runCockpit2(options: Cockpit2Options): Promise<Cockpit2Result> {
+  const { lockPath, store } = cockpitFiles(options.dataHome ?? projectDataHome());
+  const self = thisProcess();
+  // Listening before the lock names this process: SIGUSR2's default action ends it, and a
+  // wake-up can come before the app runs (it is then handled once the app does).
+  let app: ReturnType<typeof runApp> | null = null;
+  let wokenEarly = false;
+  const wake = () => {
+    if (!app) { wokenEarly = true; return; }
+    if (exitRequested(lockPath, self, isSameProcess)) app.quit('takeover');
+    else app.reloadViewState();
+  };
+  process.on(WAKE_SIGNAL, wake);
+  let claim;
+  try {
+    claim = await claimInstance({ lockPath, self, isRunning: isSameProcess, wake: wakeCockpit });
+  } catch (error) {
+    process.off(WAKE_SIGNAL, wake);
+    throw error;
+  }
+  // An exit that skips the cleanup below (SIGTERM, a crash) still frees the lock; a kill -9 leaves it stale.
+  const release = claim.release;
+  process.on('exit', release);
+  const watcher = new ProjectWatcher();
+  let terminal: ReturnType<typeof openTerminal> | null = null;
+  try {
+    options.onClaimed?.(claim.replaced);
+    watcher.start();
+    terminal = openTerminal({ input: process.stdin, output: process.stdout, write: fdWriter(process.stdout.fd) });
+    app = runApp({
+      terminal,
+      tmuxBinary: tmuxBinary(),
+      store,
+      projects: watcher,
+      projectId: options.projectId,
+      keys: options.keys,
+      colorDepth: colorDepthFromEnv(process.env),
+      explorer: tmuxExplorerHost({ tmuxBinary: tmuxBinary(), command: (projectId) => explorerCommand(thisOrc(), projectId) }),
+    });
+    if (wokenEarly) wake();
+    const ended = await app.done;
+    const saveError = app.saveError();
+    if (saveError) console.error(`Warning: the cockpit's view state was not saved: ${saveError}`);
+    return { ended, saveError };
+  } catch (error) {
+    // Back on the main screen first, or the error is printed on the alternate one and lost.
+    terminal?.restore();
+    throw error;
+  } finally {
+    process.off(WAKE_SIGNAL, wake);
+    process.off('exit', release);
+    release();
+    await watcher.stop();
+  }
+}
+
+/** The keys the cockpit names when it opens. */
+export function cockpit2KeysHint(keys: CockpitKeys): string {
+  return [...(keys.direct.dashboard ? [`${keyLabel(keys.direct.dashboard)}: sidebar`] : []), quitHint(keys)].join(' · ');
+}
+
+/**
+ * Ends a leftover tmux-pane cockpit (`tmux -L orc-cockpit`): it only hosts
+ * views, so no master, worker or coordinator stops. Nothing runs there: tmux
+ * says so and nothing happens.
+ */
+export function killOldCockpit(tmux = tmuxBinary()): void {
+  spawnSync(tmux, ['-L', OLD_COCKPIT_SOCKET, '-f', '/dev/null', 'kill-server'], { encoding: 'utf8', timeout: 10_000 });
+}
+
+/** How start-session's cockpit launch ended: the cockpit ran here, or the project was added to the cockpit (`running`, null when none runs). */
+export type Cockpit2Launch =
+  | ({ kind: 'ran' } & Cockpit2Result)
+  | { kind: 'added'; running: InstanceHolder | null };
+
+/** What `orc start-session` runs on a terminal: the old cockpit ends, then the cockpit runs here or, nested, the project is added to it. */
+export async function launchCockpit2(options: Cockpit2Options & { env?: NodeJS.ProcessEnv }): Promise<Cockpit2Launch> {
+  if (cockpitLaunch(insideOrcTmux(options.env)) === 'add') {
+    return { kind: 'added', running: await addToCockpit(options.projectId, options.dataHome) };
+  }
+  killOldCockpit();
+  return { kind: 'ran', ...await runCockpit2(options) };
+}
+
 async function explorer(): Promise<void> {
   requireProjectScope();
   if (!ACTIVE_PROJECT) cliError('orc cockpit2 explorer needs a project: --project=<id>');
@@ -71,30 +240,12 @@ async function main(): Promise<void> {
   const { keys, problems } = resolveCockpitKeys();
   for (const problem of problems) console.error(`Warning: ${problem}`);
   if (!ACTIVE_PROJECT) cliError('orc cockpit2 needs a registered project; run it inside one');
-  const { viewStatePath, viewStateLockPath } = cockpit2Paths(projectDataHome());
-  const watcher = new ProjectWatcher();
-  watcher.start();
-  const terminal = openTerminal({ input: process.stdin, output: process.stdout, write: fdWriter(process.stdout.fd) });
   try {
-    const app = runApp({
-      terminal,
-      tmuxBinary: tmuxBinary(),
-      store: createViewStateStore({ path: viewStatePath, lockPath: viewStateLockPath }),
-      projects: watcher,
-      projectId: ACTIVE_PROJECT.id,
-      keys,
-      colorDepth: colorDepthFromEnv(process.env),
-      explorer: tmuxExplorerHost({ tmuxBinary: tmuxBinary(), command: (projectId) => explorerCommand(thisOrc(), projectId) }),
-    });
-    await app.done;
-    const saveError = app.saveError();
-    if (saveError) console.error(`Warning: the cockpit's view state was not saved: ${saveError}`);
+    const { ended } = await runCockpit2({ projectId: ACTIVE_PROJECT.id, keys });
+    if (ended === 'takeover') console.log('The cockpit moved to another terminal.');
   } catch (error) {
-    // Back on the main screen first, or the error is printed on the alternate one and lost.
-    terminal.restore();
     cliError(error);
   }
-  await watcher.stop();
   process.exit(0);
 }
 

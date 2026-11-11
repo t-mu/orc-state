@@ -24,7 +24,7 @@ beforeEach(() => {
   vi.doUnmock('../lib/templateRender.ts');
   vi.doUnmock('node:child_process');
   vi.doUnmock('../adapters/tmux.ts');
-  vi.doUnmock('../adapters/tmuxCockpit.ts');
+  vi.doUnmock('./cockpit2.ts');
   dir = createTempStateDir('orch-start-session-test-');
 });
 
@@ -33,7 +33,7 @@ afterEach(() => {
   vi.resetModules();
   vi.doUnmock('../lib/agentRegistry.ts');
   vi.doUnmock('../adapters/tmux.ts');
-  vi.doUnmock('../adapters/tmuxCockpit.ts');
+  vi.doUnmock('./cockpit2.ts');
   vi.doUnmock('node:child_process');
   ttyRestore?.();
   ttyRestore = null;
@@ -146,31 +146,30 @@ function mockProcessExit() {
   });
 }
 
-interface CockpitWindowCall {
-  project: { id: string; name: string; root: string; env: Record<string, string> };
-  master: { agentId: string; socket: string; session: string };
-  watchCommand: string[];
-  orc: string[];
-  keys: { prefix: string; direct: Record<string, string | null> };
+interface CockpitLaunchCall {
+  projectId: string;
+  keys: { prefix: string; quit: string | null; direct: Record<string, string | null> };
 }
 
 /**
  * orc's tmux server, faked: startTmuxSession hands the launch to the provider
  * spawn mock (so its calls read like a spawn), sessions it starts are alive
- * until an attach ends them, and attaches are recorded. The cockpit is faked
- * too: its windows are recorded, and attaching to it attaches to the master
- * of the window last opened.
+ * until an attach ends them, and attaches are recorded. The cockpit
+ * (cli/cockpit2.ts `launchCockpit2`) is faked too: its launches are recorded,
+ * and it ends as `cockpitEnded` says (the master ends meanwhile with `exitOnAttach`).
  */
 const tmuxFake = {
   alive: new Set<string>(),
   attaches: [] as Array<{ args: string[]; env: NodeJS.ProcessEnv | undefined }>,
-  cockpitWindows: [] as CockpitWindowCall[],
-  /** ensureCockpitWindow throws, as when the cockpit server cannot start. */
+  cockpitLaunches: [] as CockpitLaunchCall[],
+  /** launchCockpit2 throws, as when a running cockpit does not let go of the lock. */
   cockpitFails: false,
-  /** This process runs inside the cockpit (TMUX names its server). */
-  insideCockpit: false,
-  /** The cockpit's tmux client cannot be run. */
-  cockpitAttachError: false,
+  /** Launched from inside orc's tmux servers: the project is added to the running cockpit (`cockpitRunning`) instead. */
+  insideOrcTmux: false,
+  /** The running cockpit, asked to exit (a takeover) or woken (a nested add); null when none runs. */
+  cockpitRunning: null as { pid: number; start: string } | null,
+  /** Why the cockpit run here ended. */
+  cockpitEnded: 'quit' as 'quit' | 'takeover',
   exitOnAttach: false,
   /** A `--resume` launch dies at once, as Claude does for a conversation it cannot find. */
   failResume: false,
@@ -180,20 +179,20 @@ const tmuxFake = {
   reset() {
     this.alive.clear();
     this.attaches = [];
-    this.cockpitWindows = [];
+    this.cockpitLaunches = [];
     this.cockpitFails = false;
-    this.insideCockpit = false;
-    this.cockpitAttachError = false;
+    this.insideOrcTmux = false;
+    this.cockpitRunning = null;
+    this.cockpitEnded = 'quit';
     this.exitOnAttach = false;
     this.failResume = false;
     this.pid = 12345;
     this.stop = vi.fn().mockImplementation((handle: string) => { this.alive.delete(handle.slice('tmux:'.length)); return Promise.resolve(); });
   },
   onAttach(args: string[], env: NodeJS.ProcessEnv | undefined) {
-    if (this.cockpitAttachError && args.at(-1) === '=cockpit') return { status: null, stdout: '', error: new Error('spawn tmux ENOENT') };
     this.attaches.push({ args, env });
     const target = args[args.length - 1].replace(/^=/, '');
-    if (this.exitOnAttach) this.alive.delete(target === 'cockpit' ? this.cockpitWindows.at(-1)!.master.agentId : target);
+    if (this.exitOnAttach) this.alive.delete(target);
     return { status: 0, stdout: '' };
   },
 };
@@ -226,17 +225,21 @@ function mockTmux(spawnMock: ReturnType<typeof vi.fn>, { available = true } = {}
     }),
     createTmuxAdapter: vi.fn().mockImplementation(() => ({ stop: tmuxFake.stop })),
   }));
-  vi.doMock('../adapters/tmuxCockpit.ts', async () => ({
-    ...await vi.importActual<typeof import('../adapters/tmuxCockpit.ts')>('../adapters/tmuxCockpit.ts'),
-    ensureCockpitWindow: vi.fn().mockImplementation((spec: CockpitWindowCall) => {
-      if (tmuxFake.cockpitFails) throw new Error('cockpit server refused');
-      tmuxFake.cockpitWindows.push(spec);
-      return 'created-session';
-    }),
-    cockpitAttachCommand: vi.fn().mockReturnValue({ command: 'tmux', args: ['attach-session', '-t', '=cockpit'] }),
-    insideCockpit: vi.fn().mockImplementation(() => tmuxFake.insideCockpit),
-    terminalHasTrueColor: vi.fn().mockReturnValue(false),
-  }));
+  vi.doMock('./cockpit2.ts', async () => {
+    const { quitHint } = await vi.importActual<typeof import('../lib/cockpit2/app.ts')>('../lib/cockpit2/app.ts');
+    return {
+      cockpit2KeysHint: vi.fn().mockImplementation(quitHint),
+      launchCockpit2: vi.fn().mockImplementation((options: CockpitLaunchCall & { onClaimed?(replaced: unknown): void }) => {
+        tmuxFake.cockpitLaunches.push({ projectId: options.projectId, keys: options.keys });
+        if (tmuxFake.cockpitFails) return Promise.reject(new Error('the cockpit running as pid 4242 did not exit within 5 s'));
+        if (tmuxFake.insideOrcTmux) return Promise.resolve({ kind: 'added', running: tmuxFake.cockpitRunning });
+        options.onClaimed?.(tmuxFake.cockpitRunning);
+        // The master ends while the cockpit shows it: the cockpit stays open, start-session finds out afterwards.
+        if (tmuxFake.exitOnAttach) tmuxFake.alive.clear();
+        return Promise.resolve({ kind: 'ran', ended: tmuxFake.cockpitEnded, saveError: null });
+      }),
+    };
+  });
 }
 
 /** Runs start-session as if from a real terminal, so it attaches to the master. */
@@ -1090,7 +1093,7 @@ describe('cli/start-session.ts', () => {
       expect(args[args.indexOf('--session-id') + 1]).toBe(listSupervisedSessions(dir)[0].provider_conversation_id);
     });
 
-    it('leaves the master running and its session valid after the terminal detaches', async () => {
+    it('leaves the master running and its session valid after the cockpit quits', async () => {
       seedState();
       mockSpawn();
       withTty();
@@ -1102,34 +1105,30 @@ describe('cli/start-session.ts', () => {
       process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
       await import('./start-session.ts');
 
-      expect(tmuxFake.attaches).toHaveLength(1);
-      expect(tmuxFake.attaches[0].args).toEqual(['attach-session', '-t', '=cockpit']);
-      expect(lines.join('\n')).toContain('Detached. The cockpit and the master keep running');
+      expect(tmuxFake.cockpitLaunches).toHaveLength(1);
+      expect(tmuxFake.attaches).toHaveLength(0);
+      expect(lines.join('\n')).toContain('Quit the cockpit. The master keeps running');
       expect(readAgents()[0]).toMatchObject({ status: 'running', session_handle: 'tmux:master' });
       const { listSupervisedSessions } = await import('../lib/sessionSupervisor.ts');
       expect(listSupervisedSessions(dir).find((row) => row.agent_id === 'master')?.state).toBe('running');
     });
 
-    it('opens the cockpit on the project master, with the master target recorded on its session', async () => {
+    it('runs the cockpit in this terminal on the project, with the default keys', async () => {
       seedState();
       mockSpawn();
       withTty();
       mockBinaryCheck(true);
-      vi.spyOn(console, 'log').mockImplementation(() => {});
+      const lines: string[] = [];
+      vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => lines.push(args.join(' ')));
       setEnv(dir);
       seedCoordinatorRunning();
       process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
       await import('./start-session.ts');
 
-      expect(tmuxFake.cockpitWindows).toHaveLength(1);
-      const [window] = tmuxFake.cockpitWindows;
-      expect(window.master).toEqual({ agentId: 'master', socket: 'orc-test', session: 'master' });
-      expect(window.project.env).toEqual({ ORC_PROJECT_ID: process.env.ORC_PROJECT_ID, ORC_STATE_DIR: dir });
-      expect(window.watchCommand.at(-1)).toBe('watch');
-      expect(window.watchCommand[1]).toMatch(/cli\/orc\.(ts|js)$/);
-      // The cockpit keys run orc cockpit with the same orc.
-      expect(window.orc).toEqual(window.watchCommand.slice(0, -1));
-      expect(window.keys.prefix).toBe('F12');
+      expect(tmuxFake.cockpitLaunches).toEqual([expect.objectContaining({ projectId: process.env.ORC_PROJECT_ID })]);
+      expect(tmuxFake.cockpitLaunches[0].keys.prefix).toBe('F12');
+      expect(lines.join('\n')).toContain("Opening the cockpit on master 'master'");
+      expect(lines.join('\n')).not.toContain('Asked the cockpit running in another terminal');
     });
 
     it('opens the cockpit with the keys ORC_COCKPIT_PREFIX and ORC_COCKPIT_KEYS set, reporting invalid ones', async () => {
@@ -1153,11 +1152,63 @@ describe('cli/start-session.ts', () => {
         delete process.env.ORC_COCKPIT_KEYS;
       }
 
-      const [window] = tmuxFake.cockpitWindows;
-      expect(window.keys.prefix).toBe('C-a');
-      expect(window.keys.direct).toMatchObject({ dashboard: 'F7', tab7: null, attention: 'F11' });
+      const [launch] = tmuxFake.cockpitLaunches;
+      expect(launch.keys.prefix).toBe('C-a');
+      expect(launch.keys.direct).toMatchObject({ dashboard: 'F7', tab7: null, attention: 'F11' });
       expect(warnings.join('\n')).toContain("Warning: ORC_COCKPIT_KEYS: 'ö' cannot be the attention key");
-      expect(lines.join('\n')).toContain('Ctrl-a d: detach');
+      expect(lines.join('\n')).toContain('Ctrl-a d: quit');
+    });
+
+    it('says the cockpit moved when another terminal took it over, and leaves the master running', async () => {
+      seedState();
+      mockSpawn();
+      withTty();
+      tmuxFake.cockpitEnded = 'takeover';
+      mockBinaryCheck(true);
+      const lines: string[] = [];
+      vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => lines.push(args.join(' ')));
+      setEnv(dir);
+      seedCoordinatorRunning();
+      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+      await import('./start-session.ts');
+
+      expect(lines.join('\n')).toContain('The cockpit moved to another terminal. The master keeps running.');
+      expect(lines.join('\n')).not.toContain('Quit the cockpit');
+      expect(readAgents()[0]).toMatchObject({ status: 'running', session_handle: 'tmux:master' });
+    });
+
+    it('says it asked a cockpit in another terminal to exit when it takes over', async () => {
+      seedState();
+      mockSpawn();
+      withTty();
+      tmuxFake.cockpitRunning = { pid: 4242, start: 'proc:1' };
+      mockBinaryCheck(true);
+      const lines: string[] = [];
+      vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => lines.push(args.join(' ')));
+      setEnv(dir);
+      seedCoordinatorRunning();
+      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+      await import('./start-session.ts');
+
+      expect(lines.join('\n')).toContain('Asked the cockpit running in another terminal (pid 4242) to exit.');
+    });
+
+    it('retires the master and says so when it ended while the cockpit ran', async () => {
+      seedState();
+      mockSpawn();
+      withTty();
+      tmuxFake.exitOnAttach = true;
+      mockBinaryCheck(true);
+      const lines: string[] = [];
+      vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => lines.push(args.join(' ')));
+      setEnv(dir);
+      seedCoordinatorRunning();
+      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+      await import('./start-session.ts');
+
+      expect(lines.join('\n')).toContain('Master session ended. The coordinator keeps running');
+      expect(lines.join('\n')).not.toContain('Quit the cockpit');
+      expect(readAgents()[0]).toMatchObject({ status: 'offline', session_handle: null });
     });
 
     it('attaches straight to the master with --no-cockpit', async () => {
@@ -1172,12 +1223,12 @@ describe('cli/start-session.ts', () => {
       process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master', '--no-cockpit'];
       await import('./start-session.ts');
 
-      expect(tmuxFake.cockpitWindows).toHaveLength(0);
+      expect(tmuxFake.cockpitLaunches).toHaveLength(0);
       expect(tmuxFake.attaches.map((attach) => attach.args)).toEqual([['attach-session', '-t', '=master']]);
       expect(lines.join('\n')).toContain('Detached. The master keeps running');
     });
 
-    it('attaches straight to the master when the cockpit cannot be set up', async () => {
+    it('attaches straight to the master when the cockpit cannot run', async () => {
       seedState();
       mockSpawn();
       withTty();
@@ -1191,33 +1242,16 @@ describe('cli/start-session.ts', () => {
       process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
       await import('./start-session.ts');
 
-      expect(warnings.join('\n')).toContain('could not open the cockpit (cockpit server refused); attaching to the master directly');
+      expect(warnings.join('\n')).toContain('could not open the cockpit (the cockpit running as pid 4242 did not exit within 5 s); attaching to the master directly');
       expect(tmuxFake.attaches.map((attach) => attach.args)).toEqual([['attach-session', '-t', '=master']]);
     });
 
-    it('attaches straight to the master when the cockpit client cannot run', async () => {
+    it('only adds the project to the running cockpit when run from inside orc\'s tmux servers', async () => {
       seedState();
       mockSpawn();
       withTty();
-      tmuxFake.cockpitAttachError = true;
-      mockBinaryCheck(true);
-      const warnings: string[] = [];
-      vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => warnings.push(args.join(' ')));
-      vi.spyOn(console, 'log').mockImplementation(() => {});
-      setEnv(dir);
-      seedCoordinatorRunning();
-      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
-      await import('./start-session.ts');
-
-      expect(warnings.join('\n')).toContain('could not attach to the cockpit (spawn tmux ENOENT); attaching to the master directly');
-      expect(tmuxFake.attaches.map((attach) => attach.args)).toEqual([['attach-session', '-t', '=master']]);
-    });
-
-    it('only switches the cockpit tab when run from inside the cockpit', async () => {
-      seedState();
-      mockSpawn();
-      withTty();
-      tmuxFake.insideCockpit = true;
+      tmuxFake.insideOrcTmux = true;
+      tmuxFake.cockpitRunning = { pid: 4242, start: 'proc:1' };
       mockBinaryCheck(true);
       const lines: string[] = [];
       vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => lines.push(args.join(' ')));
@@ -1226,13 +1260,31 @@ describe('cli/start-session.ts', () => {
       process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
       await import('./start-session.ts');
 
-      expect(tmuxFake.cockpitWindows).toHaveLength(1);
+      expect(tmuxFake.cockpitLaunches).toHaveLength(1);
       expect(tmuxFake.attaches).toHaveLength(0);
-      expect(lines.join('\n')).toContain('Switched the cockpit to');
+      expect(lines.join('\n')).toMatch(/Added .* to the cockpit \(pid 4242\); it shows the project now/);
+      expect(lines.join('\n')).not.toContain('Opening the cockpit');
       expect(readAgents()[0]).toMatchObject({ status: 'running', session_handle: 'tmux:master' });
     });
 
-    it('attaches from inside an existing tmux session by clearing TMUX', async () => {
+    it('says where the added project opens when no cockpit runs', async () => {
+      seedState();
+      mockSpawn();
+      withTty();
+      tmuxFake.insideOrcTmux = true;
+      mockBinaryCheck(true);
+      const lines: string[] = [];
+      vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => lines.push(args.join(' ')));
+      setEnv(dir);
+      seedCoordinatorRunning();
+      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+      await import('./start-session.ts');
+
+      expect(tmuxFake.attaches).toHaveLength(0);
+      expect(lines.join('\n')).toContain('it opens there the next time orc start-session runs in a terminal outside orc\'s tmux sessions');
+    });
+
+    it('attaches the master from inside an existing tmux session by clearing TMUX (--no-cockpit)', async () => {
       seedState();
       mockSpawn();
       withTty();
@@ -1240,7 +1292,7 @@ describe('cli/start-session.ts', () => {
       mockBinaryCheck(true);
       setEnv(dir);
       seedCoordinatorRunning();
-      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master', '--no-cockpit'];
       await import('./start-session.ts');
 
       expect(tmuxFake.attaches).toHaveLength(1);
@@ -1275,7 +1327,7 @@ describe('cli/start-session.ts', () => {
       expect(promptCoordinatorAction).not.toHaveBeenCalled();
       expect(promptMasterAction).not.toHaveBeenCalled();
       expect(spawnMock.mock.calls.some((c: unknown[]) => String(c[0]).endsWith('claude'))).toBe(false);
-      expect(tmuxFake.attaches).toHaveLength(1);
+      expect(tmuxFake.cockpitLaunches).toHaveLength(1);
       expect(readClaims()[0].state).toBe('in_progress');
       expect(readAgents()[0]).toMatchObject({ status: 'running', session_handle: 'tmux:master' });
     });
@@ -1420,7 +1472,7 @@ describe('cli/start-session.ts', () => {
 
       expect(exitSpy).toHaveBeenCalledWith(0);
       expect(spawnMock.mock.calls.some((c: unknown[]) => String(c[0]).endsWith('claude'))).toBe(false);
-      expect(tmuxFake.attaches).toHaveLength(1);
+      expect(tmuxFake.cockpitLaunches).toHaveLength(1);
       expect(readAgents()[0]).toMatchObject({
         status: 'running', session_handle: 'tmux:master', session_token: 'session-live', provider_ref: providerRef,
       });

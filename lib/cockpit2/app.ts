@@ -29,7 +29,13 @@
  * (F10 by default) or the prefix then `o` focus the sidebar, where arrows (or
  * j/k), Tab, Enter and Esc navigate, open and return to the pane. Clicks on a
  * sidebar row open that project or agent, on a tab show it, on a tab's close
- * marker close it (only the view: the agent keeps running).
+ * marker close it (only the view: the agent keeps running). What Enter or a
+ * click opens takes the keys.
+ *
+ * The view state is saved on every tab change. Projects another process added
+ * to the view-state file (a start-session from another checkout or from inside
+ * the cockpit, instance.ts) are kept by every save and taken in on a
+ * `reloadViewState()`, which also shows the project that process made active.
  *
  * Mouse events in the slot (mouse.ts `routeSlotMouse`) go to the pane's app
  * when its mouse mode wants them, re-encoded pane-relative in its encoding,
@@ -80,7 +86,7 @@ import { highlightSelection, osc52, selectionText, type CellPoint, type Selectio
 import { Sessions, type ConnectPane, type PaneSession } from './sessions.ts';
 import type { TerminalSession } from './terminal.ts';
 import { TmuxControlClient } from './tmuxControl.ts';
-import type { TmuxTarget, ViewState, ViewStateStore } from './viewState.ts';
+import { mergeProjects, type TmuxTarget, type ViewState, type ViewStateStore } from './viewState.ts';
 import {
   EXPLORER_LABEL, EXPLORER_TAB, INITIAL_SIDEBAR_NAV, drawSidebar, drawTabBar, navigateSidebar, sidebarClick, sidebarView, tabBarButtonAt, tabBarView,
   withExplorerTab, withModeMarks, type SidebarBox, type TabBarButton, type SidebarCommand, type SidebarNav, type SidebarStep,
@@ -234,12 +240,22 @@ export interface AppOptions {
   explorerKeyGapMs?: number;
 }
 
+/** Why the app ended: the user quit, or another cockpit took over (instance.ts). */
+export type AppExit = 'quit' | 'takeover';
+
 export interface App {
-  /** Resolves once the app has quit, the terminal is restored and the view state saved. */
-  readonly done: Promise<void>;
+  /** Resolves once the app has quit, the terminal is restored and the view state saved, with why it ended. */
+  readonly done: Promise<AppExit>;
   /** Why the last view-state save failed; null once one succeeds. The CLI reports it after the terminal is restored. */
   saveError(): string | null;
-  quit(): void;
+  /** Ends the app; `takeover` when another cockpit asked it to exit. */
+  quit(reason?: AppExit): void;
+  /**
+   * Reads the view state again: projects another process added are kept and,
+   * when that process made one of them active, shown (a start-session adding
+   * its project to this cockpit). The CLI calls it on a wake-up.
+   */
+  reloadViewState(): void;
   /** Applies a tab transition (lib/cockpitTabs.ts). A refused one changes nothing. */
   apply(transition: (state: CockpitTabState) => TabTransition): TabTransition;
   /** The current tabs and projects. */
@@ -332,8 +348,8 @@ export function runApp(options: AppOptions): App {
   let refusal: string | null = null;
   let registryError: string | null = null;
 
-  let resolveDone!: () => void;
-  const done = new Promise<void>((resolve) => { resolveDone = resolve; });
+  let resolveDone!: (exit: AppExit) => void;
+  const done = new Promise<AppExit>((resolve) => { resolveDone = resolve; });
 
   // ── view state ──
   const loaded = store.load();
@@ -341,18 +357,55 @@ export function runApp(options: AppOptions): App {
   const masterTargets: ViewState['masterTargets'] = { ...loaded.masterTargets };
   let saving: Promise<void> = Promise.resolve();
   let lastSaveError: string | null = null;
+  /** The active project the view-state file held after this cockpit's last read or write: another writer changed it when the file differs. */
+  let syncedActive: string | null = loaded.tabs.activeProject;
   /**
    * Saves the view state after the saves before it, through the store's locked
-   * read-change-write: this cockpit's tabs replace the stored ones (Step 12
-   * merges projects added by another writer here), master targets are merged.
-   * A failed save leaves the file as it was and is shown in the tab bar; the next save retries.
+   * read-change-write: this cockpit's tabs replace the stored ones, except that
+   * projects another writer added are kept (and taken into this cockpit, see
+   * `adopt`); master targets are merged. A failed save leaves the file as it
+   * was and is shown in the tab bar; the next save retries.
    */
   const save = () => {
     saving = saving
-      .then(() => store.update((stored) => ({ tabs, masterTargets: { ...stored.masterTargets, ...masterTargets } })))
+      .then(() => {
+        let seen: { tabs: CockpitTabState; synced: string | null } | null = null;
+        return store.update((stored) => {
+          const next = mergeProjects(tabs, stored.tabs);
+          seen = { tabs: stored.tabs, synced: syncedActive };
+          syncedActive = next.activeProject;
+          return { tabs: next, masterTargets: { ...stored.masterTargets, ...masterTargets } };
+        }).then(() => { if (seen) adopt(seen.tabs, seen.synced); });
+      })
       .then(() => { if (lastSaveError) { lastSaveError = null; scheduleRender(); } },
         (error: unknown) => { lastSaveError = error instanceof Error ? error.message : String(error); scheduleRender(); });
   };
+
+  /**
+   * Takes what another writer stored: the projects it added, and the project
+   * it made active when that changed since this cockpit's last read or write
+   * (`synced`), which is then shown.
+   */
+  function adopt(stored: CockpitTabState, synced: string | null): void {
+    if (closed) return;
+    const merged = mergeProjects(tabs, stored);
+    if (merged !== tabs) {
+      tabs = merged;
+      scheduleRender();
+    }
+    const requested = stored.activeProject;
+    if (requested !== null && requested !== synced && requested !== tabs.activeProject) {
+      if (apply((state) => showProject(state, requested)).ok) setFocus('slot');
+    }
+  }
+
+  function reloadViewState(): void {
+    if (closed) return;
+    const stored = store.load();
+    const synced = syncedActive;
+    syncedActive = stored.tabs.activeProject;
+    adopt(stored.tabs, synced);
+  }
 
   const watched = new Map(options.projects.projects().map((state) => [state.project.id, state]));
   const projectInfo = (projectId: string): ProjectInfo => {
@@ -640,15 +693,15 @@ export function runApp(options: AppOptions): App {
     scheduleRender();
   }
 
-  /** Runs what a sidebar key or click asks for; opening by key leaves the keys with the sidebar. */
+  /** Runs what a sidebar key or click asks for; what it opens is shown and takes the keys, by key as by click. */
   function runSidebar(step: SidebarStep): void {
     nav = step.nav;
     scheduleRender();
     const command: SidebarCommand | null = step.command;
     if (!command) return;
     if (command.type === 'focusSlot') setFocus('slot');
-    else if (command.type === 'openProject') apply((state) => showProject(state, command.projectId));
-    else apply((state) => openAgent(state, command.projectId, command.agentId));
+    else if (command.type === 'openProject') { if (apply((state) => showProject(state, command.projectId)).ok) setFocus('slot'); }
+    else if (apply((state) => openAgent(state, command.projectId, command.agentId)).ok) setFocus('slot');
   }
 
   /** Sidebar and tab bar clicks give the slot the keys, and so does a press in it; slot events go to onSlotMouse (mouse.ts routeSlotMouse). */
@@ -657,7 +710,7 @@ export function runApp(options: AppOptions): App {
       if (!isClick(event)) return;
       const step = sidebarClick(currentSidebar(), nav, at.y);
       if (!step) return;
-      // What was clicked is shown and takes the keys, as after a tab click; the sidebar cursor stays on its row.
+      // What was clicked is shown and takes the keys, as after a tab click (and a refused open too); the sidebar cursor stays on its row.
       runSidebar(step);
       setFocus('slot');
     },
@@ -799,7 +852,7 @@ export function runApp(options: AppOptions): App {
         dispatchMouse(layout, event, mouseHandlers);
         return;
       }
-      case 'quit': quit(); return;
+      case 'quit': quit('quit'); return;
       case 'selectTab':
         // The explorer's own number shows it, as it already is.
         if (explorer && action.index === (tabs.projects.find((project) => project.projectId === tabs.activeProject)?.tabs.length ?? 0) + 2) return;
@@ -847,7 +900,7 @@ export function runApp(options: AppOptions): App {
     scheduleRender();
   });
 
-  function quit(): void {
+  function quit(reason: AppExit = 'quit'): void {
     if (closed) return;
     closed = true;
     if (renderTimer) clearTimeout(renderTimer);
@@ -861,11 +914,11 @@ export function runApp(options: AppOptions): App {
     stopExplorer();
     sessions.closeAll();
     terminal.restore();
-    void Promise.all([saving, explorerWork]).then(() => resolveDone());
+    void Promise.all([saving, explorerWork]).then(() => resolveDone(reason));
   }
 
   rememberMasterTargets();
   save();
   showActive();
-  return { done, quit, apply, tabs: () => tabs, saveError: () => lastSaveError };
+  return { done, quit, apply, reloadViewState, tabs: () => tabs, saveError: () => lastSaveError };
 }

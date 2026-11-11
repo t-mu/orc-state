@@ -2,12 +2,23 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, u
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { DEFAULT_VIEW_STATE, createViewStateStore, parseViewState, serializeViewState, type ViewState } from './viewState.ts';
+import { DEFAULT_VIEW_STATE, addProject, createViewStateStore, mergeProjects, parseViewState, serializeViewState, type ViewState } from './viewState.ts';
 
 const STATE: ViewState = {
   tabs: { activeProject: 'p2', projects: [{ projectId: 'p1', tabs: ['w1'], active: 'w1' }, { projectId: 'p2', tabs: [], active: null }] },
   masterTargets: { p1: { socket: 'orc-aaa', session: 'orc-master-1' } },
 };
+
+describe('mergeProjects', () => {
+  it('appends the projects only the stored state has; ours win for the rest', () => {
+    const stored = { activeProject: 'p3', projects: [{ projectId: 'p1', tabs: [], active: null }, { projectId: 'p3', tabs: ['w9'], active: 'w9' }] };
+    expect(mergeProjects(STATE.tabs, stored)).toEqual({
+      activeProject: 'p2',
+      projects: [...STATE.tabs.projects, { projectId: 'p3', tabs: ['w9'], active: 'w9' }],
+    });
+    expect(mergeProjects(STATE.tabs, STATE.tabs)).toBe(STATE.tabs);
+  });
+});
 
 describe('parseViewState', () => {
   it('reads back what serializeViewState wrote', () => {
@@ -100,6 +111,24 @@ describe('createViewStateStore', () => {
     expect(store.load()).toEqual(STATE);
     expect(existsSync(lock)).toBe(false);
     expect(readFileSync(path, 'utf8')).toBe(serializeViewState(STATE));
+  });
+
+  it('keeps every project added concurrently with a running cockpit\'s saves (addProject, mergeProjects)', async () => {
+    const cockpit = createViewStateStore({ path, lockPath });
+    const others = [createViewStateStore({ path, lockPath }), createViewStateStore({ path, lockPath })];
+    let tabs = STATE.tabs;
+    await cockpit.update(() => STATE);
+    // The cockpit saves its own tabs over and over (switching between p1 and p2) while two other processes add six projects.
+    await Promise.all([
+      ...Array.from({ length: 6 }, (_, i) => addProject(others[i % 2], `added${i}`)),
+      ...Array.from({ length: 12 }, (_, i) => cockpit.update((stored) => {
+        tabs = mergeProjects({ ...tabs, activeProject: i % 2 ? 'p1' : 'p2' }, stored.tabs);
+        return { ...stored, tabs };
+      })),
+    ]);
+    const ids = cockpit.load().tabs.projects.map((project) => project.projectId);
+    expect(ids.slice(0, 2)).toEqual(['p1', 'p2']);
+    expect(ids.slice(2).sort()).toEqual(['added0', 'added1', 'added2', 'added3', 'added4', 'added5']);
   });
 
   it('leaves a lock another writer took over in place when releasing its own', async () => {
