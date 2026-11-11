@@ -20,7 +20,7 @@ A widget asks for a role, never for a colour (`lib/cockpit2/theme.ts`). A role's
 | `row.cursor` | The focused card's cursor row (its attributes and background over the row's own colours) |
 | `button` | Header entries (`tasks`) |
 | `button.attention` | The header's attention badge (`! N`) |
-| `tab.active` | The active tab: its top border and label row as one filled block |
+| `tab.active` | The active tab's label row, filled inside its border |
 | `tab.close` | A tab's `×` |
 | `error` | Errors in the tab bar (a refused tab change, a failed save) |
 | `status.active`, `status.attention`, `status.warn`, `status.error`, `status.idle` | A state's text and an expanded agent's border |
