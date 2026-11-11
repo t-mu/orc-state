@@ -71,7 +71,7 @@ async function main(): Promise<void> {
   const { keys, problems } = resolveCockpitKeys();
   for (const problem of problems) console.error(`Warning: ${problem}`);
   if (!ACTIVE_PROJECT) cliError('orc cockpit2 needs a registered project; run it inside one');
-  const { lockPath, viewStatePath, viewStateLockPath } = cockpit2Paths(projectDataHome());
+  const { viewStatePath, viewStateLockPath } = cockpit2Paths(projectDataHome());
   const watcher = new ProjectWatcher();
   watcher.start();
   const terminal = openTerminal({ input: process.stdin, output: process.stdout, write: fdWriter(process.stdout.fd) });
@@ -79,7 +79,6 @@ async function main(): Promise<void> {
     const app = runApp({
       terminal,
       tmuxBinary: tmuxBinary(),
-      lockPath,
       store: createViewStateStore({ path: viewStatePath, lockPath: viewStateLockPath }),
       projects: watcher,
       projectId: ACTIVE_PROJECT.id,

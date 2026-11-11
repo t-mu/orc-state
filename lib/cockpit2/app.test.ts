@@ -338,7 +338,7 @@ function start({ keys = DEFAULT_COCKPIT_KEYS, projects = [projectState('demo')],
   const watcher = new FakeWatcher(projects);
   const clients: FakeClient[] = [];
   const app = runApp({
-    terminal, keys, tmuxBinary: 'tmux', lockPath: '/data/cockpit/cockpit2.lock', store, projects: watcher, projectId,
+    terminal, keys, tmuxBinary: 'tmux', store, projects: watcher, projectId,
     connect: (target, { ignoreSize }) => {
       const fake = new FakeClient(target, ignoreSize, `%${clients.length + 1}`);
       fake.lines = [`$ hello from ${target.session}`];
@@ -668,7 +668,7 @@ describe('runApp tabs and projects (fake tmux clients)', () => {
     });
   }
 
-  it('reopens a closed worker tab view-only again, and keeps each open tab\'s mode across tab switches', async () => {
+  it('reopens a closed worker tab view-only again, and returns a tab left in typing mode to view mode', async () => {
     const { terminal, clients, app } = twoTabs();
     await attached(terminal);
     app.apply((state) => openAgent(state, 'demo', 'w1'));
@@ -678,7 +678,9 @@ describe('runApp tabs and projects (fake tmux clients)', () => {
     await waitForSlotLine(terminal, '$ hello from orc-master');
     terminal.type(`${F12}2`);
     await waitForSlotLine(terminal, '$ hello from orc-w1');
-    terminal.type('a');
+    terminal.type('a'); // view mode again: dropped
+    expect(clients[1].sent).toEqual([]);
+    terminal.type('ia');
     expect(clients[1].sent).toEqual(['%2 a']);
     terminal.type('\x1dq'); // stop typing, close
     await waitForSlotLine(terminal, '$ hello from orc-master');
@@ -1012,11 +1014,26 @@ class FakeExplorerHost implements ExplorerHost {
   started: string[] = [];
   stopped: TmuxTarget[] = [];
   failWith: Error | null = null;
-  start(projectId: string, size: { cols: number; rows: number }) {
+  /** Set to hold starts until the test resolves it. */
+  hold: Promise<void> | null = null;
+  async start(projectId: string, size: { cols: number; rows: number }) {
     this.started.push(`${projectId} ${size.cols}x${size.rows}`);
-    return this.failWith ? Promise.reject(this.failWith) : Promise.resolve({ socket: 'orc-cockpit2', session: `explorer-${projectId}` });
+    if (this.hold) await this.hold;
+    if (this.failWith) throw this.failWith;
+    return { socket: 'orc-cockpit2', session: `explorer-${projectId}` };
   }
-  stop(target: TmuxTarget) { this.stopped.push(target); }
+  stop(target: TmuxTarget) { this.stopped.push(target); return Promise.resolve(); }
+}
+
+/** Makes `fake`'s sends wait until the test calls the returned function, which releases the oldest waiting one. */
+function holdSends(fake: FakeClient): () => void {
+  const waiting: Array<() => void> = [];
+  const record = fake.sendBytes.bind(fake);
+  fake.sendBytes = (pane: string, bytes: Buffer) => {
+    void record(pane, bytes);
+    return new Promise<void>((resolve) => { waiting.push(resolve); });
+  };
+  return () => waiting.shift()?.();
 }
 
 describe('runApp task explorer and attention jump (fake tmux clients)', () => {
@@ -1035,7 +1052,7 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     // The explorer's window is the cockpit's own: sized to the slot, not an ignore-size view.
     expect(fake.ignoreSize).toBe(false);
     await waitForTabBar(terminal, 1, '2 tasks ×');
-    await waitForSidebar(terminal, '[tasks] q/Esc: close');
+    await waitForSidebar(terminal, '[tasks] Ctrl-] or ×: close');
     expect(text(await shown(terminal), 1, SIDEBAR_COLS)).not.toContain('tasks Ctrl-q'); // no entry while it is shown
     // Its own keys reach it; i is not the typing key here.
     terminal.type(`j${ESC}[Bi\r`);
@@ -1044,8 +1061,8 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     // The prefix then t again keeps it.
     terminal.type(`${F12}t`);
     expect(host.started).toHaveLength(1);
-    // q closes it: its session is killed and the master shown again, the tabs as they were.
-    terminal.type('q');
+    // Ctrl-] closes it: its session is killed and the master shown again, the tabs as they were.
+    terminal.type('\x1d');
     await attached(terminal);
     expect(host.stopped).toEqual([{ socket: 'orc-cockpit2', session: 'explorer-demo' }]);
     expect(fake.closed).toBe(1);
@@ -1105,6 +1122,132 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     await attached(terminal, 'explorer-demo');
     app.quit();
     expect(host.stopped).toHaveLength(2);
+  });
+
+  it('lets the explorer own Esc and q: Esc goes back in its detail, q in its list ends it and the cockpit closes the tab', async () => {
+    const host = new FakeExplorerHost();
+    const { terminal, clients, app } = start({ explorer: host });
+    await attached(terminal);
+    const before = app.tabs();
+    terminal.type(`${F12}t`);
+    await attached(terminal, 'explorer-demo');
+    const fake = explorerClient(clients)!;
+    // Enter opens a task's detail; Esc (back to the list) reaches the explorer and the tab stays.
+    terminal.type('\r');
+    terminal.type(ESC);
+    await waitFor(() => fake.sent.length === 2);
+    expect(fake.sent).toEqual([`${fake.paneId} \r`, `${fake.paneId} ${ESC}`]);
+    await sleep(30);
+    expect(host.stopped).toEqual([]);
+    await waitForTabBar(terminal, 1, '2 tasks ×');
+    // q in its list: the explorer quits on its own, its session ends, the cockpit closes the tab.
+    terminal.type('q');
+    await waitFor(() => fake.sent.length === 3);
+    expect(fake.sent[2]).toBe(`${fake.paneId} q`);
+    fake.emit('exit', 'session closed');
+    await attached(terminal);
+    expect(app.tabs()).toEqual(before);
+    expect(clients[0].sent).toEqual([]); // nothing reached the master
+    await waitForSidebar(terminal, '[master] keys go to the master');
+  });
+
+  it('sends keys that arrive in one read to the explorer one at a time, each after the one before reached it', async () => {
+    const host = new FakeExplorerHost();
+    const { terminal, clients } = start({ explorer: host });
+    await attached(terminal);
+    terminal.type(`${F12}t`);
+    await attached(terminal, 'explorer-demo');
+    const fake = explorerClient(clients)!;
+    const release = holdSends(fake);
+    terminal.type('jj');
+    await waitFor(() => fake.sent.length === 1);
+    await sleep(30);
+    expect(fake.sent).toEqual([`${fake.paneId} j`]);
+    release();
+    await waitFor(() => fake.sent.length === 2);
+    expect(fake.sent).toEqual([`${fake.paneId} j`, `${fake.paneId} j`]);
+    release();
+  });
+
+  it('sends no key queued for the explorer once it closed, to it or to the tab shown next', async () => {
+    const host = new FakeExplorerHost();
+    const { terminal, clients } = start({ explorer: host });
+    await attached(terminal);
+    terminal.type(`${F12}t`);
+    await attached(terminal, 'explorer-demo');
+    const fake = explorerClient(clients)!;
+    const release = holdSends(fake);
+    terminal.type('ab');
+    await waitFor(() => fake.sent.length === 1);
+    terminal.type('\x1d');
+    await attached(terminal);
+    release();
+    await sleep(30);
+    expect(fake.sent).toEqual([`${fake.paneId} a`]);
+    expect(clients[0].sent).toEqual([]);
+  });
+
+  it('kills an explorer that was still starting when the cockpit quit before it is done', async () => {
+    const host = new FakeExplorerHost();
+    let started!: () => void;
+    host.hold = new Promise((resolve) => { started = resolve; });
+    const { terminal, app } = start({ explorer: host });
+    await attached(terminal);
+    terminal.type(`${F12}t`);
+    await waitFor(() => host.started.length === 1);
+    app.quit();
+    let done = false;
+    void app.done.then(() => { done = true; });
+    await sleep(30);
+    expect(done).toBe(false);
+    started();
+    await app.done;
+    expect(host.stopped).toEqual([{ socket: 'orc-cockpit2', session: 'explorer-demo' }]);
+  });
+
+  it('returns a typing tab to view mode when another tab, the explorer or an attention jump is shown', async () => {
+    const host = new FakeExplorerHost();
+    const { terminal, clients, app } = start({
+      explorer: host,
+      projects: [projectState('demo', { workers: [{ agent_id: 'w1', ...W1_TARGET }, { agent_id: 'w2', socket: 'orc-sock', session: 'orc-w2', attention: { kind: 'question', detail: null } }] })],
+    });
+    await attached(terminal);
+    app.apply((state) => openAgent(state, 'demo', 'w1'));
+    await attached(terminal, 'orc-w1');
+    const worker = clients[1];
+    // i, F1 (the master), F2 (back to w1): view mode again, so Ctrl-D closes the tab and reaches no agent.
+    terminal.type('i');
+    await waitForSidebar(terminal, '[typing]');
+    terminal.type(`${ESC}OP`);
+    await attached(terminal);
+    terminal.type(`${ESC}OQ`);
+    await attached(terminal, 'orc-w1');
+    await waitForSidebar(terminal, '[view] i: type');
+    terminal.type('\x04');
+    await attached(terminal);
+    expect(app.tabs().projects[0].tabs).toEqual([]);
+    expect(worker.sent).toEqual([]);
+
+    // The explorer shown over a typing tab: closed again, the tab is view-only.
+    app.apply((state) => openAgent(state, 'demo', 'w1'));
+    await attached(terminal, 'orc-w1');
+    terminal.type('i');
+    await waitForSidebar(terminal, '[typing]');
+    terminal.type(`${F12}t`);
+    await attached(terminal, 'explorer-demo');
+    terminal.type('\x1d');
+    await attached(terminal, 'orc-w1');
+    await waitForSidebar(terminal, '[view] i: type');
+
+    // An attention jump (F11 to w2) leaves w1 view-only too.
+    terminal.type('i');
+    await waitForSidebar(terminal, '[typing]');
+    terminal.type(F11);
+    await attached(terminal, 'orc-w2');
+    terminal.type(`${ESC}OQ`);
+    await attached(terminal, 'orc-w1');
+    await waitForSidebar(terminal, '[view] i: type');
+    expect(clients.filter((fake) => fake.target.session === 'orc-w1').flatMap((fake) => fake.sent)).toEqual([]);
   });
 
   it('refuses the explorer without a host, keeping the active tab', async () => {
@@ -1221,6 +1364,29 @@ describe('runApp pane mouse (fake tmux clients)', () => {
     expect(copied(terminal)).toHaveLength(1);
   });
 
+  it('keeps a drag\'s selection through a watcher update and copies it on release', async () => {
+    const { terminal, client, watcher } = start({ setup: (fake) => { fake.lines = ['$ echo hi']; } });
+    await waitForSlotLine(terminal, '$ echo hi');
+    terminal.type(sgr(0, SX + 2, SY) + sgr(32, SX + 5, SY));
+    await waitFor(async () => (await shown(terminal)).cell(SX + 2, SY)?.style.inverse === true);
+    watcher.emit({ type: 'status', project_id: 'demo', status: projectState('demo').status! });
+    await sleep(30);
+    expect((await shown(terminal)).cell(SX + 2, SY)?.style.inverse).toBe(true);
+    terminal.type(sgr(0, SX + 5, SY, true));
+    await waitFor(() => copied(terminal).length === 1);
+    expect(copied(terminal)).toEqual(['echo']);
+    expect(client().sent).toEqual([]);
+  });
+
+  it('keeps the pending motion to a mouse app through a watcher update', async () => {
+    const { terminal, client, watcher } = start({ setup: (fake) => { fake.modes = SGR_ANY; } });
+    await attached(terminal);
+    terminal.type(sgr(0, SX + 6, SY + 7) + sgr(32, SX + 7, SY + 7));
+    watcher.emit({ type: 'status', project_id: 'demo', status: projectState('demo').status! });
+    await waitFor(() => client().sent.length === 2);
+    expect(client().sent[1]).toBe(`%1 ${ESC}[<32;8;8M`);
+  });
+
   it('gives Shift-held events to the cockpit even when the app wants the mouse', async () => {
     const { terminal, client } = start({ setup: (fake) => { fake.modes = SGR_ANY; } });
     await attached(terminal);
@@ -1267,7 +1433,7 @@ describe.skipIf(!hasTmux)('runApp (private tmux server)', () => {
   function startReal(projects: ProjectWatchState[], explorer?: ExplorerHost) {
     const terminal = new FakeTerminal();
     const app = runApp({
-      terminal, keys: DEFAULT_COCKPIT_KEYS, tmuxBinary: 'tmux', lockPath: '/unused/lock', store: new MemoryStore(),
+      terminal, keys: DEFAULT_COCKPIT_KEYS, tmuxBinary: 'tmux', store: new MemoryStore(),
       projects: new FakeWatcher(projects), projectId: 'fake', explorer,
     });
     apps.push(app);
@@ -1360,8 +1526,12 @@ describe.skipIf(!hasTmux)('runApp (private tmux server)', () => {
     const master = 'orc-master-explorer';
     const created = tmux('new-session', '-d', '-s', master, '-x', '100', '-y', '30', 'env -i TERM=tmux-256color PS1="$ " LANG=C.UTF-8 sh');
     expect(created.status, created.stderr).toBe(0);
-    // A stand-in for `orc cockpit2 explorer`: it shows its project and echoes the keys it gets.
-    const host = tmuxExplorerHost({ tmuxBinary: 'tmux', socket: explorerSocket, command: (projectId) => `stty -echo; echo explorer-for-$(printf %s ${projectId}); exec cat -v` });
+    // A stand-in for `orc cockpit2 explorer`: it shows its project, echoes each read in brackets and quits on q, as the explorer's list does.
+    const reader = "process.stdin.setRawMode(true); process.stdin.on('data', (d) => { const s = d.toString(); if (s === 'q') process.exit(0); process.stdout.write('[' + s + ']'); });".replace(/'/g, '"');
+    const host = tmuxExplorerHost({
+      tmuxBinary: 'tmux', socket: explorerSocket,
+      command: (projectId) => `echo explorer-for-$(printf %s ${projectId}); exec ${process.execPath} -e '${reader}'`,
+    });
     const { terminal, app } = startReal([projectState('fake', { master: { socket, session: master } })], host);
     await waitForSlotLine(terminal, '$');
     const before = app.tabs();
@@ -1370,16 +1540,16 @@ describe.skipIf(!hasTmux)('runApp (private tmux server)', () => {
     await waitForSlotLine(terminal, 'explorer-for-fake');
     expect(explorerTmux('display-message', '-p', '-t', '=explorer-fake:', '#{window_width}x#{window_height} #{status}').stdout.trim()).toBe('46x21 off');
     await waitForTabBar(terminal, 1, '2 tasks ×');
-    // Its keys reach it (j and k navigate the real explorer); the master gets none.
-    terminal.type('jk\r');
-    await waitForSlotLine(terminal, 'jk');
+    // Its keys reach it one read each, also when they arrive in one read (j and k navigate the real explorer); the master gets none.
+    terminal.type('jjk');
+    await waitForSlotLine(terminal, '[j][j][k]');
 
-    // q closes it: the explorer's session is gone, the master is shown again with the keys.
+    // q makes it quit: its session ends, the cockpit closes the tab and shows the master again with the keys.
     terminal.type('q');
     await waitFor(() => explorerTmux('has-session', '-t', '=explorer-fake').status !== 0);
     await waitForSlotLine(terminal, '$');
     expect(app.tabs()).toEqual(before);
-    expect(tmux('capture-pane', '-p', '-t', `=${master}:`).stdout).not.toContain('jk');
+    expect(tmux('capture-pane', '-p', '-t', `=${master}:`).stdout).not.toContain('jjk');
     await waitForTabBar(terminal, 1, 'tasks Ctrl-q: quit');
 
     // Opened again, it closes with the cockpit.

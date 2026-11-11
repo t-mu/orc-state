@@ -164,12 +164,22 @@ describe('createDispatcher: sidebar focus', () => {
 });
 
 describe('createDispatcher: the task explorer tab', () => {
-  const EXPLORER: DispatchContext = { mode: 'view', agentTab: false, explorer: true };
+  const EXPLORER: DispatchContext = { mode: 'view', agentTab: false, explorer: 'live' };
+  const EXPLORER_MESSAGE: DispatchContext = { mode: 'view', agentTab: false, explorer: 'message' };
 
-  it('closes the explorer on the close keys of view mode and forwards every other key to it', () => {
-    for (const key of ['q', ESC, '\x04', '\x03', '\x1d']) expect(types(run(key, EXPLORER))).toEqual(['closeTab']);
+  it('lets the explorer own its keys, Esc, q, Ctrl-D and Ctrl-C included, and closes it on Ctrl-] alone', () => {
+    expect(types(run('\x1d', EXPLORER))).toEqual(['closeTab']);
     expect(forwarded(run(`jk\r${ESC}[A${ESC}[Dhsfi`, EXPLORER))).toEqual(['j', 'k', '\r', `${ESC}[A`, `${ESC}[D`, 'h', 's', 'f', 'i']);
-    expect(modeNotice(EXPLORER)).toBe('[tasks] q/Esc: close');
+    expect(forwarded(run(`${ESC}`, EXPLORER))).toEqual([ESC]);
+    expect(forwarded(run('q\x04\x03\x7f', EXPLORER))).toEqual(['q', '\x04', '\x03', '\x7f']);
+    expect(modeNotice(EXPLORER)).toBe('[tasks] Ctrl-] or ×: close');
+  });
+
+  it('closes an explorer that shows a message on the close keys of view mode and drops other keys', () => {
+    for (const key of ['q', ESC, '\x04', '\x03', '\x1d']) expect(types(run(key, EXPLORER_MESSAGE))).toEqual(['closeTab']);
+    expect(types(run('ji', EXPLORER_MESSAGE))).toEqual(['drop', 'drop']);
+    expect(modeNotice(EXPLORER_MESSAGE)).toBe('[tasks] q/Esc: close');
+    for (const context of [EXPLORER, EXPLORER_MESSAGE]) expect(modeNotice(context).length).toBeLessThanOrEqual(32);
   });
 
   it('keeps the cockpit keys and drops pastes and the prefix twice', () => {

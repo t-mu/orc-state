@@ -1,4 +1,7 @@
 import { spawnSync } from 'node:child_process';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { ProjectWatchState } from '../../client.ts';
 import { nextAttention, type CockpitTabState } from '../cockpitTabs.ts';
@@ -29,8 +32,10 @@ describe('explorerSessionName and explorerScript', () => {
   });
 
   it('keeps a failing explorer\'s error on screen and lets a clean exit end the session', () => {
-    const fail = spawnSync('/bin/sh', ['-c', explorerScript('(exit 3)').replace('while :; do sleep 3600; done', 'exit 0')], { encoding: 'utf8' });
-    expect(fail.stdout).toContain('[the task explorer exited with status 3; q or Esc closes this tab]');
+    // A failing explorer's line stays until a key arrives; then the script ends.
+    const fail = spawnSync('/bin/sh', ['-c', explorerScript('(exit 3)')], { encoding: 'utf8', input: 'q', timeout: 5_000 });
+    expect(fail.stdout).toContain('[the task explorer exited with status 3; any key closes this tab]');
+    expect(fail.signal).toBeNull();
     const ok = spawnSync('/bin/sh', ['-c', explorerScript('echo fine')], { encoding: 'utf8', timeout: 5_000 });
     expect(ok.status).toBe(0);
     expect(ok.stdout).toBe('fine\n');
@@ -108,15 +113,24 @@ describe.skipIf(!hasTmux)('tmuxExplorerHost (private tmux server)', () => {
     // A second start (a cockpit that crashed left the first) replaces the session.
     await host.start('demo', { cols: 40, rows: 10 });
     expect(tmux('display-message', '-p', '-t', '=explorer-demo:', '#{pane_pid}').stdout.trim()).not.toBe(pane);
-    host.stop(target);
-    await new Promise<void>((resolve, reject) => {
-      const stopBy = Date.now() + 5_000;
-      const poll = () => {
-        if (tmux('has-session', '-t', '=explorer-demo').status !== 0) resolve();
-        else if (Date.now() > stopBy) reject(new Error('the explorer session was not killed'));
-        else setTimeout(poll, 20);
-      };
-      poll();
-    });
+    await host.stop(target);
+    expect(tmux('has-session', '-t', '=explorer-demo').status).not.toBe(0);
+    // Stopping a session that is gone resolves too.
+    await host.stop(target);
+  }, 20_000);
+
+  it('kills the session new-session made when a command chained after it fails', async () => {
+    // A tmux that names an option no tmux has in place of `status`, so the set-option after new-session fails.
+    const dir = mkdtempSync(join(tmpdir(), 'orc-explorer-tmux-'));
+    const wrapper = join(dir, 'tmux');
+    writeFileSync(wrapper, '#!/bin/sh\nfor a; do shift; [ "$a" = status ] && a=no-such-option; set -- "$@" "$a"; done\nexec tmux "$@"\n');
+    chmodSync(wrapper, 0o755);
+    try {
+      const host = tmuxExplorerHost({ tmuxBinary: wrapper, socket, command: () => 'exec cat' });
+      await expect(host.start('broken', { cols: 40, rows: 10 })).rejects.toThrow(/no-such-option/);
+      expect(tmux('has-session', '-t', '=explorer-broken').status).not.toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }, 20_000);
 });
