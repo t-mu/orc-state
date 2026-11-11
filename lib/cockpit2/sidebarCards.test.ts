@@ -253,7 +253,7 @@ describe('sidebarCardTarget and sidebarCardClick', () => {
     expect(sidebarCardTarget(layout, 0, rowOf('coordinator'))).toBeNull(); // the left border
     expect(sidebarCardTarget(layout, COLS - 1, rowOf('coordinator'))).toBeNull(); // the right border
     expect(sidebarCardTarget(layout, 5, rowOf('coordinator') + 2)).toBeNull(); // the empty notice row
-    expect(sidebarCardTarget(layout, 5, rowOf('OTHER PROJECTS'))).toBeNull();
+    expect(sidebarCardTarget(layout, 5, rowOf('[ PROJECTS ]'))).toBeNull();
     expect(sidebarCardTarget(layout, 5, rowOf('a3 ') + 1)).toBeNull(); // a blank row of the Agents card
     expect(sidebarCardTarget(layout, 5, 21)).toBeNull(); // its bottom border
     const none = sidebarCardsLayout(model(0, 0, { projects: [], activeProjectId: null, notice: 'no registered projects' }), 22, INITIAL_SIDEBAR_NAV, COLS);
@@ -287,7 +287,7 @@ describe('drawSidebarCards', () => {
       '│ coordinator          [RUNNING] │',
       '│ workers 2/4                    │',
       '└────────────────────────────────┘',
-      '┌─ [ OTHER PROJECTS ] ──────── 1 ┐',
+      '┌─ [ PROJECTS ] ────────────── 1 ┐',
       '│ o1                [STOPPED] !2 │',
       '└────────────────────────────────┘',
       '┌─ [ AGENTS ] ─────────── 2 live ┐',

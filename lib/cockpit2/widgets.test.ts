@@ -86,11 +86,12 @@ describe('drawTabBar', () => {
     const active = focused.bar.layout.cells[1];
     const x = focused.layout.tabBar.x + active.x;
     expect(focused.frame.cells[3 * 200 + x].text).toBe('┘');
-    expect(focused.frame.cells[2 * 200 + x + 2].style.inverse).toBe(true); // its label
-    expect(focused.frame.cells[2 * 200 + x].style.bold).toBe(true); // its border
+    const label = focused.frame.cells[2 * 200 + x + 2].style;
+    expect(label).toEqual(styleOf(CLASSIC, 'tab.active')); // its label in the tab's fill (classic: inverse)
+    expect(focused.frame.cells[2 * 200 + x].style).toEqual(styleOf(CLASSIC, 'tab.active')); // its border too: one block
+    expect(focused.frame.cells[3 * 200 + x].style.bold).toBe(true); // its open bottom edge in focus
     const unfocused = renderTabBar(200, 60, TABS, false);
-    expect(unfocused.frame.cells[2 * 200 + x + 2].style.inverse).toBe(false);
-    expect(unfocused.frame.cells[2 * 200 + x + 2].style.bold).toBe(true); // still the active tab
+    expect(unfocused.frame.cells[2 * 200 + x + 2].style).toEqual(label); // filled whether or not the slot has the keys
   });
 
   it('fits 80x24 with overflow markers and the active tab always shown, the tabs taking the full width', () => {
@@ -134,11 +135,12 @@ describe('tab bar roles', () => {
     expect(at(master.x, 0)).toEqual(styleOf(AMBER, 'chrome.border'));
     expect(at(master.x, 1)).toEqual(styleOf(AMBER, 'chrome.border'));
     expect(at(master.x + 2, 1)).toEqual(styleOf(AMBER, 'text.primary'));
-    // The active tab, the slot focused: its border in focus, its label accent and inverse.
-    expect(at(w1.x, 0)).toEqual(styleOf(AMBER, 'chrome.borderFocus'));
+    // The active tab: its top border and label row one block in `tab.active`'s fill, its open bottom edge in focus.
+    const fill = styleOf(AMBER, 'tab.active');
+    expect(at(w1.x, 0)).toEqual({ ...fill, fg: fill.bg, bold: false });
     expect(at(w1.x, 2)).toEqual(styleOf(AMBER, 'chrome.borderFocus'));
-    expect(at(w1.x + 2, 1)).toEqual({ ...styleOf(AMBER, 'text.accent'), inverse: true });
-    expect(at(w1.closeX!, 1)).toEqual(styleOf(AMBER, 'tab.close'));
+    expect(at(w1.x + 2, 1)).toEqual(fill);
+    expect(at(w1.closeX!, 1)).toEqual({ ...styleOf(AMBER, 'tab.close'), bg: fill.bg });
     // An attention badge (`! KIND`) in its kind's status role, from theme.ts.
     for (const [cell, kind] of [[w2, 'stalled'], [w3, 'no_progress']] as const) {
       const badgeX = cell.x + 1 + stringWidth(cell.text);
@@ -148,10 +150,10 @@ describe('tab bar roles', () => {
     }
     // The rule right of the tabs is a border.
     expect(at(79, 2)).toEqual(styleOf(AMBER, 'chrome.border'));
-    // Unfocused, the active tab keeps chrome.border and its label is accent without inverse.
+    // Unfocused, the active tab keeps its fill.
     const unfocused = draw(AMBER, 80, false);
-    expect(unfocused.at(w1.x, 0)).toEqual(styleOf(AMBER, 'chrome.border'));
-    expect(unfocused.at(w1.x + 2, 1)).toEqual(styleOf(AMBER, 'text.accent'));
+    expect(unfocused.at(w1.x, 0)).toEqual({ ...fill, fg: fill.bg, bold: false });
+    expect(unfocused.at(w1.x + 2, 1)).toEqual(fill);
   });
 
   it('draws overflow markers and notices in text.muted, errors in error', () => {
