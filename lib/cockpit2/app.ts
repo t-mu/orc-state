@@ -1,5 +1,5 @@
 /**
- * lib/cockpit2/app.ts — the cockpit2 app (Plan 6 Steps 6 to 10).
+ * lib/cockpit2/app.ts — the cockpit2 app (Plan 6 Steps 6 to 11).
  *
  * Draws the whole terminal: a sidebar (left, fixed width), a tab bar (top
  * right, fixed height) and the slot, which shows the active tab: a project's
@@ -39,16 +39,29 @@
  * before the attach), any key returns to live; a left drag selects text
  * (selection.ts), highlighted, and the release copies it with OSC 52. A press
  * in the slot keeps the mouse until its release, wherever the pointer goes.
- * The explorer and attention keys come with Step 11.
+ *
+ * The task explorer (explorer.ts) is a tab of its own: the prefix then `t`,
+ * or the `tasks` entry of the tab bar, starts it for the active project in a
+ * session on the cockpit's private tmux server and shows it after the
+ * project's tabs; the close keys of a view-only tab (`q`, Esc, Ctrl-D, Ctrl-C,
+ * Ctrl-]) or its `×` kill that session and show the active tab again, and so
+ * does any tab change (a tab key, a click, the sidebar, the attention key).
+ * Every other key reaches the explorer. The attention key (F11) and the
+ * tab bar's attention badge (`! N`, the count of agents needing a human across
+ * projects) show the next of those agents (`nextAttention`).
  */
 import { tmuxSessionTarget, type ProjectConnectionState, type ProjectWatchState, type ProjectWatchUpdate, type StatusView } from '../../client.ts';
-import { MASTER_TAB, closeTab, closedTabs, cycleProject, cycleTab, openAgent, selectTab, shownTab, showProject, type CockpitTabState, type OpenTab, type TabTransition } from '../cockpitTabs.ts';
+import {
+  MASTER_TAB, closeTab, closedTabs, cycleProject, cycleTab, nextAttention, openAgent, selectTab, shownTab, showProject,
+  type CockpitTabState, type OpenTab, type TabTransition,
+} from '../cockpitTabs.ts';
 import { keyLabel, type CockpitKeys } from '../cockpitKeys.ts';
 import { buildSidebarModel } from '../tui/sidebar.ts';
 import { buildProjectViews } from '../tui/status.ts';
 import { buildTabBarModel, tabAttention, tabBarClickTarget } from '../tui/tabBarModel.ts';
 import { DEFAULT_STYLE, blitScreen, createFrame, drawText, slotCursor, type Frame, type Region } from './frame.ts';
 import { createDispatcher, cursorKeyMirror, modeNotice, type DispatchContext } from './dispatch.ts';
+import { attentionQueue, type ExplorerHost } from './explorer.ts';
 import { createTokenizer, type Token } from './input.ts';
 import { createMotionCoalescer, encodeMouse, parseSgrMouse, routeSlotMouse, type MouseEvent } from './mouse.ts';
 import { renderDiff, sameStyle } from './render.ts';
@@ -59,8 +72,8 @@ import type { TerminalSession } from './terminal.ts';
 import { TmuxControlClient } from './tmuxControl.ts';
 import type { TmuxTarget, ViewState, ViewStateStore } from './viewState.ts';
 import {
-  INITIAL_SIDEBAR_NAV, drawSidebar, drawTabBar, navigateSidebar, sidebarClick, sidebarView, tabBarView, withModeMarks,
-  type SidebarBox, type SidebarCommand, type SidebarNav, type SidebarStep,
+  EXPLORER_LABEL, EXPLORER_TAB, INITIAL_SIDEBAR_NAV, drawSidebar, drawTabBar, navigateSidebar, sidebarClick, sidebarView, tabBarButtonAt, tabBarView,
+  withExplorerTab, withModeMarks, type SidebarBox, type TabBarButton, type SidebarCommand, type SidebarNav, type SidebarStep,
 } from './widgets.ts';
 
 // ── layout ────────────────────────────────────────────────────────────────────
@@ -162,6 +175,20 @@ export function agentTarget(project: ProjectInfo, agentId: string): TmuxTarget |
 
 /** A tab's session key. */
 export const tabKey = (tab: OpenTab) => `${tab.projectId}\0${tab.agentId ?? ''}`;
+/** The task explorer's session key; tab keys always hold a NUL, so it never equals one. */
+export const EXPLORER_KEY = 'explorer';
+
+/** The task explorer while it is shown: its project, its session once started, or why it did not start. */
+interface ExplorerState { projectId: string; target: TmuxTarget | null; error: string | null }
+
+/** What the slot says about the task explorer while it has no screen to show, or null when its screen is shown. */
+export function explorerMessage(explorer: ExplorerState, session: Pick<PaneSession, 'state' | 'error' | 'screen'> | null, keys: CockpitKeys): string[] | null {
+  if (explorer.error) return ['The task explorer did not start.', explorer.error, 'q or Esc closes this tab.', quitHint(keys)];
+  if (session?.state.kind === 'ended') return ['The task explorer ended.', `tmux: ${session.state.reason}`, 'q or Esc closes this tab.'];
+  if (session?.error) return ['The task explorer is not shown.', session.error, 'q or Esc closes this tab.'];
+  if (!explorer.target || !session?.screen) return [`Starting the task explorer for ${explorer.projectId}…`];
+  return null;
+}
 
 // ── the app ───────────────────────────────────────────────────────────────────
 
@@ -191,6 +218,8 @@ export interface AppOptions {
   resyncDelayMs?: number;
   /** How often the sidebar's run times are brought up to date (default 30 s); a render with no change writes nothing. */
   tickMs?: number;
+  /** Starts and stops the task explorer's sessions (explorer.ts `tmuxExplorerHost`); without one the explorer cannot open. */
+  explorer?: ExplorerHost | undefined;
 }
 
 export interface App {
@@ -337,7 +366,7 @@ export function runApp(options: AppOptions): App {
     : agentTarget(projectInfo(tab.projectId), tab.agentId);
 
   // ── sessions ──
-  const sessions = new Sessions({ connect, scrollback: options.scrollback, resyncDelayMs: options.resyncDelayMs, onChange: () => scheduleRender() });
+  const sessions = new Sessions({ connect, scrollback: options.scrollback, resyncDelayMs: options.resyncDelayMs, onChange: () => { closeEndedExplorer(); scheduleRender(); } });
   const slotSize = () => ({ cols: layout.slot.cols, rows: layout.slot.rows });
 
   /** Shows the active tab's session (the others hidden and paused); none when it has no tmux target. */
@@ -345,6 +374,12 @@ export function runApp(options: AppOptions): App {
     if (closed) return;
     motion.cancel();
     clearSelection();
+    if (explorer) {
+      if (explorer.target) sessions.show(EXPLORER_KEY, explorer.target, true, slotSize());
+      else sessions.hideAll();
+      scheduleRender();
+      return;
+    }
     const tab = shownTab(tabs);
     const target = tab ? targetOf(tab) : null;
     if (!tab || !target) sessions.hideAll();
@@ -390,21 +425,31 @@ export function runApp(options: AppOptions): App {
     const project = tabs.activeProject;
     const model = buildTabBarModel(tabs, tabAttention(buildProjectViews([...watched.values()]), project));
     const marked = withModeMarks(model, (agentId) => project !== null && typingTabs.has(tabKey({ projectId: project, agentId })));
-    return tabBarView(marked, layout.tabBar.cols, shortQuitHint(keys));
+    const waiting = attentionQueue(tabs, [...watched.values()]).length;
+    const buttons: TabBarButton[] = [
+      ...(explorer || !options.explorer ? [] : [{ action: 'explorer' as const, text: EXPLORER_LABEL }]),
+      ...(waiting > 0 ? [{ action: 'attention' as const, text: `! ${waiting}` }] : []),
+    ];
+    return tabBarView(explorer ? withExplorerTab(marked) : marked, layout.tabBar.cols, shortQuitHint(keys), buttons);
   }
 
   /** The keys' context: the shown tab's mode, and whether the sidebar has the keys. */
   function keyContext(): DispatchContext {
     const tab = shownTab(tabs);
     // With no tab shown nothing takes keys; cockpit keys still work.
-    const context: DispatchContext = tab ? inputContext(tab) : { mode: 'view', agentTab: false };
+    const context: DispatchContext = explorer ? { mode: 'view', agentTab: false, explorer: true }
+      : tab ? inputContext(tab) : { mode: 'view', agentTab: false };
     return focus === 'slot' ? context : { ...context, sidebar: true };
   }
 
   /** What the slot shows: a message, or the shown tab's screen. */
   function slotContent(): { message: string[] | null; screen: Screen | null } {
-    const tab = shownTab(tabs);
     const session = sessions.shown();
+    if (explorer) {
+      const message = explorerMessage(explorer, session, keys);
+      return { message, screen: message ? null : session?.screen ?? null };
+    }
+    const tab = shownTab(tabs);
     const project = tab && watched.get(tab.projectId);
     const message = slotMessage({
       tab, keys, session, target: tab ? targetOf(tab) : null,
@@ -419,7 +464,6 @@ export function runApp(options: AppOptions): App {
     if (closed) return;
     lastRender = Date.now();
     const frame = createFrame(layout.cols, layout.rows);
-    const tab = shownTab(tabs);
     drawSidebar(frame, layout.sidebar, currentSidebar(), { focus: focus === 'slot' ? null : focus, footer: modeNotice(keyContext()) });
     drawTabBar(frame, layout.tabBar, currentTabBar(), {
       slotFocused: focus === 'slot',
@@ -431,7 +475,7 @@ export function runApp(options: AppOptions): App {
       drawMessage(frame, layout.slot, message ?? []);
     } else {
       blitScreen(frame, screen, layout.slot);
-      if (selection?.moved && tab && selection.key === tabKey(tab)) highlightSelection(frame, layout.slot, screen, selection);
+      if (selection?.moved && selection.key === shownKey()) highlightSelection(frame, layout.slot, screen, selection);
       cursor = slotCursor(screen, layout.slot, focus === 'slot');
     }
     // Arrow keys reach the pane in the form its program asked for; checked on every render, so on tab switch and mode change.
@@ -458,6 +502,8 @@ export function runApp(options: AppOptions): App {
       return result;
     }
     refusal = null;
+    // Any tab change leaves the task explorer for the tab it asked for.
+    stopExplorer();
     // Closing a tab only detaches its view; the agent keeps running.
     for (const tab of closedTabs(tabs, result.state)) {
       sessions.close(tabKey(tab));
@@ -467,6 +513,72 @@ export function runApp(options: AppOptions): App {
     save();
     showActive();
     return result;
+  }
+
+  // ── task explorer ──
+  let explorer: ExplorerState | null = null;
+
+  /** The shown session's key: the explorer's, the active tab's, or null. */
+  const shownKey = (): string | null => {
+    if (explorer) return EXPLORER_KEY;
+    const tab = shownTab(tabs);
+    return tab ? tabKey(tab) : null;
+  };
+
+  /** Shows the task explorer of the active project, starting its session; it takes the keys. Already shown: nothing changes. */
+  function openExplorer(): void {
+    if (explorer) return;
+    const projectId = tabs.activeProject;
+    if (!projectId || !options.explorer) {
+      refusal = projectId ? 'This cockpit has no task explorer.' : 'No project is open in the cockpit; run orc start-session in one.';
+      scheduleRender();
+      return;
+    }
+    const host = options.explorer;
+    const opened: ExplorerState = { projectId, target: null, error: null };
+    explorer = opened;
+    setFocus('slot');
+    showActive();
+    host.start(projectId, slotSize()).then((target) => {
+      // Closed (or the cockpit quit) while it started: its session goes too.
+      if (explorer !== opened || closed) { host.stop(target); return; }
+      opened.target = target;
+      showActive();
+    }, (error: unknown) => {
+      opened.error = error instanceof Error ? error.message : String(error);
+      scheduleRender();
+    });
+  }
+
+  /** Ends the task explorer: its view detaches and its session is killed. The caller shows the next tab. */
+  function stopExplorer(): void {
+    if (!explorer) return;
+    const { target } = explorer;
+    explorer = null;
+    sessions.close(EXPLORER_KEY);
+    if (target) options.explorer?.stop(target);
+  }
+
+  function closeExplorer(): void {
+    if (!explorer) return;
+    stopExplorer();
+    showActive();
+  }
+
+  /** An explorer that quit on its own (a failing one keeps its session to show why) closes, showing the active tab again. */
+  function closeEndedExplorer(): void {
+    if (explorer?.target && sessions.get(EXPLORER_KEY)?.state.kind === 'ended') queueMicrotask(closeExplorer);
+  }
+
+  /** Shows the next agent needing attention across projects (`nextAttention`); it takes the keys. */
+  function jumpToAttention(): void {
+    const waiting = attentionQueue(tabs, [...watched.values()]);
+    if (waiting.length === 0) {
+      refusal = 'No agent needs attention.';
+      scheduleRender();
+      return;
+    }
+    if (apply((state) => nextAttention(state, waiting)).ok) setFocus('slot');
   }
 
   // ── input ──
@@ -506,9 +618,17 @@ export function runApp(options: AppOptions): App {
     },
     tabBar: (event, at) => {
       if (!isClick(event)) return;
-      const { model, layout: bar } = currentTabBar();
-      const click = tabBarClickTarget(model, bar, at.x);
+      const view = currentTabBar();
+      const button = tabBarButtonAt(view, at.x);
+      if (button === 'explorer') { openExplorer(); return; }
+      if (button === 'attention') { jumpToAttention(); return; }
+      const click = tabBarClickTarget(view.model, view.layout, at.x);
       if (!click) return;
+      if (click.tab.agentId === EXPLORER_TAB) {
+        if (click.kind === 'close') closeExplorer();
+        else setFocus('slot');
+        return;
+      }
       const id = click.tab.agentId ?? MASTER_TAB;
       // Closing only detaches the view; the agent keeps running.
       if (click.kind === 'close') apply((state) => closeTab(state, id));
@@ -537,12 +657,14 @@ export function runApp(options: AppOptions): App {
     const press = !event.motion && !event.release && !event.button.startsWith('wheel');
     if (press) setFocus('slot');
     const tab = shownTab(tabs);
+    const key = shownKey();
     const { screen } = slotContent();
-    if (!tab || !screen) return;
+    if (!key || !screen) return;
     const modes = screen.modes();
     const route = routeSlotMouse(event, {
       tracking: modes.mouseTracking,
-      viewOnly: tab.agentId !== null && !typingTabs.has(tabKey(tab)),
+      // The explorer takes keys, not the mouse: the cockpit scrolls and selects there.
+      viewOnly: explorer !== null || (tab !== null && tab.agentId !== null && !typingTabs.has(tabKey(tab))),
       selecting: selection?.dragging ?? false,
     });
     // The pane as drawn: a worker's screen smaller than the slot is padded, a larger one cropped.
@@ -564,7 +686,7 @@ export function runApp(options: AppOptions): App {
         scheduleRender();
         return;
       case 'selectStart':
-        selection = { key: tabKey(tab), anchor: at, head: at, moved: false, dragging: true };
+        selection = { key, anchor: at, head: at, moved: false, dragging: true };
         scheduleRender();
         return;
       case 'selectExtend': case 'selectEnd': {
@@ -630,11 +752,18 @@ export function runApp(options: AppOptions): App {
         return;
       }
       case 'quit': quit(); return;
-      case 'selectTab': apply((state) => selectTab(state, action.index)); return;
+      case 'selectTab':
+        // The explorer's own number shows it, as it already is.
+        if (explorer && action.index === (tabs.projects.find((project) => project.projectId === tabs.activeProject)?.tabs.length ?? 0) + 2) return;
+        apply((state) => selectTab(state, action.index));
+        return;
       case 'cycleTab': apply((state) => cycleTab(state, action.delta)); return;
       case 'cycleProject': apply((state) => cycleProject(state, action.delta)); return;
-      // Refused on the master tab, which stays open.
-      case 'closeTab': apply((state) => closeTab(state)); return;
+      // Closes the explorer while it is shown; refused on the master tab, which stays open.
+      case 'closeTab':
+        if (explorer) closeExplorer();
+        else apply((state) => closeTab(state));
+        return;
       case 'startTyping':
       case 'stopTyping':
         if (!tab) return;
@@ -651,8 +780,9 @@ export function runApp(options: AppOptions): App {
         runSidebar(step);
         return;
       }
-      // The explorer and attention jump come with Step 11.
-      case 'explorer': case 'attention': case 'drop': return;
+      case 'explorer': openExplorer(); return;
+      case 'attention': jumpToAttention(); return;
+      case 'drop': return;
     }
   }
 
@@ -679,7 +809,8 @@ export function runApp(options: AppOptions): App {
     stopInput();
     stopResize();
     stopWatching();
-    // Closing the control clients detaches them; every session keeps running.
+    // The explorer exists only while shown; closing the control clients detaches them, every other session keeps running.
+    stopExplorer();
     sessions.closeAll();
     terminal.restore();
     void saving.then(resolveDone);

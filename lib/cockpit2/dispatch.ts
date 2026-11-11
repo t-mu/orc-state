@@ -13,7 +13,11 @@
  *    reaches the pane (typing mode only). Any other key after the prefix is dropped.
  * 4. With the sidebar focused, the rest is sidebar navigation (arrows or
  *    j/k, Tab or Shift-Tab, Enter, Esc); no key or paste reaches a pane.
- * 5. Otherwise the tab's mode decides the rest. The master tab is always `typing`.
+ * 5. On the task explorer tab the close keys of view mode (`q`, Esc, Ctrl-D,
+ *    Ctrl-C, Ctrl-]) close it; every other key reaches the explorer, so it is
+ *    navigated as usual (arrows or j/k, Enter, h/← or Backspace back from a
+ *    task, s/f filters). Pastes and the prefix twice are dropped there.
+ * 6. Otherwise the tab's mode decides the rest. The master tab is always `typing`.
  *    Worker and scout tabs open in `view`: no key reaches the agent; `q`, Esc,
  *    Ctrl-D, Ctrl-C and Ctrl-] close the tab, `i` starts typing. In `typing`
  *    every key goes to the pane byte-exact, a lone Esc included, except Ctrl-]
@@ -42,7 +46,7 @@ export type DispatchAction =
   | { type: 'selectTab'; index: number }
   | { type: 'cycleTab'; delta: 1 | -1 }
   | { type: 'cycleProject'; delta: 1 | -1 }
-  /** Close the active agent tab; the tab shown next is the one `closeTab` picks. */
+  /** Close the active agent tab (the tab shown next is the one `closeTab` picks), or the task explorer while it is shown. */
   | { type: 'closeTab' }
   /** Prefix then o: switch focus between sidebar and pane (Step 9). */
   | { type: 'switchFocus' }
@@ -69,6 +73,8 @@ export interface DispatchContext {
   agentTab: boolean;
   /** The sidebar has the focus: keys navigate it and nothing reaches the pane. */
   sidebar?: boolean;
+  /** The task explorer is shown: the close keys close it, other keys reach it. Pass mode `view` with it. */
+  explorer?: boolean;
 }
 
 /** Keys of agent tabs, the same as `orc terminal --view-first` (lib/terminalKeys.ts). */
@@ -86,6 +92,7 @@ export const SIDEBAR_KEYS: Readonly<Record<string, SidebarKey>> = {
  */
 export function modeNotice(context: DispatchContext): string {
   if (context.sidebar) return '↑↓ Tab · Enter: open · Esc: pane';
+  if (context.explorer) return '[tasks] q/Esc: close';
   if (!context.agentTab) return '[master] keys go to the master';
   return context.mode === 'view'
     ? '[view] i: type · q/Esc: close'
@@ -156,6 +163,7 @@ export function createDispatcher(keys: CockpitKeys): Dispatcher {
       const key = matchSidebar(token);
       return key ? { type: 'sidebar', key: SIDEBAR_KEYS[key] } : { type: 'drop', reason: 'sidebar' };
     }
+    if (context.explorer) return matchClose(token) ? { type: 'closeTab' } : { type: 'forward', bytes: token.raw };
     if (context.mode === 'typing') {
       if (context.agentTab && matchStop(token)) return { type: 'stopTyping' };
       return { type: 'forward', bytes: token.raw };

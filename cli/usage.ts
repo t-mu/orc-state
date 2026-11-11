@@ -10,7 +10,7 @@ export const USAGE: Record<string, string> = {
   'status':            'orc status [--json [--events=<0-200>]] [--mine --agent-id=<id>] [--watch|-w [--interval-ms=<ms>] [--once]]',
   'watch':             'orc watch [--interval-ms=<ms>] [--once]',
   'cockpit':           'orc cockpit project <project_id|next|prev> | open <agent_id> [<project_id>] | tab <n|master|agent_id> | next | prev | close [<agent_id>] | attention | state | bar [--client=<tmux client>]   (inside the cockpit only)',
-  'cockpit2':          'orc cockpit2   (preview)',
+  'cockpit2':          'orc cockpit2 | cockpit2 explorer --project=<id>   (preview)',
   'attach':            'orc attach <agent_id|run_id> [--write]',
   'task-mark-done':    'orc task-mark-done <task_ref> [--actor-id=<id>] [--json]',
   'delegate':          'orc delegate --task-ref=<feature/task> [--target-agent-id=<id>] [--task-type=<implementation|refactor>] [--note=<text>] [--actor-id=<id>] [--json]',

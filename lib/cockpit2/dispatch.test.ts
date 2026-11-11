@@ -163,6 +163,26 @@ describe('createDispatcher: sidebar focus', () => {
   });
 });
 
+describe('createDispatcher: the task explorer tab', () => {
+  const EXPLORER: DispatchContext = { mode: 'view', agentTab: false, explorer: true };
+
+  it('closes the explorer on the close keys of view mode and forwards every other key to it', () => {
+    for (const key of ['q', ESC, '\x04', '\x03', '\x1d']) expect(types(run(key, EXPLORER))).toEqual(['closeTab']);
+    expect(forwarded(run(`jk\r${ESC}[A${ESC}[Dhsfi`, EXPLORER))).toEqual(['j', 'k', '\r', `${ESC}[A`, `${ESC}[D`, 'h', 's', 'f', 'i']);
+    expect(modeNotice(EXPLORER)).toBe('[tasks] q/Esc: close');
+  });
+
+  it('keeps the cockpit keys and drops pastes and the prefix twice', () => {
+    expect(run(`${F12}t`, MASTER).at(-1)).toEqual({ type: 'explorer' });
+    expect(run(`${F12}n`, EXPLORER).at(-1)).toEqual({ type: 'cycleTab', delta: 1 });
+    expect(run(`${ESC}[23~`, EXPLORER)).toEqual([{ type: 'attention' }]); // F11
+    expect(run(`${F12}${F12}`, EXPLORER).at(-1)).toEqual({ type: 'drop', reason: 'view' });
+    expect(run(`${ESC}[200~text${ESC}[201~`, EXPLORER)).toEqual([{ type: 'drop', reason: 'view' }]);
+    // The sidebar keeps the keys while it has the focus.
+    expect(types(run('q', { ...EXPLORER, sidebar: true }))).toEqual(['drop']);
+  });
+});
+
 describe('cursorKeyMirror', () => {
   it('writes DECCKM only when the mode changes', () => {
     const writes: string[] = [];

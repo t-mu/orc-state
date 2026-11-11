@@ -42,6 +42,8 @@ const BOLD = style({ bold: true });
 const FOCUS_BORDER = style({ bold: true, fg: CYAN });
 const FOCUS_TITLE = style({ bold: true, inverse: true, fg: CYAN });
 const ERROR = style({ bold: true, fg: RED });
+const ATTENTION_BUTTON = style({ bold: true, inverse: true, fg: YELLOW });
+const EXPLORER_BUTTON = style({ underline: true, fg: CYAN });
 
 const STATE_COLOR: Readonly<Record<SidebarProjectState, Color>> = {
   running: GREEN, connecting: CYAN, stopped: YELLOW, stale: RED, incompatible: RED,
@@ -250,11 +252,22 @@ export function drawSidebar(frame: Frame, region: Region, view: SidebarView, opt
 
 // ── tab bar ──────────────────────────────────────────────────────────────────
 
-/** The tab bar as it is drawn: the model, which tabs fit, and the hint flush right of them (null when it has no room). */
-export interface TabBarView { model: TabBarModel; layout: TabBarLayout; hint: string | null }
+/** A clickable entry flush right in the tab bar, left of the quit hint: the task explorer, or the count of agents needing attention. */
+export interface TabBarButton { action: 'explorer' | 'attention'; text: string }
+/** A button as placed: `x` is its first column in the bar. */
+export interface PlacedTabBarButton extends TabBarButton { x: number }
+
+/** The tab bar as it is drawn: the model, which tabs fit, the hint flush right of them (null when it has no room), and the buttons left of the hint. */
+export interface TabBarView { model: TabBarModel; layout: TabBarLayout; hint: string | null; buttons: PlacedTabBarButton[] }
 
 /** The tabs keep at least this many columns; a narrower bar drops the hint instead. */
 const MIN_TAB_COLS = 24;
+/** The tabs keep at least this many columns next to the buttons; a narrower bar drops buttons, the first given first. */
+const MIN_TAB_COLS_WITH_BUTTONS = 20;
+
+/** The explorer tab's id in the tab bar model: not an agent id (agent ids hold no control characters). */
+export const EXPLORER_TAB = '\u0000tasks';
+export const EXPLORER_LABEL = 'tasks';
 
 /** Agent tabs labelled with their mode's mark (`○` view, `✎` typing); the master tab, always typing, has none. */
 export function withModeMarks(model: TabBarModel, typing: (agentId: string) => boolean): TabBarModel {
@@ -264,16 +277,40 @@ export function withModeMarks(model: TabBarModel, typing: (agentId: string) => b
   };
 }
 
+/** The task explorer shown as the active tab after the project's tabs, closable; the project's tabs are inactive while it is shown. */
+export function withExplorerTab(model: TabBarModel): TabBarModel {
+  if (model.notice) return model;
+  const tabs = model.tabs.map((tab) => ({ ...tab, active: false }));
+  return { ...model, tabs: [...tabs, { agentId: EXPLORER_TAB, number: tabs.length + 1, label: EXPLORER_LABEL, active: true, attention: null, closable: true }] };
+}
+
 /**
  * Lays the tabs out in `cols`, minus room for `hint` (the quit key) flush
- * right, so the hint stays visible however many tabs are open: tabs that do
- * not fit go behind the overflow markers. The hint is left out only when the
- * tabs would keep fewer than 24 columns.
+ * right and the `buttons` left of it, so the hint stays visible however many
+ * tabs are open: tabs that do not fit go behind the overflow markers. Buttons
+ * are left out (the first given first) when the tabs would keep fewer than
+ * 20 columns, the hint when they would keep fewer than 24.
  */
-export function tabBarView(model: TabBarModel, cols: number, hint: string | null = null): TabBarView {
-  const reserve = hint ? stringWidth(hint) + 1 : 0;
-  const shown = hint && cols - reserve >= MIN_TAB_COLS ? hint : null;
-  return { model, layout: layoutTabBar(model, shown ? cols - reserve : cols), hint: shown };
+export function tabBarView(model: TabBarModel, cols: number, hint: string | null = null, buttons: TabBarButton[] = []): TabBarView {
+  const shownHint = hint && cols - (stringWidth(hint) + 1) >= MIN_TAB_COLS ? hint : null;
+  const hintReserve = shownHint ? stringWidth(shownHint) + 1 : 0;
+  const width = (list: TabBarButton[]) => list.reduce((sum, button) => sum + stringWidth(button.text) + 1, 0);
+  // The quit hint comes first: a bar with no room for it has none for the buttons.
+  let kept = model.notice || (hint && !shownHint) ? [] : buttons;
+  while (kept.length > 0 && cols - hintReserve - width(kept) < MIN_TAB_COLS_WITH_BUTTONS) kept = kept.slice(1);
+  const reserve = hintReserve + width(kept);
+  let x = cols - reserve + 1;
+  const placed = kept.map((button) => {
+    const at = { ...button, x };
+    x += stringWidth(button.text) + 1;
+    return at;
+  });
+  return { model, layout: layoutTabBar(model, cols - reserve), hint: shownHint, buttons: placed };
+}
+
+/** The button at column `x` of the bar (any row), or null. */
+export function tabBarButtonAt(view: TabBarView, x: number): TabBarButton['action'] | null {
+  return view.buttons.find((button) => x >= button.x && x < button.x + stringWidth(button.text))?.action ?? null;
 }
 
 export interface TabBarDrawOptions {
@@ -309,7 +346,13 @@ export function drawTabBar(frame: Frame, region: Region, view: TabBarView, optio
   rows.forEach((segments, offset) => {
     drawRuns(frame, region.x, region.y + offset, segments.map((segment): Run => [segment.text, segmentStyle(segment, model, options.slotFocused)]), region.cols);
   });
-  if (!view.hint || model.notice) return;
+  if (model.notice) return;
+  const y = region.y + (region.rows >= 3 ? 1 : 0);
+  for (const button of view.buttons) {
+    const width = stringWidth(button.text);
+    drawText(frame, region.x + button.x, y, button.text, button.action === 'attention' ? ATTENTION_BUTTON : EXPLORER_BUTTON, width);
+  }
+  if (!view.hint) return;
   const hintWidth = stringWidth(view.hint);
-  drawText(frame, region.x + region.cols - hintWidth, region.y + (region.rows >= 3 ? 1 : 0), view.hint, MUTED, hintWidth);
+  drawText(frame, region.x + region.cols - hintWidth, y, view.hint, MUTED, hintWidth);
 }
