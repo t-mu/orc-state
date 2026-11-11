@@ -4,10 +4,14 @@ import type { SidebarAgent, SidebarModel, SidebarProject } from '../tui/sidebar.
 import { CLOSE_MARKER, buildTabBarModel, tabBarClickTarget, type TabBarState } from '../tui/tabBarModel.ts';
 import { computeLayout } from './app.ts';
 import { createFrame, type Frame } from './frame.ts';
+import { BUILT_IN_THEMES } from './theme.ts';
 import {
   EXPLORER_TAB, INITIAL_SIDEBAR_NAV, TYPING_MARK, VIEW_MARK, drawSidebar, drawTabBar, navigateSidebar, sidebarClick, sidebarView, tabBarButtonAt,
   tabBarView, withExplorerTab, withModeMarks, type SidebarNav, type TabBarButton,
 } from './widgets.ts';
+
+/** Today's look: every cell drawn as before the theme roles. */
+const CLASSIC = BUILT_IN_THEMES.classic;
 
 const CJK_PROJECT = '日本語プロジェクト';
 const EMOJI_AGENT = 'agent-🚀-rocket';
@@ -48,7 +52,7 @@ function renderSidebar(cols: number, rows: number, sidebar: SidebarModel, focus:
   const layout = computeLayout(cols, rows);
   const frame = createFrame(cols, rows);
   const view = sidebarView(sidebar, layout.sidebar.rows, nav);
-  drawSidebar(frame, layout.sidebar, view, { focus, footer: '[master] keys go to the master' });
+  drawSidebar(frame, layout.sidebar, view, { focus, footer: '[master] keys go to the master', theme: CLASSIC });
   const lines = Array.from({ length: rows }, (_, y) => rowText(frame, y, 0, layout.sidebar.cols));
   return { frame, layout, view, lines };
 }
@@ -182,7 +186,7 @@ function renderTabBar(cols: number, rows: number, state: TabBarState = TABS, slo
   const layout = computeLayout(cols, rows);
   const frame = createFrame(cols, rows);
   const bar = tabBarView(withModeMarks(buildTabBarModel(state, new Map([['w3', 'permission_prompt' as const]])), (id) => typing.has(id)), layout.tabBar.cols, 'Ctrl-q: quit');
-  drawTabBar(frame, layout.tabBar, bar, { slotFocused, error: null });
+  drawTabBar(frame, layout.tabBar, bar, { slotFocused, error: null, theme: CLASSIC });
   const lines = [0, 1, 2].map((y) => rowText(frame, y, layout.tabBar.x, layout.tabBar.cols));
   return { frame, layout, bar, lines };
 }
@@ -232,10 +236,10 @@ describe('drawTabBar', () => {
   it('shows the error on the bottom row and a notice without tabs', () => {
     const layout = computeLayout(80, 24);
     const frame = createFrame(80, 24);
-    drawTabBar(frame, layout.tabBar, tabBarView(buildTabBarModel(TABS), 46), { slotFocused: true, error: 'The master tab stays open.' });
+    drawTabBar(frame, layout.tabBar, tabBarView(buildTabBarModel(TABS), 46), { slotFocused: true, error: 'The master tab stays open.', theme: CLASSIC });
     expect(rowText(frame, 2, 34, 46).trimEnd()).toBe('The master tab stays open.');
     const empty = createFrame(80, 24);
-    drawTabBar(empty, layout.tabBar, tabBarView(buildTabBarModel({ activeProject: null, projects: [] }), 46, 'x'), { slotFocused: true, error: null });
+    drawTabBar(empty, layout.tabBar, tabBarView(buildTabBarModel({ activeProject: null, projects: [] }), 46, 'x'), { slotFocused: true, error: null, theme: CLASSIC });
     expect(rowText(empty, 1, 34, 46)).toContain('No project is open');
   });
 });
@@ -248,7 +252,7 @@ describe('tab bar buttons and the explorer tab', () => {
       const layout = computeLayout(cols, rows);
       const frame = createFrame(cols, rows);
       const bar = tabBarView(buildTabBarModel(TABS), layout.tabBar.cols, 'Ctrl-q: quit', BUTTONS);
-      drawTabBar(frame, layout.tabBar, bar, { slotFocused: true, error: null });
+      drawTabBar(frame, layout.tabBar, bar, { slotFocused: true, error: null, theme: CLASSIC });
       const line = rowText(frame, 1, layout.tabBar.x, layout.tabBar.cols);
       expect(line.endsWith(' tasks ! 2 Ctrl-q: quit')).toBe(true);
       expect(stringWidth(line)).toBe(layout.tabBar.cols);
@@ -347,10 +351,10 @@ describe('full-style snapshot at 80x24', () => {
   function draw(sidebar: SidebarModel, focus: 'projects' | 'agents' | null, nav: SidebarNav, activeTab: string, slotFocused: boolean, error: string | null, explorer = false): string[] {
     const layout = computeLayout(80, 24);
     const frame = createFrame(80, 24);
-    drawSidebar(frame, layout.sidebar, sidebarView(sidebar, layout.sidebar.rows, nav), { focus, footer: '[sidebar] ↑↓ move · Enter open' });
+    drawSidebar(frame, layout.sidebar, sidebarView(sidebar, layout.sidebar.rows, nav), { focus, footer: '[sidebar] ↑↓ move · Enter open', theme: CLASSIC });
     const tabs = buildTabBarModel({ activeProject: 'p1', projects: [{ projectId: 'p1', tabs: tabAgents, active: activeTab }] }, tabAttention);
     const marked = withModeMarks(tabs, (id) => id === 'a-question');
-    drawTabBar(frame, layout.tabBar, tabBarView(explorer ? withExplorerTab(marked) : marked, layout.tabBar.cols, 'Ctrl-q: quit', BUTTONS), { slotFocused, error });
+    drawTabBar(frame, layout.tabBar, tabBarView(explorer ? withExplorerTab(marked) : marked, layout.tabBar.cols, 'Ctrl-q: quit', BUTTONS), { slotFocused, error, theme: CLASSIC });
     return serialiseFrame(frame);
   }
 

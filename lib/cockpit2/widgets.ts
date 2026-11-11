@@ -9,8 +9,8 @@
  *
  * The focused region has a visible marker that does not rely on colour: the
  * focused sidebar box has its title reversed and its cursor row reversed; with
- * the slot focused the active tab's label is reversed. Colour (cyan borders)
- * comes on top.
+ * the slot focused the active tab's label is reversed. Colour
+ * comes on top, from the theme's roles (lib/cockpit2/theme.ts).
  *
  * Sidebar navigation (`navigateSidebar`) and clicks (`sidebarClick`, plus
  * `tabBarClickTarget` from the model) are pure: they return the new cursor and
@@ -19,39 +19,18 @@
 import { stringWidth } from '../cellWidth.ts';
 import {
   BOX_CHROME, agentBodyLines, agentRowParts, computeSidebarLayout, fitRow, fitText, projectBodyLines, sidebarRowTarget, statusLines,
-  type AttentionKind, type SidebarLayout, type SidebarModel, type SidebarProjectState,
+  type SidebarLayout, type SidebarModel,
 } from '../tui/sidebar.ts';
 import { layoutTabBar, tabBarRows, type TabBarLayout, type TabBarModel, type TabBarSegment } from '../tui/tabBarModel.ts';
 import type { SidebarKey } from './dispatch.ts';
-import { DEFAULT_STYLE, drawText, type Frame, type Region } from './frame.ts';
-import type { CellStyle, Color } from './screen.ts';
+import { drawText, type Frame, type Region } from './frame.ts';
+import type { CellStyle } from './screen.ts';
+import { attentionRole, badgeRole, projectStateRole, styleOf, type Theme, type ThemeRole } from './theme.ts';
 
 // ── styles ───────────────────────────────────────────────────────────────────
 
-const palette = (index: number): Color => ({ type: 'palette', index });
-const RED = palette(1);
-const GREEN = palette(2);
-const YELLOW = palette(3);
-const MAGENTA = palette(5);
-const CYAN = palette(6);
-const style = (over: Partial<CellStyle>): CellStyle => ({ ...DEFAULT_STYLE, ...over });
-
-const PLAIN = DEFAULT_STYLE;
-const MUTED = style({ dim: true });
-const BOLD = style({ bold: true });
-const FOCUS_BORDER = style({ bold: true, fg: CYAN });
-const FOCUS_TITLE = style({ bold: true, inverse: true, fg: CYAN });
-const ERROR = style({ bold: true, fg: RED });
-const ATTENTION_BUTTON = style({ bold: true, inverse: true, fg: YELLOW });
-const EXPLORER_BUTTON = style({ underline: true, fg: CYAN });
-
-const STATE_COLOR: Readonly<Record<SidebarProjectState, Color>> = {
-  running: GREEN, connecting: CYAN, stopped: YELLOW, stale: RED, incompatible: RED,
-};
-/** Badge colours, as the Ink sidebar has them: each kind is told apart by text and colour. */
-export const ATTENTION_COLOR: Readonly<Record<AttentionKind, Color>> = {
-  permission_prompt: RED, question: YELLOW, stalled: MAGENTA, no_progress: CYAN,
-};
+/** A role's style with `over` on top: an attribute a widget adds to a role (a count's bold, the active tab's inverse). */
+const roleWith = (theme: Theme, role: ThemeRole, over: Partial<CellStyle> = {}): CellStyle => ({ ...styleOf(theme, role), ...over });
 
 /** The mark before an agent tab's name in typing mode, and in view mode. */
 export const TYPING_MARK = '✎';
@@ -69,7 +48,7 @@ function drawRuns(frame: Frame, x: number, y: number, runs: readonly Run[], maxC
   return col;
 }
 
-/** A run's style with `over` applied (the cursor row's inverse, a stale row's dim). */
+/** A run's style with `over` applied (the cursor row's role, a stale row's dim). */
 const withStyle = (runs: readonly Run[], over: Partial<CellStyle>): Run[] => runs.map(([text, runStyle]) => [text, { ...runStyle, ...over }]);
 
 // ── sidebar ──────────────────────────────────────────────────────────────────
@@ -165,6 +144,8 @@ export interface SidebarDrawOptions {
   focus: SidebarBox | null;
   /** The last row: the focus or the tab's mode and its keys. */
   footer: string;
+  /** The styles the sidebar is drawn in. */
+  theme: Theme;
 }
 
 /**
@@ -174,6 +155,12 @@ export interface SidebarDrawOptions {
 export function drawSidebar(frame: Frame, region: Region, view: SidebarView, options: SidebarDrawOptions): void {
   if (region.cols < 4 || region.rows < 1) return;
   const { model, layout } = view;
+  const { theme } = options;
+  const role = (name: ThemeRole) => styleOf(theme, name);
+  const PLAIN = role('text.primary');
+  const MUTED = role('text.muted');
+  // A count of agents needing a human: the attention status colour, bold.
+  const COUNT = roleWith(theme, 'status.attention', { bold: true });
   const width = region.cols;
   const inner = width - 2;
   const footerY = region.y + region.rows - 1;
@@ -182,10 +169,10 @@ export function drawSidebar(frame: Frame, region: Region, view: SidebarView, opt
     if (y < footerY) drawRuns(frame, x, y, runs, cols);
   };
   const box = (top: number, body: number, title: string, focused: boolean): number => {
-    const border = focused ? FOCUS_BORDER : MUTED;
+    const border = role(focused ? 'chrome.borderFocus' : 'chrome.border');
     const label = fitText(title, Math.max(0, width - 6));
     const labelWidth = stringWidth(label);
-    line(top, [['╭─ ', border], [label, focused ? FOCUS_TITLE : BOLD], [` ${'─'.repeat(Math.max(0, width - labelWidth - 5))}╮`, border]], region.x, width);
+    line(top, [['╭─ ', border], [label, role(focused ? 'chrome.titleFocus' : 'chrome.title')], [` ${'─'.repeat(Math.max(0, width - labelWidth - 5))}╮`, border]], region.x, width);
     for (let y = top + 1; y <= top + body; y += 1) {
       line(y, [['│', border]], region.x, 1);
       line(y, [['│', border]], region.x + width - 1, 1);
@@ -197,11 +184,11 @@ export function drawSidebar(frame: Frame, region: Region, view: SidebarView, opt
   // Status: the active project's coordinator and workers, how many agents need a human, and a notice.
   const { coordinator, workers, attention } = model.status;
   let y = box(region.y, statusLines(model), 'Status', false);
-  line(y, [['coordinator ', PLAIN], coordinator ? [coordinator, style({ fg: STATE_COLOR[coordinator] })] : ['-', MUTED]]);
+  line(y, [['coordinator ', PLAIN], coordinator ? [coordinator, role(projectStateRole(coordinator))] : ['-', MUTED]]);
   const need = attention > 0 ? `${attention} need${attention === 1 ? 's' : ''} you` : '';
   const counts = fitRow(`workers ${workers ? `${workers.used}/${workers.total}` : '-'}`, need, inner);
-  line(y + 1, [[counts.left, PLAIN], [counts.gap, PLAIN], [counts.right, style({ bold: true, fg: YELLOW })]]);
-  if (model.notice) line(y + 2, [[model.notice, style({ fg: YELLOW })]]);
+  line(y + 1, [[counts.left, PLAIN], [counts.gap, PLAIN], [counts.right, COUNT]]);
+  if (model.notice) line(y + 2, [[model.notice, role('status.warn')]]);
 
   // Projects: `▸` marks the active one; its state and, when its agents need a human, `!N`.
   const projectsTop = region.y + BOX_CHROME + statusLines(model);
@@ -214,11 +201,11 @@ export function drawSidebar(frame: Frame, region: Region, view: SidebarView, opt
     const badge = project.attention > 0 ? ` !${project.attention}` : '';
     const row = fitRow(project.name, `${project.state}${badge}`, inner - 2);
     const right: Run[] = row.right === `${project.state}${badge}`
-      ? [[project.state, style({ fg: STATE_COLOR[project.state] })], [badge, style({ bold: true, fg: YELLOW })]]
+      ? [[project.state, role(projectStateRole(project.state))], [badge, COUNT]]
       : [[row.right, PLAIN]];
-    const runs: Run[] = [[`${project.active ? '▸ ' : '  '}${row.left}`, project.active ? BOLD : PLAIN], [row.gap, PLAIN], ...right];
+    const runs: Run[] = [[`${project.active ? '▸ ' : '  '}${row.left}`, project.active ? role('text.accent') : PLAIN], [row.gap, PLAIN], ...right];
     const cursor = options.focus === 'projects' && index === view.projectIndex;
-    line(y + offset, cursor ? withStyle(runs, { inverse: true }) : runs);
+    line(y + offset, cursor ? withStyle(runs, theme.roles['row.cursor']) : runs);
   }
   const hiddenProjects = model.projects.length - layout.projectCount;
   if (hiddenProjects > 0) line(y + Math.max(1, layout.projectCount), [[`+${hiddenProjects} more`, MUTED]]);
@@ -235,19 +222,19 @@ export function drawSidebar(frame: Frame, region: Region, view: SidebarView, opt
     const parts = agentRowParts(agent, inner);
     const cursor = options.focus === 'agents' && index === view.agentIndex;
     const tag: Run = agent.attention
-      ? [parts.tag, style({ bold: true, inverse: !cursor, fg: ATTENTION_COLOR[agent.attention] })]
+      ? [parts.tag, role(badgeRole(attentionRole(agent.attention)))]
       : [parts.tag, cursor ? PLAIN : MUTED];
-    let first: Run[] = [[parts.name, BOLD], [parts.gap, PLAIN], tag, [parts.elapsed, cursor ? PLAIN : MUTED]];
-    if (cursor) first = withStyle(first, { inverse: true });
+    let first: Run[] = [[parts.name, role('text.accent')], [parts.gap, PLAIN], tag, [parts.elapsed, cursor ? PLAIN : MUTED]];
+    if (cursor) first = withStyle(first, theme.roles['row.cursor']);
     else if (model.agentsStale) first = withStyle(first, { dim: true });
-    const detailStyle = agent.attention ? style({ fg: ATTENTION_COLOR[agent.attention] }) : MUTED;
+    const detailStyle = agent.attention ? role(attentionRole(agent.attention)) : MUTED;
     line(y + 2 * offset, first);
     line(y + 2 * offset + 1, [[`  ${agent.detail ?? ''}`, detailStyle]]);
   });
   const hiddenAgents = model.agents.length - layout.agents.length;
   if (hiddenAgents > 0) line(y + 2 * layout.agents.length, [[`+${hiddenAgents} more`, MUTED]]);
 
-  drawText(frame, region.x, footerY, options.footer, MUTED, width);
+  drawText(frame, region.x, footerY, options.footer, role('chrome.meta'), width);
 }
 
 // ── tab bar ──────────────────────────────────────────────────────────────────
@@ -318,18 +305,20 @@ export interface TabBarDrawOptions {
   slotFocused: boolean;
   /** What the last action reported, or a failed save; takes the bottom row. */
   error: string | null;
+  /** The styles the tab bar is drawn in. */
+  theme: Theme;
 }
 
-function segmentStyle(segment: TabBarSegment, model: TabBarModel, slotFocused: boolean): CellStyle {
+function segmentStyle(segment: TabBarSegment, model: TabBarModel, slotFocused: boolean, theme: Theme): CellStyle {
   const tab = segment.tab === undefined ? null : model.tabs[segment.tab];
   const focused = Boolean(tab?.active && slotFocused);
   switch (segment.kind) {
-    case 'border': return focused ? FOCUS_BORDER : MUTED;
-    case 'text': return tab?.active ? style({ bold: true, inverse: focused }) : PLAIN;
-    case 'badge': return style({ bold: true, fg: tab?.attention ? ATTENTION_COLOR[tab.attention] : YELLOW });
-    case 'close': return style({ fg: RED });
-    case 'error': return ERROR;
-    case 'marker': case 'rule': case 'notice': return MUTED;
+    case 'border': return styleOf(theme, focused ? 'chrome.borderFocus' : 'chrome.border');
+    case 'text': return tab?.active ? roleWith(theme, 'text.accent', { inverse: focused }) : styleOf(theme, 'text.primary');
+    case 'badge': return roleWith(theme, tab?.attention ? attentionRole(tab.attention) : 'status.attention', { bold: true });
+    case 'close': return styleOf(theme, 'tab.close');
+    case 'error': return styleOf(theme, 'error');
+    case 'marker': case 'rule': case 'notice': return styleOf(theme, 'chrome.meta');
   }
 }
 
@@ -344,15 +333,15 @@ export function drawTabBar(frame: Frame, region: Region, view: TabBarView, optio
   const [top, middle, bottom] = tabBarRows(model, layout, region.cols, options.error);
   const rows = region.rows >= 3 ? [top, middle, bottom] : region.rows === 2 ? [middle, bottom] : [middle];
   rows.forEach((segments, offset) => {
-    drawRuns(frame, region.x, region.y + offset, segments.map((segment): Run => [segment.text, segmentStyle(segment, model, options.slotFocused)]), region.cols);
+    drawRuns(frame, region.x, region.y + offset, segments.map((segment): Run => [segment.text, segmentStyle(segment, model, options.slotFocused, options.theme)]), region.cols);
   });
   if (model.notice) return;
   const y = region.y + (region.rows >= 3 ? 1 : 0);
   for (const button of view.buttons) {
     const width = stringWidth(button.text);
-    drawText(frame, region.x + button.x, y, button.text, button.action === 'attention' ? ATTENTION_BUTTON : EXPLORER_BUTTON, width);
+    drawText(frame, region.x + button.x, y, button.text, styleOf(options.theme, button.action === 'attention' ? 'button.attention' : 'button'), width);
   }
   if (!view.hint) return;
   const hintWidth = stringWidth(view.hint);
-  drawText(frame, region.x + region.cols - hintWidth, y, view.hint, MUTED, hintWidth);
+  drawText(frame, region.x + region.cols - hintWidth, y, view.hint, styleOf(options.theme, 'chrome.meta'), hintWidth);
 }
