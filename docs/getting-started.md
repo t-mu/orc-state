@@ -70,7 +70,7 @@ The sidebar and the tab bar only show a question. Answer it through the master, 
 - From a shell inside orc's tmux sessions, such as the master's, `orc start-session` opens no second cockpit: it adds the project to the running cockpit, which shows it.
 - If the master process has died, its tab says so with the command that starts it; `orc start-session` starts it again. A Claude master resumes its recorded conversation (`--resume`); otherwise it starts fresh.
 - `orc start-session --no-cockpit` attaches straight to the master instead (`Ctrl-b d` detaches). It also works from inside your own tmux session, as a nested client.
-- A cockpit that hangs: run `orc start-session` from another terminal, or see [recovery.md → Cockpit](recovery.md#cockpit). `orc kill-all` stops the master and revokes its credential.
+- A cockpit that hangs: `orc start-session` from another terminal moves it there while the hung one still handles its wake-up signal; a truly stuck one does not exit, so end it with `kill <pid>` (the pid is in its lock file). See [recovery.md → Cockpit](recovery.md#cockpit). `orc kill-all` stops the master and revokes its credential.
 
 Providers come from the project settings (`orc project config list`); a task's `required_provider` overrides the worker provider.
 

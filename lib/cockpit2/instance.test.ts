@@ -86,6 +86,26 @@ describe('claimInstance', () => {
     expect(parseHolder(readLockFile(lockPath))).toEqual(B);
   });
 
+  it('keeps an exit request another launch wrote while this one took the lock over', async () => {
+    const C: InstanceHolder = { pid: 1003, start: 'proc:333' };
+    running.add(key(C));
+    const heldByC = await claim(C);
+    // C exits and A wins; B, seeing A as the holder, writes its request before A's claim settles.
+    const claimed = await claim(A, () => {
+      heldByC.release();
+      writeFileSync(exitRequestPath(lockPath), `${JSON.stringify(B)}\n`);
+    });
+    expect(claimed.replaced).toEqual(C);
+    expect(parseHolder(readLockFile(lockPath))).toEqual(A);
+    // B's wake-up of A is an exit request, not a reload.
+    expect(exitRequested(lockPath, A, isRunning)).toBe(true);
+    // A request naming a launch that is gone is dropped.
+    claimed.release();
+    running.delete(key(B));
+    await claim(A);
+    expect(existsSync(exitRequestPath(lockPath))).toBe(false);
+  });
+
   it('fails when the running cockpit does not exit in time, naming its pid and how to end it', async () => {
     await claim(A);
     await expect(claim(B, () => {}, 100)).rejects.toThrow(/pid 1001 did not exit within 0.1 s .*kill 1001 \(docs\/recovery\.md\)/);

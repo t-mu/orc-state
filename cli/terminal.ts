@@ -51,7 +51,7 @@ const cleanup = async (code = 0) => {
   closing = true;
   abort.abort();
   if (renewTimer) clearInterval(renewTimer);
-  // A hung-up terminal (its cockpit tab closed) cannot leave raw mode; the lease is released all the same.
+  // A hung-up terminal (its window closed) cannot leave raw mode; the lease is released all the same.
   try { if (raw) process.stdin.setRawMode(false); } catch { /* terminal gone */ }
   process.stdin.pause();
   try { await pending; if (leaseId) await client.releaseTerminal(terminalId, leaseId); }

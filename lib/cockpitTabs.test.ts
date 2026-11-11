@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  EMPTY_COCKPIT_STATE, closeTab, closedTabs, cycleProject, cycleTab, nextAttention, openAgent, parseTabs, reconcileTabs,
-  selectProject, selectTab, serializeTabs, showProject, showableAttention, shownTab, type CockpitTabState, type TabTransition,
+  EMPTY_COCKPIT_STATE, closeTab, closedTabs, cycleProject, cycleTab, nextAttention, openAgent, parseTabs,
+  selectProject, selectTab, showProject, shownTab, type CockpitTabState, type TabTransition,
 } from './cockpitTabs.ts';
 
 /** p-1 active, showing w2 of [w1, w2, w3]; p-2 on its master tab with one agent tab. */
@@ -206,74 +206,10 @@ describe('nextAttention', () => {
   });
 });
 
-describe('showableAttention', () => {
-  it('keeps agents, and masters only of projects with a master tab open', () => {
-    const open = [{ projectId: 'p-1', agentId: null }, { projectId: 'p-3', agentId: 'z1' }];
-    expect(showableAttention([
-      { projectId: 'p-1', agentId: 'master', master: true },
-      { projectId: 'p-2', agentId: 'master', master: true },
-      { projectId: 'p-3', agentId: 'master', master: true },
-      { projectId: 'p-4', agentId: 'q1' },
-    ], open)).toEqual([{ projectId: 'p-1', agentId: 'master', master: true }, { projectId: 'p-4', agentId: 'q1' }]);
-  });
-});
-
-describe('reconcileTabs', () => {
-  const windows = [
-    { projectId: 'p-1', agentId: null },
-    { projectId: 'p-1', agentId: 'w1' },
-    { projectId: 'p-1', agentId: 'w2' },
-    { projectId: 'p-1', agentId: 'w3' },
-    { projectId: 'p-2', agentId: null },
-    { projectId: 'p-2', agentId: 'x1' },
-  ];
-
-  it('keeps a state that matches the windows', () => {
-    expect(reconcileTabs(STATE, windows, { projectId: 'p-1', agentId: 'w2' })).toEqual(STATE);
-  });
-
-  it('rebuilds a missing state from the windows, in window order, showing the current window', () => {
-    expect(reconcileTabs(EMPTY_COCKPIT_STATE, windows, { projectId: 'p-2', agentId: 'x1' })).toEqual({
-      activeProject: 'p-2',
-      projects: [
-        { projectId: 'p-1', tabs: ['w1', 'w2', 'w3'], active: null },
-        { projectId: 'p-2', tabs: ['x1'], active: 'x1' },
-      ],
-    });
-    expect(reconcileTabs(EMPTY_COCKPIT_STATE, [], null)).toEqual(EMPTY_COCKPIT_STATE);
-  });
-
-  it('drops tabs whose window closed, falling back to the master tab, and adds windows it does not list', () => {
-    const open = windows.filter((tab) => tab.agentId !== 'w2').concat({ projectId: 'p-1', agentId: 'w4' });
-    expect(reconcileTabs(STATE, open, null).projects[0]).toEqual({ projectId: 'p-1', tabs: ['w1', 'w3', 'w4'], active: null });
-  });
-
-  it('drops a project with no window left, moving to the first remaining one', () => {
-    const open = windows.filter((tab) => tab.projectId !== 'p-1');
-    expect(reconcileTabs(STATE, open, null)).toEqual({ activeProject: 'p-2', projects: [STATE.projects[1]] });
-  });
-
-  it('follows a window changed by a click or a plain tmux key', () => {
-    const state = reconcileTabs(STATE, windows, { projectId: 'p-2', agentId: null });
-    expect(state.activeProject).toBe('p-2');
-    expect(state.projects[0].active).toBe('w2');
-  });
-
-  it('ignores a current window that is no tab', () => {
-    expect(reconcileTabs(STATE, windows, { projectId: 'p-7', agentId: null })).toEqual(STATE);
-  });
-
-  it('keeps a project that has only agent tabs (opened before its master tab)', () => {
-    expect(reconcileTabs(EMPTY_COCKPIT_STATE, [{ projectId: 'p-3', agentId: 'z1' }], null)).toEqual({
-      activeProject: 'p-3', projects: [{ projectId: 'p-3', tabs: ['z1'], active: null }],
-    });
-  });
-});
-
-describe('serializeTabs / parseTabs', () => {
-  it('round-trips a state', () => {
-    expect(parseTabs(serializeTabs(STATE))).toEqual(STATE);
-    expect(parseTabs(serializeTabs(EMPTY_COCKPIT_STATE))).toEqual(EMPTY_COCKPIT_STATE);
+describe('parseTabs', () => {
+  it('reads a stored state', () => {
+    expect(parseTabs(JSON.stringify({ v: 1, ...STATE }))).toEqual(STATE);
+    expect(parseTabs(JSON.stringify({ v: 1, ...EMPTY_COCKPIT_STATE }))).toEqual(EMPTY_COCKPIT_STATE);
   });
 
   it.each([

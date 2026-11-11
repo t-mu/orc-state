@@ -174,48 +174,8 @@ export function nextAttention(state: CockpitTabState, waiting: AttentionAgent[])
   return ok(withProject(state, { ...project, active: null }), `Switched to ${next.projectId}'s master.`);
 }
 
-/**
- * The waiting agents the cockpit can show: a master only when its project has
- * a master tab open (an agent tab opens on demand). Otherwise a waiting master
- * of a project with no tab would be picked, and refused, on every press.
- */
-export function showableAttention(waiting: AttentionAgent[], open: OpenTab[]): AttentionAgent[] {
-  return waiting.filter((agent) => !agent.master || open.some((tab) => tab.projectId === agent.projectId && tab.agentId === null));
-}
-
-/** One cockpit tab as its window shows it: a project's master tab (`agentId` null) or an agent tab. */
+/** One cockpit tab: a project's master tab (`agentId` null) or an agent tab. */
 export interface OpenTab { projectId: string; agentId: string | null }
-
-/**
- * The state made consistent with the tabs actually open (in window order):
- * tabs whose window is gone are dropped (a project with no window left
- * altogether too), open windows the state does not list are added after the
- * listed ones, an active tab that was dropped falls back to the master tab,
- * and the tab `shown` (the cockpit's current window) becomes the active one,
- * so a click or a plain tmux key that changed the window is kept. A missing or
- * unreadable stored state is rebuilt from the windows alone this way.
- */
-export function reconcileTabs(state: CockpitTabState, open: OpenTab[], shown: OpenTab | null): CockpitTabState {
-  const order: string[] = [];
-  for (const project of [...state.projects.map((entry) => entry.projectId), ...open.map((tab) => tab.projectId)]) {
-    if (open.some((tab) => tab.projectId === project) && !order.includes(project)) order.push(project);
-  }
-  const projects = order.map((projectId): ProjectTabs => {
-    const stored = findProject(state, projectId);
-    const windows = open.filter((tab) => tab.projectId === projectId && tab.agentId !== null).map((tab) => tab.agentId as string);
-    const tabs = [...(stored?.tabs ?? []).filter((agentId) => windows.includes(agentId)), ...windows.filter((agentId) => !stored?.tabs.includes(agentId))];
-    const uniqueTabs = tabs.filter((agentId, index) => tabs.indexOf(agentId) === index);
-    const active = stored?.active != null && uniqueTabs.includes(stored.active) ? stored.active : null;
-    return { projectId, tabs: uniqueTabs, active };
-  });
-  let activeProjectId = state.activeProject && order.includes(state.activeProject) ? state.activeProject : (order[0] ?? null);
-  if (shown && order.includes(shown.projectId)) {
-    activeProjectId = shown.projectId;
-    const project = projects.find((entry) => entry.projectId === shown.projectId)!;
-    if (shown.agentId === null || project.tabs.includes(shown.agentId)) project.active = shown.agentId;
-  }
-  return { activeProject: activeProjectId, projects };
-}
 
 /** Agent tabs open in `before` and gone in `after`: the windows to close. */
 export function closedTabs(before: CockpitTabState, after: CockpitTabState): OpenTab[] {
@@ -231,12 +191,7 @@ export function shownTab(state: CockpitTabState): OpenTab | null {
   return project ? { projectId: project.projectId, agentId: project.active } : null;
 }
 
-/** The state as stored in the cockpit server option. */
-export function serializeTabs(state: CockpitTabState): string {
-  return JSON.stringify({ v: 1, ...state });
-}
-
-/** A stored state, or null when it is missing or not a valid one (then it is rebuilt from the windows). */
+/** A stored state (the view-state file's tabs, viewState.ts), or null when it is missing or not a valid one. */
 export function parseTabs(raw: string | null | undefined): CockpitTabState | null {
   if (!raw) return null;
   let parsed: unknown;
