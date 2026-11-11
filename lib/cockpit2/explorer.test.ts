@@ -86,8 +86,17 @@ describe.skipIf(!hasTmux)('tmuxExplorerHost (private tmux server)', () => {
   afterAll(() => { tmux('kill-server'); });
 
   it('starts the explorer in a sized session without a status line, replaces a leftover one, and stops it', async () => {
-    const host = tmuxExplorerHost({ tmuxBinary: 'tmux', socket, command: (projectId) => `echo explorer-${projectId}; exec cat` });
-    const target = await host.start('demo', { cols: 50, rows: 12 });
+    const host = tmuxExplorerHost({ tmuxBinary: 'tmux', socket, command: (projectId) => `unset ORC_PROJECT_ID; echo explorer-${projectId}; exec cat` });
+    // The server takes its default shell from $SHELL; a non-POSIX one must not break the POSIX script.
+    const shell = process.env.SHELL;
+    process.env.SHELL = '/bin/false';
+    let target;
+    try {
+      target = await host.start('demo', { cols: 50, rows: 12 });
+    } finally {
+      if (shell === undefined) delete process.env.SHELL;
+      else process.env.SHELL = shell;
+    }
     expect(target).toEqual({ socket, session: 'explorer-demo' });
     expect(tmux('display-message', '-p', '-t', '=explorer-demo:', '#{pane_width}x#{pane_height} #{status}').stdout.trim()).toBe('50x12 off');
     const until = Date.now() + 5_000;

@@ -76,7 +76,8 @@ export function tmuxExplorerHost(options: TmuxExplorerHostOptions): ExplorerHost
       await tmux(['kill-session', '-t', `=${session}`]).catch(() => { /* none left */ });
       await tmux([
         'new-session', '-d', '-s', session, '-x', String(Math.max(1, size.cols)), '-y', String(Math.max(1, size.rows)),
-        explorerScript(options.command(projectId)),
+        // Run by /bin/sh, not the server's default shell (the user's $SHELL, which may not be POSIX).
+        '/bin/sh', '-c', explorerScript(options.command(projectId)),
         // The session new-session made is the current one for the commands after it.
         ';', 'set-option', 'status', 'off',
       ]);
