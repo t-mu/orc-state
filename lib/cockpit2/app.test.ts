@@ -19,9 +19,9 @@ import { DEFAULT_VIEW_STATE, type TmuxTarget, type ViewState, type ViewStateStor
 const ESC = '\x1b';
 const F12 = `${ESC}[24~`;
 
-async function waitFor(check: () => boolean, ms = 5_000): Promise<void> {
+async function waitFor(check: () => boolean | Promise<boolean>, ms = 5_000): Promise<void> {
   const until = Date.now() + ms;
-  while (!check()) {
+  while (!(await check())) {
     if (Date.now() > until) throw new Error('timed out');
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
@@ -323,9 +323,13 @@ async function waitForSlotText(terminal: FakeTerminal, part: string): Promise<vo
 const apps: App[] = [];
 afterEach(() => { for (const app of apps.splice(0)) app.quit(); });
 
-interface StartOptions { keys?: CockpitKeys; projects?: ProjectWatchState[]; store?: MemoryStore; projectId?: string }
+interface StartOptions {
+  keys?: CockpitKeys; projects?: ProjectWatchState[]; store?: MemoryStore; projectId?: string;
+  /** Adjusts each fake client as it is created (before its first mode query). */
+  setup?: (fake: FakeClient) => void;
+}
 
-function start({ keys = DEFAULT_COCKPIT_KEYS, projects = [projectState('demo')], store = new MemoryStore(), projectId = 'demo' }: StartOptions = {}) {
+function start({ keys = DEFAULT_COCKPIT_KEYS, projects = [projectState('demo')], store = new MemoryStore(), projectId = 'demo', setup }: StartOptions = {}) {
   const terminal = new FakeTerminal();
   const watcher = new FakeWatcher(projects);
   const clients: FakeClient[] = [];
@@ -334,6 +338,7 @@ function start({ keys = DEFAULT_COCKPIT_KEYS, projects = [projectState('demo')],
     connect: (target, { ignoreSize }) => {
       const fake = new FakeClient(target, ignoreSize, `%${clients.length + 1}`);
       fake.lines = [`$ hello from ${target.session}`];
+      setup?.(fake);
       clients.push(fake);
       return fake as unknown as PaneClient;
     },
@@ -968,6 +973,112 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
       const { slot } = computeLayout(cols, rows);
       expect(slot).toEqual({ x: SIDEBAR_COLS, y: TAB_BAR_ROWS, cols: cols - SIDEBAR_COLS, rows: rows - TAB_BAR_ROWS });
     }
+  });
+});
+
+// ── pane mouse routing, scrollback and selection ─────────────────────────────
+
+/** An SGR report with button code `code` at frame cell (x, y). */
+const sgr = (code: number, x: number, y: number, release = false) => `${ESC}[<${code};${x + 1};${y + 1}${release ? 'm' : 'M'}`;
+const SGR_ANY: Partial<PaneReport> = { mouseAny: true, mouseSgr: true };
+/** The clipboard texts the cockpit sent with OSC 52. */
+const copied = (terminal: FakeTerminal) => [...terminal.writes.join('').matchAll(/\x1b\]52;c;([A-Za-z0-9+/=]*)\x07/g)]
+  .map((match) => Buffer.from(match[1], 'base64').toString('utf8'));
+
+describe('runApp pane mouse (fake tmux clients)', () => {
+  // The slot at 80x24 starts at frame cell (34, 3).
+  const SX = 34;
+  const SY = 3;
+
+  it('forwards clicks, drags and the wheel pane-relative to an app with SGR any-motion mouse, motion coalesced per frame', async () => {
+    const { terminal, client } = start({ setup: (fake) => { fake.modes = SGR_ANY; } });
+    await attached(terminal);
+    terminal.type(sgr(0, SX + 6, SY + 7));
+    terminal.type(sgr(32, SX + 7, SY + 7) + sgr(32, SX + 8, SY + 7) + sgr(32, SX + 9, SY + 8));
+    expect(client().sent).toEqual([`%1 ${ESC}[<0;7;8M`]);
+    await waitFor(() => client().sent.length === 2);
+    expect(client().sent[1]).toBe(`%1 ${ESC}[<32;10;9M`);
+    // A drag that leaves the slot stays with the pane, clamped to its edge; the release flushes waiting motion first.
+    terminal.type(sgr(32, 2, SY + 8) + sgr(0, 2, SY + 8, true));
+    expect(client().sent.slice(2)).toEqual([`%1 ${ESC}[<32;1;9M`, `%1 ${ESC}[<0;1;9m`]);
+    terminal.type(sgr(65, SX, SY));
+    expect(client().sent.at(-1)).toBe(`%1 ${ESC}[<65;1;1M`);
+    // Plain motion over the pane: the app asked for all motion.
+    terminal.type(sgr(35, SX + 1, SY + 1));
+    await waitFor(() => client().sent.at(-1) === `%1 ${ESC}[<35;2;2M`);
+    await sleep(30);
+    expect(copied(terminal)).toEqual([]);
+  });
+
+  it('re-encodes for the app\'s encoding and leaves motion out when its mode does not want it', async () => {
+    const { terminal, client } = start({ setup: (fake) => { fake.modes = { mouseAny: true, mouseStandard: true }; } });
+    await attached(terminal);
+    terminal.type(sgr(0, SX, SY) + sgr(32, SX + 1, SY) + sgr(0, SX + 1, SY, true));
+    await sleep(40);
+    expect(client().sent).toEqual([`%1 ${ESC}[M !!`, `%1 ${ESC}[M#"!`]);
+  });
+
+  it('scrolls the cockpit scrollback with the wheel when the app did not ask for the mouse, history from before the attach included; a key returns to live', async () => {
+    const { terminal, client } = start({ setup: (fake) => { fake.lines = Array.from({ length: 30 }, (_, i) => `line ${i}`); } });
+    await waitForSlotLine(terminal, 'line 29');
+    expect((await slotRows(terminal))[0]).toBe('line 9');
+    terminal.type(sgr(64, SX + 3, SY + 3));
+    await waitForSlotLine(terminal, 'line 6');
+    expect((await slotRows(terminal))[0]).toBe('line 6');
+    terminal.type(sgr(64, SX + 3, SY + 3) + sgr(64, SX + 3, SY + 3) + sgr(64, SX + 3, SY + 3));
+    await waitForSlotLine(terminal, 'line 0');
+    terminal.type(sgr(65, SX + 3, SY + 3));
+    await waitFor(async () => (await slotRows(terminal))[0] === 'line 3');
+    expect(client().sent).toEqual([]);
+    terminal.type('a');
+    await waitFor(async () => (await slotRows(terminal))[0] === 'line 9');
+    expect(client().sent).toEqual(['%1 a']);
+  });
+
+  it('selects text by drag with a highlight and copies exactly the selection with OSC 52 on release', async () => {
+    const { terminal, client } = start({ setup: (fake) => { fake.lines = ['$ echo 日本語', 'second line']; } });
+    await waitForSlotLine(terminal, '$ echo 日本語');
+    // From "echo" to the right half of 語, then down to "second".
+    terminal.type(sgr(0, SX + 2, SY) + sgr(32, SX + 12, SY));
+    await waitFor(async () => (await shown(terminal)).cell(SX + 2, SY)?.style.inverse === true);
+    expect((await shown(terminal)).cell(SX + 1, SY)?.style.inverse).toBe(false);
+    terminal.type(sgr(32, SX + 5, SY + 1) + sgr(0, SX + 5, SY + 1, true));
+    await waitFor(() => copied(terminal).length === 1);
+    expect(copied(terminal)).toEqual(['echo 日本語\nsecond']);
+    expect(client().sent).toEqual([]);
+    // A click without a drag copies nothing and clears the highlight.
+    terminal.type(sgr(0, SX + 2, SY) + sgr(0, SX + 2, SY, true));
+    await waitFor(async () => (await shown(terminal)).cell(SX + 2, SY)?.style.inverse === false);
+    expect(copied(terminal)).toHaveLength(1);
+  });
+
+  it('gives Shift-held events to the cockpit even when the app wants the mouse', async () => {
+    const { terminal, client } = start({ setup: (fake) => { fake.modes = SGR_ANY; } });
+    await attached(terminal);
+    terminal.type(sgr(4, SX, SY) + sgr(36, SX + 6, SY) + sgr(4, SX + 6, SY, true));
+    await waitFor(() => copied(terminal).length === 1);
+    expect(copied(terminal)).toEqual(['$ hello']);
+    terminal.type(sgr(68, SX, SY));
+    await sleep(40);
+    expect(client().sent).toEqual([]);
+  });
+
+  it('forwards no mouse event from a view-mode worker tab, and forwards once it types', async () => {
+    const { terminal, clients, app } = start({
+      projects: [projectState('demo', { workers: [{ agent_id: 'w1', ...W1_TARGET }] })],
+      setup: (fake) => { fake.modes = SGR_ANY; },
+    });
+    await attached(terminal);
+    app.apply((state) => openAgent(state, 'demo', 'w1'));
+    await waitForSlotLine(terminal, '$ hello from orc-w1');
+    const worker = clients[1];
+    terminal.type(sgr(0, SX + 1, SY) + sgr(32, SX + 2, SY) + sgr(0, SX + 2, SY, true) + sgr(64, SX, SY) + sgr(35, SX, SY));
+    await sleep(40);
+    expect(worker.sent).toEqual([]);
+    terminal.type('i');
+    await waitForSidebar(terminal, '[typing]');
+    terminal.type(sgr(0, SX + 1, SY));
+    expect(worker.sent).toEqual([`%2 ${ESC}[<0;2;1M`]);
   });
 });
 

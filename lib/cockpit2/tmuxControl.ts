@@ -162,10 +162,12 @@ export class TmuxControlClient extends EventEmitter<TmuxControlEvents> {
   /**
    * The pane's visible screen with its escape sequences (`capture-pane -p -e`), one entry per line.
    * With `saved`, the main screen tmux keeps while the pane is on the alternate screen
-   * (`capture-pane -a`; empty when there is none).
+   * (`capture-pane -a`; empty when there is none). With `history`, up to that many
+   * lines of the pane's history come first (`-S -<history>`).
    */
-  capture(paneId: string, { saved = false }: { saved?: boolean } = {}): Promise<string[]> {
-    return this.command(`capture-pane ${saved ? '-a -q ' : ''}-p -e -t ${paneId}`);
+  capture(paneId: string, { saved = false, history = 0 }: { saved?: boolean; history?: number } = {}): Promise<string[]> {
+    const start = history > 0 ? `-S -${Math.floor(history)} ` : '';
+    return this.command(`capture-pane ${saved ? '-a -q ' : ''}-p -e ${start}-t ${paneId}`);
   }
 
   async pause(paneId: string): Promise<void> {

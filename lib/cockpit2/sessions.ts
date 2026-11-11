@@ -4,7 +4,8 @@
  * A `PaneSession` attaches to one agent's tmux session and keeps a screen
  * model (screen.ts) of its pane. Most panes are attached after their program
  * started, so a shown session first runs the late-attach restore (mode query,
- * capture, restore, seed modes) and then applies live `%output`.
+ * capture with the pane's history up to the screen's scrollback, restore, seed
+ * modes) and then applies live `%output`.
  *
  * Sizing: the master tab owns its window (`owned`), which is sized to the
  * slot. Worker and scout views attach with `ignore-size` and never change the
@@ -222,8 +223,13 @@ export class PaneSession {
           if (firstSight) await this.client.pause(modes.paneId);
           return;
         }
+        const scrollback = this.options.scrollback ?? 1000;
         const main = modes.alternateOn ? await this.client.capture(modes.paneId, { saved: true }) : undefined;
-        const lines = await this.client.capture(modes.paneId);
+        // The pane's history too, so the wheel reaches output from before the attach. An
+        // alternate screen has no scrollback, and tmux keeps none under it.
+        const lines = modes.alternateOn || scrollback <= 0
+          ? await this.client.capture(modes.paneId)
+          : await this.client.capture(modes.paneId, { history: scrollback });
         // Output emitted before this point is in the capture. (Output that came in the same read
         // as the capture's reply is emitted before this continuation runs, so it is dropped too;
         // the program's next redraw covers that narrow window.)
@@ -231,7 +237,7 @@ export class PaneSession {
         this.outputMode = 'hold';
         await this.enqueue(async () => {
           if (this.closed) return;
-          if (!this.screenModel) this.screenModel = createScreen({ cols: modes.cols, rows: modes.rows, scrollback: this.options.scrollback ?? 1000 });
+          if (!this.screenModel) this.screenModel = createScreen({ cols: modes.cols, rows: modes.rows, scrollback });
           else if (this.screenModel.cols !== modes.cols || this.screenModel.rows !== modes.rows) this.screenModel.resize(modes.cols, modes.rows);
           await this.screenModel.restore(main ? { lines, main } : { lines }, { x: modes.cursorX, y: modes.cursorY });
           await this.screenModel.seedModes(modes);

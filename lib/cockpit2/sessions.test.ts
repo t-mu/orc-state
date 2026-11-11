@@ -24,10 +24,14 @@ class FakeClient extends EventEmitter {
   async paneModes() {
     this.calls.push('modes');
     if (this.gate) await this.gate;
-    return { paneId: '%7', cols: 10, rows: 3, cursorX: 0, cursorY: 0, alternateOn: false, mouseAny: false, mouseButton: false,
+    return { paneId: '%7', cols: 10, rows: 3, cursorX: 0, cursorY: 0, alternateOn: this.alternateOn, mouseAny: false, mouseButton: false,
       mouseStandard: false, mouseSgr: false, mouseUtf8: false, keypadCursor: false, cursorVisible: true };
   }
-  capture() { this.calls.push('capture'); return Promise.resolve(['hi']); }
+  /** What the next capture returns; the options of each capture. */
+  lines = ['hi'];
+  captureOptions: unknown[] = [];
+  alternateOn = false;
+  capture(_pane: string, options?: unknown) { this.calls.push('capture'); this.captureOptions.push(options); return Promise.resolve(this.lines); }
   sendBytes() { return Promise.resolve(); }
   paste() { return Promise.resolve(); }
   pause(pane: string) { this.calls.push(`pause ${pane}`); return Promise.resolve(); }
@@ -35,11 +39,12 @@ class FakeClient extends EventEmitter {
   close() { this.closed++; }
 }
 
-function sessions() {
+function sessions(setup: (fake: FakeClient) => void = () => {}, scrollback?: number) {
   const clients: FakeClient[] = [];
   const manager = new Sessions({
-    connect: (target, { ignoreSize }) => { const fake = new FakeClient(target, ignoreSize); clients.push(fake); return fake as unknown as PaneClient; },
+    connect: (target, { ignoreSize }) => { const fake = new FakeClient(target, ignoreSize); setup(fake); clients.push(fake); return fake as unknown as PaneClient; },
     onChange: () => {},
+    scrollback,
     resyncDelayMs: 1,
   });
   return { manager, clients };
@@ -121,5 +126,23 @@ describe('Sessions', () => {
     expect(clients[1].closed).toBe(1);
     expect(manager.shown()).toBeNull();
     expect(manager.keys()).toEqual([]);
+  });
+  it('loads the pane\'s history up to the scrollback on attach, so the wheel reaches output from before it', async () => {
+    const { manager, clients } = sessions((fake) => { fake.lines = ['old 1', 'old 2', 'old 3', 'row 1', 'row 2', 'row 3']; }, 50);
+    const session = manager.show('master', A, true, SIZE);
+    await waitFor(() => session.state.kind === 'live' && session.screen !== null);
+    expect(clients[0].captureOptions).toEqual([{ history: 50 }]);
+    const screen = session.screen!;
+    const row = (y: number) => screen.row(y).map((cell) => cell.text).join('').trimEnd();
+    expect([0, 1, 2].map(row)).toEqual(['row 1', 'row 2', 'row 3']);
+    screen.scroll(-3);
+    expect([0, 1, 2].map(row)).toEqual(['old 1', 'old 2', 'old 3']);
+  });
+
+  it('captures no history on the alternate screen, which has no scrollback', async () => {
+    const { manager, clients } = sessions((fake) => { fake.alternateOn = true; });
+    const session = manager.show('master', A, true, SIZE);
+    await waitFor(() => session.state.kind === 'live');
+    expect(clients[0].captureOptions).toEqual([{ saved: true }, undefined]);
   });
 });

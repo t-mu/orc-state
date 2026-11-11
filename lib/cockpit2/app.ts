@@ -1,5 +1,5 @@
 /**
- * lib/cockpit2/app.ts — the cockpit2 app (Plan 6 Steps 6 to 9).
+ * lib/cockpit2/app.ts — the cockpit2 app (Plan 6 Steps 6 to 10).
  *
  * Draws the whole terminal: a sidebar (left, fixed width), a tab bar (top
  * right, fixed height) and the slot, which shows the active tab: a project's
@@ -29,8 +29,17 @@
  * (F10 by default) or the prefix then `o` focus the sidebar, where arrows (or
  * j/k), Tab, Enter and Esc navigate, open and return to the pane. Clicks on a
  * sidebar row open that project or agent, on a tab show it, on a tab's close
- * marker close it (only the view: the agent keeps running). Pane mouse routing
- * comes with Step 10, the explorer and attention keys with Step 11.
+ * marker close it (only the view: the agent keeps running).
+ *
+ * Mouse events in the slot (mouse.ts `routeSlotMouse`) go to the pane's app
+ * when its mouse mode wants them, re-encoded pane-relative in its encoding,
+ * motion at most once per frame. A view-only agent tab forwards nothing, and
+ * Shift held always gives the cockpit the event. The cockpit's events: the
+ * wheel scrolls the pane's scrollback (which holds the pane's history from
+ * before the attach), any key returns to live; a left drag selects text
+ * (selection.ts), highlighted, and the release copies it with OSC 52. A press
+ * in the slot keeps the mouse until its release, wherever the pointer goes.
+ * The explorer and attention keys come with Step 11.
  */
 import { tmuxSessionTarget, type ProjectConnectionState, type ProjectWatchState, type ProjectWatchUpdate, type StatusView } from '../../client.ts';
 import { MASTER_TAB, closeTab, closedTabs, cycleProject, cycleTab, openAgent, selectTab, shownTab, showProject, type CockpitTabState, type OpenTab, type TabTransition } from '../cockpitTabs.ts';
@@ -41,9 +50,10 @@ import { buildTabBarModel, tabAttention, tabBarClickTarget } from '../tui/tabBar
 import { DEFAULT_STYLE, blitScreen, createFrame, drawText, slotCursor, type Frame, type Region } from './frame.ts';
 import { createDispatcher, cursorKeyMirror, modeNotice, type DispatchContext } from './dispatch.ts';
 import { createTokenizer, type Token } from './input.ts';
-import { parseSgrMouse, type MouseEvent } from './mouse.ts';
+import { createMotionCoalescer, encodeMouse, parseSgrMouse, routeSlotMouse, type MouseEvent } from './mouse.ts';
 import { renderDiff, sameStyle } from './render.ts';
-import type { Cursor } from './screen.ts';
+import type { Cursor, Screen } from './screen.ts';
+import { highlightSelection, osc52, selectionText, type CellPoint, type Selection } from './selection.ts';
 import { Sessions, type ConnectPane, type PaneSession } from './sessions.ts';
 import type { TerminalSession } from './terminal.ts';
 import { TmuxControlClient } from './tmuxControl.ts';
@@ -60,6 +70,8 @@ export const TAB_BAR_ROWS = 3;
 /** The slot keeps at least this much; the sidebar and tab bar shrink first on a tiny terminal. */
 const MIN_SLOT_COLS = 20;
 const MIN_SLOT_ROWS = 3;
+/** Lines one wheel notch scrolls a pane's scrollback. */
+export const WHEEL_LINES = 3;
 
 export type RegionName = 'sidebar' | 'tabBar' | 'slot';
 
@@ -100,7 +112,7 @@ export function hitTest(layout: Layout, x: number, y: number): { region: RegionN
   return null;
 }
 
-/** What a mouse event in a region does; Step 9 fills in the sidebar and tab bar, Step 10 the slot. */
+/** What a mouse event in a region does. */
 export type MouseHandlers = Partial<Record<RegionName, (event: MouseEvent, at: { x: number; y: number }) => void>>;
 
 /** Hands a mouse event to the handler of the region under it; returns that region, or null. */
@@ -331,6 +343,8 @@ export function runApp(options: AppOptions): App {
   /** Shows the active tab's session (the others hidden and paused); none when it has no tmux target. */
   function showActive(): void {
     if (closed) return;
+    motion.cancel();
+    clearSelection();
     const tab = shownTab(tabs);
     const target = tab ? targetOf(tab) : null;
     if (!tab || !target) sessions.hideAll();
@@ -387,6 +401,18 @@ export function runApp(options: AppOptions): App {
     return focus === 'slot' ? context : { ...context, sidebar: true };
   }
 
+  /** What the slot shows: a message, or the shown tab's screen. */
+  function slotContent(): { message: string[] | null; screen: Screen | null } {
+    const tab = shownTab(tabs);
+    const session = sessions.shown();
+    const project = tab && watched.get(tab.projectId);
+    const message = slotMessage({
+      tab, keys, session, target: tab ? targetOf(tab) : null,
+      project: project ? { name: project.project.name, repoRoot: project.project.target_repo_root, connection: project.connection } : null,
+    });
+    return { message, screen: message ? null : session?.screen ?? null };
+  }
+
   // ── rendering ──
   function render(): void {
     renderTimer = null;
@@ -399,21 +425,17 @@ export function runApp(options: AppOptions): App {
       slotFocused: focus === 'slot',
       error: refusal ?? (lastSaveError ? `view state not saved: ${lastSaveError}` : null),
     });
-    const session = sessions.shown();
-    const project = tab && watched.get(tab.projectId);
-    const message = slotMessage({
-      tab, keys, session, target: tab ? targetOf(tab) : null,
-      project: project ? { name: project.project.name, repoRoot: project.project.target_repo_root, connection: project.connection } : null,
-    });
+    const { message, screen } = slotContent();
     let cursor: Cursor = { x: 0, y: 0, visible: false };
-    if (message || !session?.screen) {
+    if (!screen) {
       drawMessage(frame, layout.slot, message ?? []);
     } else {
-      blitScreen(frame, session.screen, layout.slot);
-      cursor = slotCursor(session.screen, layout.slot, focus === 'slot');
+      blitScreen(frame, screen, layout.slot);
+      if (selection?.moved && tab && selection.key === tabKey(tab)) highlightSelection(frame, layout.slot, screen, selection);
+      cursor = slotCursor(screen, layout.slot, focus === 'slot');
     }
     // Arrow keys reach the pane in the form its program asked for; checked on every render, so on tab switch and mode change.
-    mirrorCursorKeys(!message && session?.screen ? session.screen.modes().applicationCursorKeys : false);
+    mirrorCursorKeys(screen ? screen.modes().applicationCursorKeys : false);
     if (prevFrame && prevCursor && framesEqual(prevFrame, frame) && sameCursor(prevCursor, cursor)) return;
     terminal.write(renderDiff(prevFrame, frame, cursor));
     prevFrame = frame;
@@ -472,7 +494,7 @@ export function runApp(options: AppOptions): App {
     else apply((state) => openAgent(state, command.projectId, command.agentId));
   }
 
-  /** Sidebar and tab bar clicks give the slot the keys, and so does a click in it (Step 10 routes pane mouse events). */
+  /** Sidebar and tab bar clicks give the slot the keys, and so does a press in it; slot events go to onSlotMouse (mouse.ts routeSlotMouse). */
   const mouseHandlers: MouseHandlers = {
     sidebar: (event, at) => {
       if (!isClick(event)) return;
@@ -495,8 +517,72 @@ export function runApp(options: AppOptions): App {
         apply((state) => selectTab(state, id));
       }
     },
-    slot: (event) => { if (isClick(event)) setFocus('slot'); },
+    slot: (event) => onSlotMouse(event),
   };
+
+  /** Forwarded mouse reports, motion at most once per frame; they follow the shown tab. */
+  const motion = createMotionCoalescer((bytes) => { sessions.shown()?.sendBytes(bytes)?.catch(ignoreInputError); }, frameMs);
+  /** A press in the slot holds the mouse there until its release: a drag that leaves the slot still reaches the pane or the selection. */
+  let slotGrab = false;
+  /** The cockpit's selection in the shown tab (`key`); `moved` once the drag left its first cell, `dragging` until the release. */
+  let selection: (Selection & { key: string; moved: boolean; dragging: boolean }) | null = null;
+
+  function clearSelection(): void {
+    if (!selection) return;
+    selection = null;
+    scheduleRender();
+  }
+
+  function onSlotMouse(event: MouseEvent): void {
+    const press = !event.motion && !event.release && !event.button.startsWith('wheel');
+    if (press) setFocus('slot');
+    const tab = shownTab(tabs);
+    const { screen } = slotContent();
+    if (!tab || !screen) return;
+    const modes = screen.modes();
+    const route = routeSlotMouse(event, {
+      tracking: modes.mouseTracking,
+      viewOnly: tab.agentId !== null && !typingTabs.has(tabKey(tab)),
+      selecting: selection?.dragging ?? false,
+    });
+    // The pane as drawn: a worker's screen smaller than the slot is padded, a larger one cropped.
+    const pane: Region = { x: layout.slot.x, y: layout.slot.y, cols: Math.min(layout.slot.cols, screen.cols), rows: Math.min(layout.slot.rows, screen.rows) };
+    const at: CellPoint = {
+      x: Math.min(Math.max(event.x - pane.x, 0), Math.max(pane.cols - 1, 0)),
+      y: Math.min(Math.max(event.y - pane.y, 0), Math.max(pane.rows - 1, 0)),
+    };
+    if (press) slotGrab = route === 'forward' || route === 'selectStart';
+    switch (route) {
+      case 'forward':
+        // The app's coordinates are live ones.
+        if (screen.scrollOffset > 0) { screen.scrollToBottom(); scheduleRender(); }
+        motion.push(encodeMouse(event, modes.mouseEncoding, pane, modes.mouseTracking), event.motion);
+        return;
+      case 'scrollUp': case 'scrollDown':
+        clearSelection();
+        screen.scroll(route === 'scrollUp' ? -WHEEL_LINES : WHEEL_LINES);
+        scheduleRender();
+        return;
+      case 'selectStart':
+        selection = { key: tabKey(tab), anchor: at, head: at, moved: false, dragging: true };
+        scheduleRender();
+        return;
+      case 'selectExtend': case 'selectEnd': {
+        if (!selection) return;
+        const moved = selection.moved || at.x !== selection.anchor.x || at.y !== selection.anchor.y;
+        selection = { ...selection, head: at, moved, dragging: route === 'selectExtend' };
+        if (route === 'selectEnd') {
+          // A click without a drag selects nothing.
+          const text = moved ? selectionText(screen, selection) : '';
+          if (text) terminal.write(osc52(text));
+          else selection = null;
+        }
+        scheduleRender();
+        return;
+      }
+      case 'drop': return;
+    }
+  }
 
   /** The shown tab's input mode: the master always types, an agent tab only after `i`. */
   function inputContext(tab: OpenTab): DispatchContext {
@@ -518,6 +604,12 @@ export function runApp(options: AppOptions): App {
       refusal = null;
       scheduleRender();
     }
+    if (token.kind !== 'mouse' && token.kind !== 'incomplete') {
+      // Any key or paste returns a scrolled pane to live and ends the selection.
+      const screen = sessions.shown()?.screen;
+      if (screen && screen.scrollOffset > 0) { screen.scrollToBottom(); scheduleRender(); }
+      clearSelection();
+    }
     const action = dispatcher.dispatch(token, keyContext());
     switch (action.type) {
       case 'forward': sessions.shown()?.sendBytes(action.bytes)?.catch(ignoreInputError); return;
@@ -525,7 +617,16 @@ export function runApp(options: AppOptions): App {
       case 'paste': sessions.shown()?.paste(action.data.toString('utf8'))?.catch(ignoreInputError); return;
       case 'mouse': {
         const event = parseSgrMouse(action.token);
-        if (event) dispatchMouse(layout, event, mouseHandlers);
+        if (!event) return;
+        const press = !event.motion && !event.release;
+        // A grab whose release never came ends at the next press, which goes where it is.
+        if ((slotGrab || selection?.dragging) && !press) {
+          onSlotMouse(event);
+          if (event.release) slotGrab = false;
+          return;
+        }
+        slotGrab = false;
+        dispatchMouse(layout, event, mouseHandlers);
         return;
       }
       case 'quit': quit(); return;
@@ -563,6 +664,7 @@ export function runApp(options: AppOptions): App {
   const stopResize = terminal.onResize(() => {
     const { cols, rows } = terminal.size();
     layout = computeLayout(cols, rows);
+    clearSelection();
     sessions.resize(slotSize());
     scheduleRender();
   });
@@ -572,6 +674,7 @@ export function runApp(options: AppOptions): App {
     closed = true;
     if (renderTimer) clearTimeout(renderTimer);
     clearInterval(ticker);
+    motion.cancel();
     tokenizer.flush();
     stopInput();
     stopResize();
