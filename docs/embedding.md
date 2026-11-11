@@ -6,7 +6,7 @@ How an app (Electron main process, a Node sidecar, a TUI) drives orc without she
 
 | Import | Use for | Cost |
 |---|---|---|
-| `orc-state/client` | An app or UI: `listProjects`, `ControlClient`, `ProjectWatcher`, `ControlError`, `RegistrySchemaError`, and the types | No side effects on import; Node built-ins only (`node:sqlite` for `listProjects`). Safe in a bundle or a main process |
+| `orc-state/client` | An app or UI: `listProjects`, `ControlClient`, `ProjectWatcher`, `ControlError`, `RegistrySchemaError`, `tmuxSessionTarget`, and the types (including `TmuxTarget`) | No side effects on import; Node built-ins only (`node:sqlite` for `listProjects`). Safe in a bundle or a main process |
 | `orc-state` (root) | Running orc in process: adapters, validators, bootstrap templates | Resolves the active project on import and loads native modules |
 
 An app imports `orc-state/client` only. It needs Node ≥ 22.13 for `listProjects` (Node 24 prints an `ExperimentalWarning` on the first call).
