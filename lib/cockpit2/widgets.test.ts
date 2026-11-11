@@ -5,7 +5,7 @@ import { fitText } from '../tui/sidebar.ts';
 import { CLOSE_MARKER, buildTabBarModel, layoutTabBar, tabBarClickTarget, type TabBarState } from '../tui/tabBarModel.ts';
 import { computeLayout } from './app.ts';
 import { createFrame, type Frame } from './frame.ts';
-import { BUILT_IN_THEMES, styleOf } from './theme.ts';
+import { BUILT_IN_THEMES, attentionRole, badgeRole, styleOf } from './theme.ts';
 import {
   EXPLORER_TAB, INITIAL_SIDEBAR_NAV, TYPING_MARK, VIEW_MARK, HEADER_MARK, drawFooter, drawHeader, drawSidebar, drawTabBar, headerButtonAt, headerView, navigateSidebar, sidebarClick,
   sidebarView, tabBarView, withExplorerTab, withModeMarks, type FooterHint, type HeaderButton, type SidebarNav,
@@ -201,15 +201,15 @@ describe('drawTabBar', () => {
     expect(lines[1]).toContain(` 1 master │`);
     expect(lines[1]).toContain(` 2 ${VIEW_MARK} ${CJK_AGENT} ${CLOSE_MARKER} │`);
     expect(lines[1]).toContain(` 3 ${TYPING_MARK} ${EMOJI_AGENT} ${CLOSE_MARKER} │`);
-    expect(lines[1]).toContain(` 4 ${VIEW_MARK} w3 PERMISSION ${CLOSE_MARKER} │`);
+    expect(lines[1]).toContain(` 4 ${VIEW_MARK} w3 ! PERMISSION ${CLOSE_MARKER} │`);
     expect(lines[1]).not.toContain('quit'); // the quit key is in the footer
     // Each tab's borders line up across the three rows: display widths, not string lengths.
     for (const cell of bar.layout.cells) {
-      expect(columnOf(lines[0], cell.x)).toBe('╭');
+      expect(columnOf(lines[0], cell.x)).toBe('┌');
       expect(columnOf(lines[1], cell.x)).toBe('│');
       expect(columnOf(lines[1], cell.x + cell.width - 1)).toBe('│');
     }
-    expect(bar.layout.cells.map((cell) => cell.width)).toEqual(bar.model.tabs.map((tab) => 2 + stringWidth(` ${tab.number} ${tab.label}`) + (tab.attention ? ' PERMISSION'.length : 0) + (tab.closable ? 3 : 1)));
+    expect(bar.layout.cells.map((cell) => cell.width)).toEqual(bar.model.tabs.map((tab) => 2 + stringWidth(` ${tab.number} ${tab.label}`) + (tab.attention ? ' ! PERMISSION'.length : 0) + (tab.closable ? 3 : 1)));
     expect(layout.tabBar.rows).toBe(3);
   });
 
@@ -217,7 +217,7 @@ describe('drawTabBar', () => {
     const focused = renderTabBar(200, 60);
     const active = focused.bar.layout.cells[1];
     const x = focused.layout.tabBar.x + active.x;
-    expect(focused.frame.cells[3 * 200 + x].text).toBe('╯');
+    expect(focused.frame.cells[3 * 200 + x].text).toBe('┘');
     expect(focused.frame.cells[2 * 200 + x + 2].style.inverse).toBe(true); // its label
     expect(focused.frame.cells[2 * 200 + x].style.bold).toBe(true); // its border
     const unfocused = renderTabBar(200, 60, TABS, false);
@@ -243,6 +243,64 @@ describe('drawTabBar', () => {
     const empty = createFrame(80, 24);
     drawTabBar(empty, layout.tabBar, tabBarView(buildTabBarModel({ activeProject: null, projects: [] }), 46), { slotFocused: true, error: null, theme: CLASSIC });
     expect(rowText(empty, 2, 34, 46)).toContain('No project is open');
+  });
+});
+
+describe('tab bar roles', () => {
+  const AMBER = BUILT_IN_THEMES.amber;
+  const MONO = BUILT_IN_THEMES.mono;
+  const ATTENTION: TabBarState = { activeProject: 'p1', projects: [{ projectId: 'p1', tabs: ['w1', 'w2', 'w3'], active: 'w1' }] };
+  const KINDS = new Map([['w2', 'stalled' as const], ['w3', 'no_progress' as const]]);
+
+  /** The tab bar at `cols` columns, rows 0-2 of a 3-row frame; `error` takes the bottom row. */
+  function draw(theme: typeof AMBER, cols: number, slotFocused: boolean, error: string | null = null, state = ATTENTION) {
+    const frame = createFrame(cols, 3);
+    const bar = tabBarView(buildTabBarModel(state, KINDS), cols);
+    drawTabBar(frame, { x: 0, y: 0, cols, rows: 3 }, bar, { slotFocused, error, theme });
+    return { frame, bar, at: (x: number, y: number) => frame.cells[y * cols + x].style };
+  }
+
+  it('draws each segment kind in its role', () => {
+    const { bar, at, frame } = draw(AMBER, 80, true);
+    const [master, w1, w2, w3] = bar.layout.cells;
+    expect(at(master.x, 0)).toEqual(styleOf(AMBER, 'chrome.border'));
+    expect(at(master.x, 1)).toEqual(styleOf(AMBER, 'chrome.border'));
+    expect(at(master.x + 2, 1)).toEqual(styleOf(AMBER, 'text.primary'));
+    // The active tab, the slot focused: its border in focus, its label accent and inverse.
+    expect(at(w1.x, 0)).toEqual(styleOf(AMBER, 'chrome.borderFocus'));
+    expect(at(w1.x, 2)).toEqual(styleOf(AMBER, 'chrome.borderFocus'));
+    expect(at(w1.x + 2, 1)).toEqual({ ...styleOf(AMBER, 'text.accent'), inverse: true });
+    expect(at(w1.closeX!, 1)).toEqual(styleOf(AMBER, 'tab.close'));
+    // An attention badge (`! KIND`) in its kind's status role, from theme.ts.
+    for (const [cell, kind] of [[w2, 'stalled'], [w3, 'no_progress']] as const) {
+      const badgeX = cell.x + 1 + stringWidth(cell.text);
+      expect(rowText(frame, 1, badgeX, cell.badge.length)).toBe(cell.badge);
+      expect(cell.badge.startsWith(' ! ')).toBe(true);
+      for (let x = badgeX; x < badgeX + cell.badge.length; x += 1) expect(at(x, 1)).toEqual(styleOf(AMBER, badgeRole(attentionRole(kind))));
+    }
+    // The rule right of the tabs is a border.
+    expect(at(79, 2)).toEqual(styleOf(AMBER, 'chrome.border'));
+    // Unfocused, the active tab keeps chrome.border and its label is accent without inverse.
+    const unfocused = draw(AMBER, 80, false);
+    expect(unfocused.at(w1.x, 0)).toEqual(styleOf(AMBER, 'chrome.border'));
+    expect(unfocused.at(w1.x + 2, 1)).toEqual(styleOf(AMBER, 'text.accent'));
+  });
+
+  it('draws overflow markers and notices in text.muted, errors in error', () => {
+    const many: TabBarState = { activeProject: 'p1', projects: [{ projectId: 'p1', tabs: Array.from({ length: 12 }, (_, index) => `worker-${index}`), active: 'worker-11' }] };
+    const { bar, at } = draw(AMBER, 40, true, 'tmux select-pane failed', many);
+    expect(bar.layout.leftMarker).not.toBe('');
+    expect(at(0, 1)).toEqual(styleOf(AMBER, 'text.muted'));
+    expect(at(0, 2)).toEqual(styleOf(AMBER, 'error'));
+    const none = draw(AMBER, 40, true, null, { activeProject: null, projects: [] });
+    expect(none.at(0, 1)).toEqual(styleOf(AMBER, 'text.muted'));
+  });
+
+  it('shows the same text with mono as with amber', () => {
+    for (const focused of [true, false]) {
+      const text = (theme: typeof AMBER) => [0, 1, 2].map((y) => rowText(draw(theme, 80, focused).frame, y));
+      expect(text(MONO)).toEqual(text(AMBER));
+    }
   });
 });
 

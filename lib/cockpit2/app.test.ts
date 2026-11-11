@@ -863,7 +863,7 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     terminal.type(click(3, (await sidebarRow(terminal, WIDE_AGENT)) + 1));
     expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: ['w1', WIDE_AGENT], active: WIDE_AGENT });
     await waitForSlotText(terminal, '$ hello from orc-wide');
-    await waitForTabBar(terminal, 1, `○ ${WIDE_AGENT} QUESTION ×`);
+    await waitForTabBar(terminal, 1, `○ ${WIDE_AGENT} ! QUESTION ×`);
 
     // A release, motion or a right click does nothing; a press on the master tab shows it.
     const masterX = (await columnOf(terminal, 2, 'm', SIDEBAR_COLS));
@@ -989,7 +989,7 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
       for (let until = Date.now() + 2_000; ; await sleep(25)) {
         const screen = await shown(terminal);
         const footer = text(screen, rows - 1, 0, SIDEBAR_COLS);
-        if (screen.row(1)[SIDEBAR_COLS - 1].text === '╮' && footer.includes('[master]') && text(screen, 3, SIDEBAR_COLS).startsWith('╯')) break;
+        if (screen.row(1)[SIDEBAR_COLS - 1].text === '╮' && footer.includes('[master]') && text(screen, 3, SIDEBAR_COLS).startsWith('┘')) break;
         if (Date.now() > until) throw new Error(`layout not redrawn at ${cols}x${rows}`);
       }
       const { slot } = computeLayout(cols, rows);

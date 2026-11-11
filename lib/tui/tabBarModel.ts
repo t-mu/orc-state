@@ -4,7 +4,7 @@ import type { TuiProjectView } from './status.ts';
 
 /**
  * The cockpit tab bar's view model: the active project's tabs (the master tab
- * first, then the agent tabs in opening order) as bordered tabs in three rows,
+ * first, then the agent tabs in opening order) as square-bordered tabs in three rows,
  * the active one open towards the slot, an agent needing attention with its
  * badge, and a window around the active tab when they do not all fit. Pure
  * data, so the view can compare two models and skip a render when nothing
@@ -90,7 +90,8 @@ export interface TabBarLayout {
 }
 
 const tabText = (tab: TabBarTab) => ` ${tab.number} ${tab.label}`;
-const tabBadge = (tab: TabBarTab) => (tab.attention ? ` ${ATTENTION_BADGE[tab.attention]}` : '');
+/** ` ! KIND`: the exclamation mark keeps the badge readable without colour. */
+const tabBadge = (tab: TabBarTab) => (tab.attention ? ` ! ${ATTENTION_BADGE[tab.attention]}` : '');
 const tabTail = (tab: TabBarTab) => `${tab.closable ? ` ${CLOSE_MARKER}` : ''} `;
 /** A tab's width: its borders, its text, badge, close marker and padding. */
 export const tabWidth = (tab: TabBarTab) => 2 + stringWidth(tabText(tab)) + stringWidth(tabBadge(tab)) + stringWidth(tabTail(tab));
@@ -188,7 +189,7 @@ export function tabBarRows(model: TabBarModel, layout: TabBarLayout, columns: nu
   for (const cell of layout.cells) {
     const tab = model.tabs[cell.index];
     const inner = cell.width - 2;
-    top.push({ kind: 'border', text: `╭${'─'.repeat(inner)}╮`, tab: cell.index });
+    top.push({ kind: 'border', text: `┌${'─'.repeat(inner)}┐`, tab: cell.index });
     middle.push({ kind: 'border', text: '│', tab: cell.index });
     middle.push({ kind: 'text', text: cell.text, tab: cell.index });
     if (cell.badge) middle.push({ kind: 'badge', text: cell.badge, tab: cell.index });
@@ -198,7 +199,7 @@ export function tabBarRows(model: TabBarModel, layout: TabBarLayout, columns: nu
     }
     middle.push({ kind: 'text', text: ' ', tab: cell.index });
     middle.push({ kind: 'border', text: '│', tab: cell.index });
-    bottom.push({ kind: 'border', text: tab.active ? `╯${' '.repeat(inner)}╰` : `┴${'─'.repeat(inner)}┴`, tab: cell.index });
+    bottom.push({ kind: 'border', text: tab.active ? `┘${' '.repeat(inner)}└` : `┴${'─'.repeat(inner)}┴`, tab: cell.index });
   }
   if (layout.rightMarker) middle.push({ kind: 'marker', text: layout.rightMarker });
   const used = stringWidth(layout.leftMarker) + layout.cells.reduce((sum, cell) => sum + cell.width, 0);
