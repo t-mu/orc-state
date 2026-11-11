@@ -101,8 +101,15 @@ export function navigateSidebar(view: SidebarCursor, nav: SidebarNav, key: Sideb
     case 'up':
     case 'down': {
       if (length === 0) return { nav, command: null };
-      const next = Math.max(0, Math.min(length - 1, current + (key === 'up' ? -1 : 1)));
-      return { nav: projects ? { ...nav, projectKey: model.projects[next].project_id } : { ...nav, agentKey: model.agents[next].key }, command: null };
+      const step = key === 'up' ? -1 : 1;
+      if (!projects) {
+        const next = Math.max(0, Math.min(length - 1, current + step));
+        return { nav: { ...nav, agentKey: model.agents[next].key }, command: null };
+      }
+      // Projects move in drawn order: the active one (the Project card) first, then Other projects.
+      const order = projectOrder(model);
+      const next = order[Math.max(0, Math.min(length - 1, order.indexOf(current) + step))];
+      return { nav: { ...nav, projectKey: model.projects[next].project_id }, command: null };
     }
     case 'open': {
       if (length === 0) return { nav, command: null };
@@ -115,6 +122,13 @@ export function navigateSidebar(view: SidebarCursor, nav: SidebarNav, key: Sideb
   }
 }
 
+/** Indices into `model.projects` in the order the cards draw them: the active project, then the others in model order. */
+function projectOrder(model: SidebarModel): number[] {
+  const active = model.projects.findIndex((project) => project.active);
+  const others = model.projects.flatMap((project, index) => (project.active ? [] : [index]));
+  return active >= 0 ? [active, ...others] : others;
+}
+
 /** `nav` with the agent `key` expanded if it was collapsed, else collapsed; the cursor goes to it. */
 function toggleAgent(nav: SidebarNav, key: string): SidebarNav {
   const expanded = new Set(nav.expanded);
@@ -122,9 +136,13 @@ function toggleAgent(nav: SidebarNav, key: string): SidebarNav {
   return { ...nav, box: 'agents', agentKey: key, expanded };
 }
 
-/** `nav` without the expanded keys of agents no longer in `model` (the same object when none went). */
+/**
+ * `nav` without the expanded keys of agents no longer in `model` (the same
+ * object when none went). A model without the active project's status (before
+ * its first load, or while it reconnects) lists no agents and prunes nothing.
+ */
 export function pruneExpanded(nav: SidebarNav, model: SidebarModel): SidebarNav {
-  if (nav.expanded.size === 0) return nav;
+  if (nav.expanded.size === 0 || model.status.workers === null) return nav;
   const live = new Set(model.agents.map((agent) => agent.key));
   const kept = [...nav.expanded].filter((key) => live.has(key));
   return kept.length === nav.expanded.size ? nav : { ...nav, expanded: new Set(kept) };
@@ -207,7 +225,8 @@ function agentBlocks(agents: SidebarAgent[], expanded: ReadonlySet<string>, cols
     const part = (name: BlockPart, text?: string): CardLine => (text === undefined ? { kind: 'block', index, part: name } : { kind: 'block', index, part: name, text });
     return [
       part('top'), part('task'), part('phase'),
-      ...blockDetail(agent.detail, blockTextCols(cols)).map((text) => part('detail', text)),
+      // The detail falls back to the task (lib/tui/sidebar.ts), which the block already shows on its task line.
+      ...blockDetail(agent.detail === agent.task_ref && !agent.attention ? null : agent.detail, blockTextCols(cols)).map((text) => part('detail', text)),
       part('hint'), part('bottom'),
     ];
   });
@@ -236,7 +255,8 @@ function agentLines(blocks: CardLine[][], body: number, cursor: number): CardLin
   const height = (index: number): number => blocks[index].length;
   const total = blocks.reduce((sum, block) => sum + block.length, 0);
   if (total <= body) return blocks.flat();
-  const room = body >= 2 ? body - 1 : body;
+  // A row for the `+N more` line, only when another agent can be left out.
+  const room = blocks.length > 1 && body >= 2 ? body - 1 : body;
   let start = 0;
   let used = blocks.slice(0, cursor + 1).reduce((sum, block) => sum + block.length, 0);
   while (used > room && start < cursor) used -= height(start++);
@@ -257,7 +277,8 @@ function agentLines(blocks: CardLine[][], body: number, cursor: number): CardLin
  * projects goes unless the cursor is in it, until the Agents card holds the
  * cursor agent's row (an expanded agent's whole block, and a `+N more` line
  * when there are other agents). Rows the Agents window leaves unused go back
- * to a shrunk Other projects. Each card's lines keep the cursor's row in view.
+ * to a shrunk Project card, then to a shrunk Other projects.
+ * Each card's lines keep the cursor's row in view.
  */
 export function sidebarCardsLayout(model: SidebarModel, rows: number, nav: SidebarNav, cols: number): SidebarCardsLayout {
   const cursor = sidebarCursor(model, nav);
@@ -288,9 +309,16 @@ export function sidebarCardsLayout(model: SidebarModel, rows: number, nav: Sideb
   let agents = Math.max(0, rows - project - other);
 
   const body = (cardRows: number) => Math.max(0, cardRows - BORDERS);
-  // An expanded block can leave the Agents window well short of its card: a shrunk Other projects takes those rows back.
-  if (other > 0 && other < othersFull && model.agents.some((agent) => nav.expanded.has(agent.key))) {
-    const spare = Math.min(othersFull - other, body(agents) - agentLines(blocks, body(agents), cursor.agentIndex).length);
+  const unused = () => body(agents) - agentLines(blocks, body(agents), cursor.agentIndex).length;
+  // An expanded block can leave the Agents window well short of its card: a shrunk Project card takes those rows
+  // back first, then a shrunk Other projects, the reverse of the order they shrank in.
+  const anyExpanded = model.agents.some((agent) => nav.expanded.has(agent.key));
+  if (anyExpanded && project < PROJECT_ROWS && model.projects.length > 0) {
+    const spare = Math.min(PROJECT_ROWS - project, unused());
+    if (spare > 0) { project += spare; agents -= spare; }
+  }
+  if (anyExpanded && other > 0 && other < othersFull) {
+    const spare = Math.min(othersFull - other, unused());
     if (spare > 0) { other += spare; agents -= spare; }
   }
   const otherCursor = inOthers ? others.indexOf(cursor.projectIndex) : -1;
