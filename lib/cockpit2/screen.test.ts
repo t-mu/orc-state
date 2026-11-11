@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { stringWidth } from '../cellWidth.ts';
 import { createScreen, type PaneModes, type Screen } from './screen.ts';
 
 const ESC = '\x1b';
@@ -221,5 +222,44 @@ describe('resize', () => {
     s.resize(10, 5);
     expect(text(s, 0)).toBe('hello');
     expect(text(s, 1)).toBe('world');
+  });
+});
+
+describe('cell widths follow lib/cellWidth.ts', () => {
+  const cp = (...points: number[]) => String.fromCodePoint(...points);
+  const HEART_VS16 = cp(0x2764, 0xfe0f);
+  const FAMILY = cp(0x1f468, 0x200d, 0x1f469, 0x200d, 0x1f467);
+  const FLAG = cp(0x1f1eb, 0x1f1ee);
+
+  it.each([
+    ['check mark', 'a✅b', '✅'],
+    ['emoji', 'a😀x', '😀'],
+    ['CJK', 'a日本', '日'],
+    ['heart + VS16', `a${HEART_VS16}x`, HEART_VS16],
+    ['ZWJ family', `a${FAMILY}x`, FAMILY],
+    ['flag', `a${FLAG}x`, FLAG],
+  ])('%s is one 2-column cell and the next char lands where stringWidth says', async (_name, line, wide) => {
+    const s = screen();
+    await s.write(line);
+    expect(s.cell(1, 0)).toMatchObject({ text: wide, width: 2 });
+    expect(s.cell(2, 0)).toMatchObject({ text: '', width: 0 });
+    const rest = line.slice(1 + wide.length);
+    const next = rest[0];
+    expect(s.cell(1 + stringWidth(wide), 0)!.text).toBe(next);
+    expect(s.cursor().x).toBe(stringWidth(line));
+  });
+
+  it('CJK pairs take two cells each', async () => {
+    const s = screen();
+    await s.write('日本x');
+    expect(s.row(0).slice(0, 5).map((c) => [c.text, c.width])).toEqual([['日', 2], ['', 0], ['本', 2], ['', 0], ['x', 1]]);
+  });
+
+  it('absolute cursor moves after an emoji land on the right cell', async () => {
+    const s = screen();
+    await s.write(`😀ab${ESC}[1;6HZ${ESC}[5GY`);
+    expect(text(s, 0)).toBe('😀abYZ');
+    expect(s.cell(4, 0)!.text).toBe('Y');
+    expect(s.cell(5, 0)!.text).toBe('Z');
   });
 });
