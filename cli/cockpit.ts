@@ -9,7 +9,7 @@
  * (lib/cockpit2/app.ts), starting in the current project. This layer resolves
  * everything lib/cockpit2 must not read itself: the tmux binary, the view-state
  * file and the cockpit lock under orc's data home, the cockpit keys and the
- * current project and the terminal's colour depth, and it runs the project watcher. Quitting (Ctrl-q, or the
+ * current project, the terminal's colour depth and the theme, and it runs the project watcher. Quitting (Ctrl-q, or the
  * prefix then d) never stops a master, a worker or a coordinator.
  *
  * `launchCockpit` is the cockpit as `orc cockpit` and `orc start-session` run
@@ -27,7 +27,7 @@
  * in a session on its private tmux server (lib/cockpit2/explorer.ts).
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { shellQuote, tmuxBinary, tmuxSocketPath } from '../adapters/tmux.ts';
@@ -39,6 +39,7 @@ import { isSameProcess, readProcessStart } from '../lib/processIdentity.ts';
 import { quitHint, runApp, type AppExit } from '../lib/cockpit2/app.ts';
 import { colorDepthFromEnv } from '../lib/cockpit2/color.ts';
 import { tmuxExplorerHost } from '../lib/cockpit2/explorer.ts';
+import { themeFromEnv, type Theme } from '../lib/cockpit2/theme.ts';
 import { claimInstance, exitRequested, liveInstance, type InstanceHolder } from '../lib/cockpit2/instance.ts';
 import { fdWriter, openTerminal } from '../lib/cockpit2/terminal.ts';
 import { addProject, createViewStateStore } from '../lib/cockpit2/viewState.ts';
@@ -124,6 +125,31 @@ export async function addToCockpit(projectId: string, dataHome = projectDataHome
   return running;
 }
 
+/** A file's text, or null when it cannot be read: how `cockpitTheme` reads an `ORC_COCKPIT_THEME` file. */
+export function readTextOrNull(path: string): string | null {
+  try {
+    return readFileSync(path, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The theme the cockpit draws in, from `NO_COLOR` and `ORC_COCKPIT_THEME`
+ * (theme.ts `themeFromEnv`). Each problem is reported as `Warning: …`, as
+ * invalid cockpit keys are, and never stops the cockpit: a theme that cannot
+ * be used falls back to `amber`.
+ */
+export function cockpitTheme(
+  env: Record<string, string | undefined> = process.env,
+  readText: (path: string) => string | null = readTextOrNull,
+  warn: (message: string) => void = (message) => console.error(message),
+): Theme {
+  const { theme, problems } = themeFromEnv(env, readText);
+  for (const problem of problems) warn(`Warning: ${problem}`);
+  return theme;
+}
+
 export interface CockpitOptions {
   projectId: string;
   keys: CockpitKeys;
@@ -148,6 +174,8 @@ export interface CockpitResult {
  */
 export async function runCockpit(options: CockpitOptions): Promise<CockpitResult> {
   const { lockPath, store } = cockpitFiles(options.dataHome ?? projectDataHome());
+  // Resolved here, when this process runs a cockpit (a takeover resolves anew), and before the terminal is taken, so its warnings stay readable.
+  const theme = cockpitTheme();
   const self = thisProcess();
   // Listening before the lock names this process: SIGUSR2's default action ends it, and a
   // wake-up can come before the app runs (it is then handled once the app does).
@@ -184,6 +212,7 @@ export async function runCockpit(options: CockpitOptions): Promise<CockpitResult
       projectId: options.projectId,
       keys: options.keys,
       colorDepth: colorDepthFromEnv(process.env),
+      theme,
       explorer: tmuxExplorerHost({ tmuxBinary: tmuxBinary(), command: (projectId) => explorerCommand(thisOrc(), projectId) }),
     });
     if (wokenEarly) wake();

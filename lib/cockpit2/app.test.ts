@@ -7,6 +7,7 @@ import {
   SIDEBAR_COLS, TAB_BAR_ROWS, agentTarget, computeLayout, dispatchMouse, hitTest, masterTarget, quitHint, runApp, shortQuitHint, slotMessage,
 } from './app.ts';
 import type { ColorDepth } from './color.ts';
+import { BUILT_IN_THEMES, resolveTheme, type Theme } from './theme.ts';
 import type { ExplorerHost } from './explorer.ts';
 import type { MouseEvent } from './mouse.ts';
 import { EDGE_COLUMN, EDGE_ROW } from './frame.ts';
@@ -199,9 +200,10 @@ interface StartOptions {
   setup?: (fake: FakeClient) => void;
   explorer?: ExplorerHost;
   colorDepth?: ColorDepth;
+  theme?: Theme;
 }
 
-function start({ keys = DEFAULT_COCKPIT_KEYS, projects = [projectState('demo')], store = new MemoryStore(), projectId = 'demo', setup, explorer, colorDepth }: StartOptions = {}) {
+function start({ keys = DEFAULT_COCKPIT_KEYS, projects = [projectState('demo')], store = new MemoryStore(), projectId = 'demo', setup, explorer, colorDepth, theme }: StartOptions = {}) {
   const terminal = new FakeTerminal();
   const watcher = new FakeWatcher(projects);
   const clients: FakeClient[] = [];
@@ -217,6 +219,7 @@ function start({ keys = DEFAULT_COCKPIT_KEYS, projects = [projectState('demo')],
     resyncDelayMs: 5,
     explorer,
     colorDepth,
+    theme,
   });
   apps.push(app);
   const client = () => clients[0];
@@ -239,6 +242,25 @@ describe('runApp (fake tmux client)', () => {
     const out = reduced.terminal.writes.join('');
     expect(out).toContain('38;5;196;48;5;21m');
     expect(out).not.toMatch(/[34]8;2;/);
+  });
+
+  it('draws its chrome in amber by default and in the theme it is given', async () => {
+    const AMBER_BORDER = '38;2;255;176;0m';
+    const VIOLET = '38;2;124;58;237m';
+    const amber = start();
+    await attached(amber.terminal);
+    expect(amber.terminal.writes.join('')).toContain(AMBER_BORDER);
+    expect(amber.terminal.writes.join('')).not.toContain(VIOLET);
+
+    const violet = resolveTheme(BUILT_IN_THEMES.amber, { 'chrome.border': { fg: '#7c3aed' } }).theme;
+    const themed = start({ theme: violet });
+    await attached(themed.terminal);
+    expect(themed.terminal.writes.join('')).toContain(VIOLET);
+
+    const mono = start({ theme: BUILT_IN_THEMES.mono });
+    await attached(mono.terminal);
+    // The pane's own text has no colour either, so nothing the cockpit draws sets an RGB foreground.
+    expect(mono.terminal.writes.join('')).not.toMatch(/38;2;/);
   });
 
   it('shows the master in the slot next to the sidebar and tab bar, its window sized to the slot', async () => {
