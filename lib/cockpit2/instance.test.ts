@@ -36,6 +36,14 @@ describe('claimInstance', () => {
     expect(existsSync(lockPath)).toBe(false);
   });
 
+  it('creates the lock\'s directory on a fresh data home', async () => {
+    lockPath = join(dir, 'cockpit', 'cockpit.lock');
+    const claimed = await claim(A);
+    expect(parseHolder(readLockFile(lockPath))).toEqual(A);
+    expect(statSync(join(dir, 'cockpit')).mode & 0o777).toBe(0o700);
+    claimed.release();
+  });
+
   it('takes over a stale lock silently: its pid is dead', async () => {
     await claim(A);
     running.delete(key(A)); // A was killed without releasing

@@ -366,7 +366,7 @@ The root's client half, for an app (Electron main, a Node sidecar) or TUI: `Cont
 
 | Export | Kind | Contract |
 |---|---|---|
-| `tmuxSessionTarget` | function | `tmuxSessionTarget(stateDir, agentId, providerRef?)` → `{ socket, session }`: the agent's tmux target in the project's private tmux server, computed from the state directory (for example `ProjectListEntry.state_dir`) and agent id with no coordinator; `provider_ref.tmux_socket` / `tmux_session` win when set. The master's id is `master`. Same names the status view reports |
+| `tmuxSessionTarget` | function | `tmuxSessionTarget(stateDir, agentId, providerRef?)` → `{ socket, session }`: the agent's tmux target in the project's private tmux server, computed from the state directory (for example `ProjectListEntry.state_dir`) and agent id with no coordinator; `provider_ref.tmux_socket` / `tmux_session` win when set. The master's id is `master`. Same names the status view reports. The cockpit attaches to these targets directly (`tmux -C attach-session`, with `-f ignore-size` for workers and scouts), so it can show a master whose coordinator is down ([terminal-streaming.md](terminal-streaming.md#the-cockpits-path-libcockpit2)) |
 | `TmuxTarget` | type | `{ tmux_socket, tmux_session }` (strings or both `null`), carried by `StatusView.master`, `SlotSummary` and `ScoutSummary` |
 | `RegistrySchemaError` | class | Thrown by `listProjects` when `registry.db` has a newer schema (`{ version, supportedVersion }`); other calls are unaffected |
 | `ProjectWatcher` | class | `new ProjectWatcher(options?)`, `start()`, `stop(): Promise<void>` (closes every stream and timer), `projects(): ProjectWatchState[]`, `onUpdate(listener) → unsubscribe`. Watches every registered project with one `ControlClient` each; reconnects with bounded backoff from the last event cursor; re-reads the registry every `registryPollMs`. Behaviour: [embedding.md → Watching every project](embedding.md#watching-every-project) |
@@ -401,7 +401,7 @@ Importing it has no side effects: no project resolution, registry access, git ca
 | `stalled` | the run's `stalled` flag (`isStalled`, the same test as `claims.stalled`) | the run's idle anchor (last activity) | `null` | any activity |
 | `no_progress` | the coordinator sent `worker_needs_attention {reason: no_progress}` and the run has not progressed since its `progress_at` (a change of phase at its evidence time, a progress lifecycle event, or a hook-seen `git commit`, kept as `last_commit_ts` in `run-activity.json`); not while waiting for input or finalizing | `progress_at` | the phase in the alert | progress |
 
-A run that ends drops out of `claims.active`, so its attention goes with it. `request_id` is null except for `question`. MCP `get_status` builds its own shape and does not carry `attention` yet; read it from `orc status --json` or `/v1/status`. The `orc watch` sidebar shows it as a badge on the agent's row.
+A run that ends drops out of `claims.active`, so its attention goes with it. `request_id` is null except for `question`. MCP `get_status` builds its own shape and does not carry `attention` yet; read it from `orc status --json` or `/v1/status`. The cockpit's sidebar and `orc watch` show it as a badge on the agent's row; the cockpit's tab bar shows it on the agent's tab and counts the agents needing a human across projects (`! N`).
 
 ### CLI commands
 
