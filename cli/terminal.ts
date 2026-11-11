@@ -43,6 +43,8 @@ let closing = false;
 let pending = Promise.resolve();
 let terminalId = '';
 let inputStarted = false;
+/** Draws the view-first mode line again (after a snapshot redrew the screen). */
+const viewer: { showMode?: () => void } = {};
 
 const cleanup = async (code = 0) => {
   if (closing) return;
@@ -75,11 +77,11 @@ async function sendInput(lease: string, data: string): Promise<void> {
 }
 
 try {
+  if (writable && viewFirst) throw new Error('Use --write or --view-first, not both');
+  if (viewFirst && (!process.stdin.isTTY || !process.stdout.isTTY)) throw new Error('--view-first requires a terminal');
   terminalId = (byRun
     ? await client.openTerminal(positional[0] as 'provider' | 'shell', positional[1])
     : await client.openAgentTerminal(positional[0])).terminal.terminal_id;
-  if (writable && viewFirst) throw new Error('Use --write or --view-first, not both');
-  if (viewFirst && (!process.stdin.isTTY || !process.stdout.isTTY)) throw new Error('--view-first requires a terminal');
   if (writable) {
     if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('--write requires a terminal');
     leaseId = (await client.acquireTerminal(terminalId, `cli:${process.pid}:${randomUUID()}`, { takeover: boolFlag('takeover') })).lease_id;
@@ -102,6 +104,7 @@ try {
       if (once) { process.stdout.write(frame.screen); break; }
       // Reset mouse reporting, clear, draw the captured screen, then put the cursor where the pane has it.
       process.stdout.write(`${MOUSE_RESET}\x1b[H\x1b[2J${frame.screen.replace(/\n$/, '').replace(/\n/g, '\r\n')}\x1b[${frame.cursor_y + 1};${frame.cursor_x + 1}H`);
+      viewer.showMode?.();
       if (inputStarted) continue;
       inputStarted = true;
       if (leaseId) startWriter(leaseId);
@@ -146,16 +149,23 @@ function startWriter(writerLease: string): void {
  */
 function startViewer(): void {
   let mode: TerminalMode = 'view';
-  const notice = (text: string) => console.error(`\r\n${text}`);
-  const showMode = () => notice(MODE_NOTICE[mode]);
+  /**
+   * The mode line, on the bottom line, the cursor saved and restored around it so
+   * the agent's relative cursor moves stay right; the agent's next repaint of
+   * that line covers it until the next mode change or snapshot.
+   */
+  const drawMode = (message?: string) => {
+    const text = `${message ? `[${message}] ` : ''}${MODE_NOTICE[mode]}`;
+    process.stderr.write(`\x1b7\x1b[${process.stdout.rows ?? 24};1H\x1b[2K${text}\x1b8`);
+  };
+  viewer.showMode = () => drawMode();
   const toView = async (message?: string) => {
     mode = 'view';
     if (renewTimer) clearInterval(renewTimer);
     renewTimer = null;
     const lease = leaseId;
     leaseId = null;
-    if (message) notice(`[${message}]`);
-    showMode();
+    drawMode(message);
     if (lease) await client.releaseTerminal(terminalId, lease).catch(() => undefined);
   };
   /** Runs a lease action; a failure (the lease was taken over or expired) returns to view mode. */
@@ -168,16 +178,20 @@ function startViewer(): void {
     });
   };
   const startTyping = () => {
+    // Keys typed until the lease arrives are dropped, close keys included.
+    mode = 'starting';
+    drawMode();
     pending = pending.then(async () => {
       if (leaseId || closing) return;
       try {
         leaseId = (await client.acquireTerminal(terminalId, `cli:${process.pid}:${randomUUID()}`)).lease_id;
       } catch (error) {
-        notice(`[cannot type: ${(error as Error).message}]`);
+        mode = 'view';
+        drawMode(`cannot type: ${(error as Error).message}`);
         return;
       }
       mode = 'typing';
-      showMode();
+      drawMode();
       const lease = leaseId;
       renewTimer = setInterval(() => { withLease((current) => client.renewTerminal(terminalId, current)); }, 10_000);
       await client.resizeTerminal(terminalId, lease, process.stdout.columns ?? 80, process.stdout.rows ?? 24).catch(() => undefined);
@@ -186,7 +200,7 @@ function startViewer(): void {
   process.stdout.on('resize', () => {
     withLease((lease) => client.resizeTerminal(terminalId, lease, process.stdout.columns ?? 80, process.stdout.rows ?? 24));
   });
-  showMode();
+  drawMode();
   process.stdin.setRawMode(true);
   raw = true;
   process.stdin.resume();

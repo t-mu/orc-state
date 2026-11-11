@@ -4,7 +4,8 @@
  * only on `i`.
  */
 
-export type TerminalMode = 'view' | 'typing';
+/** `starting`: `i` was pressed and the lease is on its way; every key is dropped. */
+export type TerminalMode = 'view' | 'starting' | 'typing';
 
 export type TerminalKeyAction =
   | { type: 'close' }
@@ -24,12 +25,14 @@ export const TERMINAL_CLOSED_EXIT = 10;
 
 /** One line naming the mode and its keys. */
 export const MODE_NOTICE: Record<TerminalMode, string> = {
-  view: '[view] i: type · q/Esc/Ctrl-D: close tab',
+  view: '[view] i: type · q/Esc/Ctrl-D/Ctrl-C/Ctrl-]: close tab',
+  starting: '[starting to type…]',
   typing: '[typing → agent] Ctrl-]: stop typing',
 };
 
 /** What a chunk of keyboard input does in `mode`. */
 export function terminalKeyAction(mode: TerminalMode, data: string): TerminalKeyAction {
+  if (mode === 'starting') return { type: 'ignore' };
   if (mode === 'typing') return data === STOP_KEY ? { type: 'stop-typing' } : { type: 'send', data };
   if (CLOSE_KEYS.has(data)) return { type: 'close' };
   return data === 'i' ? { type: 'start-typing' } : { type: 'ignore' };

@@ -18,12 +18,16 @@ describe('terminalKeyAction', () => {
     expect(terminalKeyAction('typing', key)).toEqual({ type: 'send', data: key });
   });
 
+  it.each([['q'], ['\x04'], ['\x1d'], ['a'], ['i']])('starting (lease on its way): %j is dropped, close keys included', (key) => {
+    expect(terminalKeyAction('starting', key)).toEqual({ type: 'ignore' });
+  });
+
   it('typing mode: Ctrl-] stops typing', () => {
     expect(terminalKeyAction('typing', '\x1d')).toEqual({ type: 'stop-typing' });
   });
 
   it('names each mode and its keys on one line', () => {
-    expect(MODE_NOTICE.view).toBe('[view] i: type · q/Esc/Ctrl-D: close tab');
+    expect(MODE_NOTICE.view).toBe('[view] i: type · q/Esc/Ctrl-D/Ctrl-C/Ctrl-]: close tab');
     expect(MODE_NOTICE.typing).toBe('[typing → agent] Ctrl-]: stop typing');
     for (const notice of Object.values(MODE_NOTICE)) expect(notice).not.toContain('\n');
   });

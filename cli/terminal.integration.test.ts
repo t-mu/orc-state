@@ -155,6 +155,9 @@ describe.skipIf(!hasTmux)('orc terminal --view-first (a cockpit agent tab)', () 
     keys('i');
     await waitFor(() => screen().includes('[typing → agent]'));
     expect(acquire).toHaveBeenCalledTimes(1);
+    // The mode line sits on the bottom line; the cursor stays where the agent's screen has it.
+    expect(screen().trimEnd().split('\n').at(-1)).toContain('[typing → agent] Ctrl-]: stop typing');
+    expect(tmux(['display-message', '-p', '-t', '=tab:', '#{cursor_x} #{cursor_y}']).stdout.trim()).toBe('0 1');
     keys('-l', 'q');
     await waitFor(() => input.mock.calls.length > 0);
     expect(input).toHaveBeenCalledWith('term-1', 'lease-1', 'q');
