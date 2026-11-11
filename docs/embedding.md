@@ -82,6 +82,13 @@ await watcher.stop(); // closes every stream and timer
 - **Testing.** `listProjects`, `createClient` (anything with `health`, `status`, `subscribe`) and `timers` (`setTimeout`/`clearTimeout`) are injectable; `clientOptions` reaches the default `ControlClient`.
 - A listener that throws does not stop the watcher; its error is rethrown in a microtask (an uncaught exception, as from a throwing event listener).
 
+## Showing an agent's terminal
+
+Two ways:
+
+- **Through the coordinator**: `ControlClient.openAgentTerminal` / `streamTerminal` / `inputTerminal` (the terminal API, with its input lease); needs a running coordinator ([terminal-streaming.md](terminal-streaming.md)).
+- **Directly on tmux**, as the cockpit does: the status view's `master`, `worker_capacity.slots[]` and `scouts[]` carry `tmux_socket` and `tmux_session` (both `null` for a session that is not on tmux, such as `app:`), and `tmuxSessionTarget(project.state_dir, agentId)` computes the same target without a coordinator (the master's id is `master`). Attach with `tmux -L <tmux_socket> -C attach-session -f ignore-size -t =<tmux_session>`: never resize a worker's or scout's window, which the agent's provider CLI renders for its own size. The cockpit's handling of late attach, hidden tabs, keys, pastes and the mouse: [terminal-streaming.md → The cockpit's path](terminal-streaming.md#the-cockpits-path-libcockpit2).
+
 ## Keying workers
 
 Key a worker's work by `run_id`. Agent names are reused across runs, and one `session_id` survives a resume (only `generation` goes up), so a view keyed by either mixes different runs or misses a restart. `session_id` + `generation` identify one live process; run events carry both in `payload` when the run has a session. Details: [contracts.md → Events](contracts.md#events).

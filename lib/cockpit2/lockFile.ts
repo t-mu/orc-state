@@ -15,8 +15,9 @@
  * instance lock by its holder's pid and process start time (a cockpit holds
  * it for hours, and a reused pid must not keep it).
  */
-import { closeSync, linkSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from 'node:fs';
+import { closeSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
+import { dirname } from 'node:path';
 
 export interface LockOptions {
   /** What the lock file holds while this owner has it; unique per acquisition. */
@@ -43,6 +44,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export async function acquireLockFile(lockPath: string, options: LockOptions): Promise<string> {
   const { token } = options;
   const until = Date.now() + options.timeoutMs;
+  mkdirSync(dirname(lockPath), { recursive: true, mode: 0o700 }); // the first cockpit on a fresh data home
   for (;;) {
     try {
       const fd = openSync(lockPath, 'wx', 0o600);

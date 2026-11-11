@@ -7,6 +7,7 @@ Settings live in the global registry (`orc project config`); `ORC_*` environment
 - `registry.db` (registered repositories + non-secret settings) lives in the data home: `ORC_DATA_HOME`, else `~/Library/Application Support/orc-state` (macOS) or `${XDG_DATA_HOME:-~/.local/share}/orc-state` (Linux).
 - Each project gets a stable id and a state directory `<data-home>/projects/<id>/` holding state, run worktrees (`worktrees/<run_id>`), logs, plans and exports. Files: [contracts.md → State Files](contracts.md#state-files).
 - Git operations run against the registered target repository; only Git's own worktree metadata lands in its `.git`.
+- The cockpit (`orc start-session`, `orc cockpit`) keeps its files in `<data-home>/cockpit/` (created `0700`): `view-state.json` (`0600`) holds its view state only, never orchestration state: its projects, each project's open tabs and active tab, the active project, and each project's last known master tmux target, so a restarted cockpit reopens the same tabs and can show a master whose coordinator is down. It is written atomically (a temp file renamed over it) while holding `view-state.lock`; a missing or corrupt file loads as an empty view. `cockpit.lock` is the one-cockpit-per-user lock (pid and process start time; `cockpit.lock.exit` while one cockpit asks another to exit). A hung cockpit or a stale lock: [recovery.md](recovery.md).
 - Without a registered project, `init`, `start-session`, the coordinator, the MCP server and every state-changing command refuse to run; `doctor`/`preflight` exit 1.
 
 ```bash
@@ -104,11 +105,11 @@ Canonical: [contracts.md → Local Control API](contracts.md#local-control-api).
 
 ### Cockpit keys
 
-Per user, for every project: `orc start-session` reads them each time it opens or reattaches to the cockpit and applies them to the running cockpit; `orc cockpit` reads them when it starts (`quit` sets its direct quit key; see [cli.md](cli.md)). Key names are tmux's (`F1`–`F12`, optional `C-`/`M-`/`S-` modifiers; `C-a` is Ctrl-a, `M-1` Alt-1). An invalid name or entry is reported as a warning and the default is kept.
+Per user, for every project: the cockpit (`orc start-session`, `orc cockpit`) reads them when it starts and keeps them while it runs; a cockpit that takes over from another reads them anew (see [cli.md](cli.md)). Key names are tmux's (`F1`–`F12`, optional `C-`/`M-`/`S-` modifiers; `C-a` is Ctrl-a, `M-1` Alt-1). An invalid name or entry is reported as a warning and the default is kept.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ORC_COCKPIT_PREFIX` | The cockpit's prefix: prefix + `d` detach, `o` switch pane, `n`/`p` next/previous tab, `1`–`9` select a tab, `&` close the agent tab (all of the active project), `N`/`P` next/previous project; pressed twice it reaches the pane | `F12` |
+| `ORC_COCKPIT_PREFIX` | The cockpit's prefix: prefix + `d` quit, `o` switch the keys between the pane and the sidebar, `n`/`p` next/previous tab, `1`–`9` select a tab, `&` close the active agent tab (only the view), `N`/`P` next/previous project, `t` the task explorer (all of the active project); pressed twice it reaches the pane | `F12` |
 | `ORC_COCKPIT_KEYS` | Direct keys (no prefix), comma-separated `<action>=<key>`, overriding only the actions named: `tab1`–`tab9` select that tab of the active project, `dashboard` focuses the sidebar, `attention` shows the next agent needing attention, `quit` quits the cockpit. `none` unbinds one. A direct key must be a function key or carry `C-` or `M-`; one that repeats the prefix or another action's key is dropped | `tab1=F1,…,tab9=F9,dashboard=F10,attention=F11,quit=C-q` |
 
 Example: `ORC_COCKPIT_PREFIX=C-a ORC_COCKPIT_KEYS='dashboard=F12,attention=none' orc start-session`.
