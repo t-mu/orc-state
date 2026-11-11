@@ -102,6 +102,11 @@
           "format": "date-time",
           "description": "Timestamp of the latest unresolved input request for this run."
         },
+        "input_source": {
+          "type": ["string", "null"],
+          "enum": ["worker_request", "provider_prompt", null],
+          "description": "What the input wait is for: the worker's own input request, or a provider prompt the coordinator recorded."
+        },
         "session_start_retry_count": {
           "type": "integer",
           "minimum": 0,

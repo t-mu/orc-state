@@ -1,7 +1,7 @@
 import { withLock, lockPath } from './lock.ts';
 import { commitClaims } from './runStore.ts';
 import { readJson } from './stateReader.ts';
-import type { Claim, ClaimsState, FinalizationState, InputState } from '../types/claims.ts';
+import type { Claim, ClaimsState, FinalizationState, InputSource, InputState } from '../types/claims.ts';
 import type { ActorType } from '../types/events.ts';
 
 const FINALIZATION_STATES = new Set<FinalizationState | null>([
@@ -156,9 +156,12 @@ export function setRunInputState(
   {
     inputState = null,
     requestedAt = null,
+    source = 'worker_request',
   }: {
     inputState?: InputState;
     requestedAt?: string | null;
+    /** What the wait is for (`awaiting_input` only). A provider prompt never relabels a pending worker request. */
+    source?: InputSource;
   } = {},
 ): Claim {
   return withLock(lockPath(stateDir), () => {
@@ -176,6 +179,10 @@ export function setRunInputState(
       throw new Error(`requestedAt must be an ISO date-time string or null (got: ${String(requestedAt)})`);
     }
 
+    const pendingWorkerRequest = claim.input_state === 'awaiting_input' && claim.input_source !== 'provider_prompt';
+    claim.input_source = inputState !== 'awaiting_input' ? null
+      : pendingWorkerRequest ? 'worker_request'
+      : source;
     claim.input_state = inputState;
     claim.input_requested_at = inputState === 'awaiting_input'
       ? (requestedAt ?? new Date().toISOString())
@@ -183,6 +190,58 @@ export function setRunInputState(
     commitClaims(stateDir, claims);
 
     return claim;
+  });
+}
+
+/**
+ * Clear a provider-prompt input wait the worker has moved past, and renew the lease from now
+ * as a heartbeat would (even when it lapsed during the wait), in one commit with an
+ * `input_response` from the coordinator recording how the prompt was resolved.
+ * `at` dates the worker's activity; it renews `last_heartbeat_at` only when later.
+ * A `worker_request` wait, or no wait, is left alone: returns false.
+ */
+export function resolveProviderPromptWait(
+  stateDir: string,
+  runId: string,
+  agentId: string,
+  { at, leaseDurationMs, resolution }: {
+    at: string;
+    leaseDurationMs: number;
+    /** `worker_activity` (a lifecycle event after the request) or `prompt_gone` (no longer on screen). */
+    resolution: 'worker_activity' | 'prompt_gone';
+  },
+): boolean {
+  assertValidTimestamp(at, 'activity');
+  return withLock(lockPath(stateDir), () => {
+    const claims = readJson(stateDir, 'claims.json') as ClaimsState;
+    const claim = claims.claims.find((candidate) => candidate.run_id === runId);
+    if (!claim || claim.agent_id !== agentId || !['claimed', 'in_progress'].includes(claim.state)) return false;
+    if (claim.input_state !== 'awaiting_input' || claim.input_source !== 'provider_prompt') return false;
+
+    const nowIso = new Date().toISOString();
+    const requestedAt = claim.input_requested_at ?? null;
+    claim.input_state = null;
+    claim.input_requested_at = null;
+    claim.input_source = null;
+    if (!claim.last_heartbeat_at || Date.parse(claim.last_heartbeat_at) < Date.parse(at)) claim.last_heartbeat_at = at;
+    const renewedMs = Date.now() + leaseDurationMs;
+    const currentMs = claim.lease_expires_at ? Date.parse(claim.lease_expires_at) : NaN;
+    claim.lease_expires_at = new Date(Number.isFinite(currentMs) ? Math.max(currentMs, renewedMs) : renewedMs).toISOString();
+    commitClaims(stateDir, claims, [{
+      ts: nowIso, event: 'input_response',
+      actor_type: 'coordinator', actor_id: 'coordinator',
+      run_id: runId, task_ref: claim.task_ref, agent_id: agentId,
+      payload: {
+        response: resolution === 'prompt_gone'
+          ? 'provider prompt resolved in the worker terminal (no longer on screen)'
+          : 'provider prompt resolved in the worker terminal (worker active again)',
+        request_id: null,
+        resolution,
+        requested_at: requestedAt,
+        activity_at: at,
+      },
+    }]);
+    return true;
   });
 }
 

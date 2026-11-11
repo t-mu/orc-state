@@ -4951,6 +4951,152 @@ describe('stale lease expiry and recovery via tick', () => {
   });
 });
 
+describe('provider-prompt input waits (coordinator/provider-prompt-input-clear)', () => {
+  const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60 * 1000).toISOString();
+
+  function seedWaitingRun(source: 'provider_prompt' | 'worker_request', requestedMinutesAgo: number) {
+    seedState(dir, {
+      agents: [{
+        agent_id: 'worker-01',
+        provider: 'claude',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'tmux:worker-01',
+        provider_ref: null,
+        registered_at: minutesAgo(120),
+      }],
+      tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
+      claims: [{
+        run_id: 'run-waiting',
+        task_ref: 'proj/fix-bug',
+        agent_id: 'worker-01',
+        state: 'in_progress',
+        claimed_at: minutesAgo(90),
+        started_at: minutesAgo(90),
+        last_heartbeat_at: minutesAgo(requestedMinutesAgo + 1),
+        // The 30-minute lease ran out while the run waited.
+        lease_expires_at: minutesAgo(requestedMinutesAgo - 30),
+        finalization_state: null,
+        finalization_retry_count: 0,
+        finalization_blocked_reason: null,
+        input_state: 'awaiting_input',
+        input_requested_at: minutesAgo(requestedMinutesAgo),
+        input_source: source,
+      }],
+    });
+  }
+
+  function appendWorkerEvent(event: string, minutes: number, extra: Record<string, unknown> = {}) {
+    appendSequencedEvent(dir, {
+      ts: minutesAgo(minutes), event, actor_type: 'agent', actor_id: 'worker-01',
+      run_id: 'run-waiting', task_ref: 'proj/fix-bug', agent_id: 'worker-01', ...extra,
+    } as Parameters<typeof appendSequencedEvent>[1]);
+  }
+
+  async function runTicks(count = 1) {
+    const { tick } = await import('./coordinator.ts');
+    for (let i = 0; i < count; i++) await tick();
+  }
+
+  const waitingClaim = () => readClaims(dir).find((c) => c.run_id === 'run-waiting')!;
+  const runEvents = (event: string) => readEvents(dir).filter((e) => e.event === event && e.run_id === 'run-waiting');
+
+  it('the incident: a provider prompt answered in the terminal, then phase_started, does not expire the run at request + 1 h', async () => {
+    seedWaitingRun('provider_prompt', 61);
+    appendWorkerEvent('phase_started', 7, { phase: 'implement' });
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock());
+
+    await runTicks();
+
+    const claim = waitingClaim();
+    expect(claim.state).toBe('in_progress');
+    expect(claim.input_state).toBeNull();
+    expect(claim.input_source).toBeNull();
+    expect(Date.parse(String(claim.lease_expires_at))).toBeGreaterThan(Date.now() + 25 * 60 * 1000);
+    expect(runEvents('claim_expired')).toEqual([]);
+    const [resolved] = runEvents('input_response');
+    expect(resolved).toMatchObject({ actor_type: 'coordinator', agent_id: 'worker-01' });
+    expect(resolved.payload).toMatchObject({ resolution: 'worker_activity', request_id: null });
+  });
+
+  it('clears a provider-prompt wait once the prompt seen on screen is gone', async () => {
+    seedWaitingRun('provider_prompt', 5);
+    const detectInputBlock = vi.fn()
+      .mockReturnValueOnce('Do you want to proceed? 1. Yes 2. No')
+      .mockReturnValue(null);
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ detectInputBlock }));
+
+    await runTicks();
+    expect(detectInputBlock).toHaveBeenCalled();
+    expect(waitingClaim().input_state).toBe('awaiting_input');
+
+    await runTicks();
+    const claim = waitingClaim();
+    expect(claim.input_state).toBeNull();
+    expect(Date.parse(String(claim.lease_expires_at))).toBeGreaterThan(Date.now() + 25 * 60 * 1000);
+    expect(runEvents('input_response').map((e) => (e.payload as Record<string, unknown>).resolution)).toEqual(['prompt_gone']);
+  });
+
+  function writeToolHook(minutes: number) {
+    mkdirSync(join(dir, 'pty-hook-events'), { recursive: true });
+    appendFileSync(join(dir, 'pty-hook-events', 'worker-01.ndjson'),
+      JSON.stringify({ type: 'tool', tool: 'Bash', brief: 'npm test', ts: minutesAgo(minutes) }) + '\n');
+  }
+
+  it('clears a provider-prompt wait known from a hook event once the worker\'s hooks show activity after it', async () => {
+    seedWaitingRun('provider_prompt', 61);
+    writeToolHook(5);
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ detectInputBlock: vi.fn().mockReturnValue(null) }));
+
+    await runTicks(2);
+
+    const claim = waitingClaim();
+    expect(claim.state).toBe('in_progress');
+    expect(claim.input_state).toBeNull();
+    expect(Date.parse(String(claim.lease_expires_at))).toBeGreaterThan(Date.now() + 25 * 60 * 1000);
+    expect(runEvents('claim_expired')).toEqual([]);
+    expect(runEvents('input_response').map((e) => (e.payload as Record<string, unknown>).resolution)).toEqual(['worker_activity']);
+  });
+
+  it('keeps a provider-prompt wait never seen on screen (known from a hook event only)', async () => {
+    seedWaitingRun('provider_prompt', 5);
+    writeToolHook(6); // the tool call that raised the prompt, before the request
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ detectInputBlock: vi.fn().mockReturnValue(null) }));
+
+    await runTicks(2);
+
+    expect(waitingClaim().input_state).toBe('awaiting_input');
+    expect(runEvents('input_response')).toEqual([]);
+  });
+
+  it('does not clear a run-input-request wait when the waiting worker heartbeats', async () => {
+    seedWaitingRun('worker_request', 30);
+    appendWorkerEvent('heartbeat', 2, { payload: {} });
+    appendWorkerEvent('phase_started', 1, { phase: 'implement' });
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ detectInputBlock: vi.fn().mockReturnValue(null) }));
+
+    await runTicks();
+
+    const claim = waitingClaim();
+    expect(claim.state).toBe('in_progress');
+    expect(claim.input_state).toBe('awaiting_input');
+    expect(claim.input_source).toBe('worker_request');
+    expect(runEvents('input_response')).toEqual([]);
+  });
+
+  it('still expires an unanswered provider prompt after INPUT_WAIT_TIMEOUT_MS with ERR_INPUT_TIMEOUT', async () => {
+    seedWaitingRun('provider_prompt', 61);
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock());
+
+    await runTicks();
+
+    expect(waitingClaim().state).toBe('failed');
+    const [expired] = runEvents('claim_expired');
+    expect((expired.payload as Record<string, unknown>).code).toBe('ERR_INPUT_TIMEOUT');
+    expect(runEvents('input_response')).toEqual([]);
+  });
+});
+
 describe('failure-injection: delayed, duplicate, and stale lifecycle events', () => {
   it('ignores stale terminal events for an older run after a newer claim exists', async () => {
     // A newer claim is active for the same task. An older run_finished arrives

@@ -12,6 +12,12 @@ export type FinalizationState =
   | 'pr_failed'
   | null;
 export type InputState = 'awaiting_input' | null;
+/**
+ * What a run waits on while `awaiting_input`: the worker's own `orc run-input-request`
+ * (cleared only by an answer), or a provider prompt the coordinator saw on the worker's screen
+ * (also cleared once the worker shows life again or the prompt is gone).
+ */
+export type InputSource = 'worker_request' | 'provider_prompt';
 
 export interface TaskSpecSnapshot {
   source_path: string;
@@ -38,6 +44,8 @@ export interface Claim {
   finalization_blocked_reason?: string | null;
   input_state?: InputState;
   input_requested_at?: string | null;
+  /** Set with `input_state`; absent on claims written before it existed (read as `worker_request`). */
+  input_source?: InputSource | null;
   session_start_retry_count?: number;
   session_start_retry_next_at?: string | null;
   session_start_last_error?: string | null;

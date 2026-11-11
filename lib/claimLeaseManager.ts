@@ -34,6 +34,7 @@ export function failureTaskOutcome(task: Task | null | undefined, blockedReason:
 function resetClaimVolatileFields(claim: Claim): void {
   claim.input_state = null;
   claim.input_requested_at = null;
+  claim.input_source = null;
   claim.session_start_retry_count = 0;
   claim.session_start_retry_next_at = null;
   claim.session_start_last_error = null;
