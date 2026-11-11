@@ -15,9 +15,9 @@ afterEach(() => { for (const app of apps.splice(0)) app.quit(); });
 const hasTmux = spawnSync('tmux', ['-V'], { encoding: 'utf8' }).status === 0;
 
 describe.skipIf(!hasTmux)('runApp (private tmux server)', () => {
-  const socket = `orc-cockpit2-app-test-${process.pid}-${Date.now()}`;
+  const socket = `orc-cockpit-app-test-${process.pid}-${Date.now()}`;
   const tmux = (...args: string[]) => spawnSync('tmux', ['-L', socket, '-f', '/dev/null', ...args], { encoding: 'utf8' });
-  /** The explorer's private server, standing in for `orc-cockpit2`. */
+  /** The explorer's private server, standing in for `orc-explorer`. */
   const explorerSocket = `${socket}-explorer`;
   const explorerTmux = (...args: string[]) => spawnSync('tmux', ['-L', explorerSocket, ...args], { encoding: 'utf8' });
   afterAll(() => { tmux('kill-server'); explorerTmux('kill-server'); });
@@ -119,7 +119,7 @@ describe.skipIf(!hasTmux)('runApp (private tmux server)', () => {
     const master = 'orc-master-explorer';
     const created = tmux('new-session', '-d', '-s', master, '-x', '100', '-y', '30', 'env -i TERM=tmux-256color PS1="$ " LANG=C.UTF-8 sh');
     expect(created.status, created.stderr).toBe(0);
-    // A stand-in for `orc cockpit2 explorer`: it shows its project, echoes each read in brackets and quits on q, as the explorer's list does.
+    // A stand-in for `orc cockpit explorer`: it shows its project, echoes each read in brackets and quits on q, as the explorer's list does.
     const reader = "process.stdin.setRawMode(true); process.stdin.on('data', (d) => { const s = d.toString(); if (s === 'q') process.exit(0); process.stdout.write('[' + s + ']'); });".replace(/'/g, '"');
     const host = tmuxExplorerHost({
       tmuxBinary: 'tmux', socket: explorerSocket,

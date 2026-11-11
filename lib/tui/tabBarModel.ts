@@ -12,7 +12,7 @@ import type { TuiProjectView } from './status.ts';
  * widths (lib/cellWidth.ts), so wide-character names lay out correctly.
  */
 
-/** The cockpit's tab state as `orc cockpit` stores it (lib/cockpitTabs.ts), structurally. */
+/** The cockpit's tab state (lib/cockpitTabs.ts), structurally. */
 export interface TabBarState {
   activeProject: string | null;
   projects: { projectId: string; tabs: string[]; active: string | null }[];

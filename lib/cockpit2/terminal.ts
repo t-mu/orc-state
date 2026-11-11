@@ -110,7 +110,7 @@ export function openTerminal(options: TerminalOptions): TerminalSession {
 
   const crash = (error: unknown) => {
     restore();
-    report(`orc cockpit2: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
+    report(`orc cockpit: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
     hooks.exit(1);
   };
   const exitListeners: Array<[string, (...args: unknown[]) => void]> = [

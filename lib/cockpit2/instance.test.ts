@@ -15,8 +15,8 @@ const A: InstanceHolder = { pid: 1001, start: 'proc:111' };
 const B: InstanceHolder = { pid: 1002, start: 'proc:222' };
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'orc-cockpit2-instance-'));
-  lockPath = join(dir, 'cockpit2.lock');
+  dir = mkdtempSync(join(tmpdir(), 'orc-cockpit-instance-'));
+  lockPath = join(dir, 'cockpit.lock');
   running = new Set([key(A), key(B)]);
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));

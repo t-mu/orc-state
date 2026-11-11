@@ -24,7 +24,7 @@ beforeEach(() => {
   vi.doUnmock('../lib/templateRender.ts');
   vi.doUnmock('node:child_process');
   vi.doUnmock('../adapters/tmux.ts');
-  vi.doUnmock('./cockpit2.ts');
+  vi.doUnmock('./cockpit.ts');
   dir = createTempStateDir('orch-start-session-test-');
 });
 
@@ -33,7 +33,7 @@ afterEach(() => {
   vi.resetModules();
   vi.doUnmock('../lib/agentRegistry.ts');
   vi.doUnmock('../adapters/tmux.ts');
-  vi.doUnmock('./cockpit2.ts');
+  vi.doUnmock('./cockpit.ts');
   vi.doUnmock('node:child_process');
   ttyRestore?.();
   ttyRestore = null;
@@ -155,14 +155,14 @@ interface CockpitLaunchCall {
  * orc's tmux server, faked: startTmuxSession hands the launch to the provider
  * spawn mock (so its calls read like a spawn), sessions it starts are alive
  * until an attach ends them, and attaches are recorded. The cockpit
- * (cli/cockpit2.ts `launchCockpit2`) is faked too: its launches are recorded,
+ * (cli/cockpit.ts `launchCockpit`) is faked too: its launches are recorded,
  * and it ends as `cockpitEnded` says (the master ends meanwhile with `exitOnAttach`).
  */
 const tmuxFake = {
   alive: new Set<string>(),
   attaches: [] as Array<{ args: string[]; env: NodeJS.ProcessEnv | undefined }>,
   cockpitLaunches: [] as CockpitLaunchCall[],
-  /** launchCockpit2 throws, as when a running cockpit does not let go of the lock. */
+  /** launchCockpit throws, as when a running cockpit does not let go of the lock. */
   cockpitFails: false,
   /** Launched from inside orc's tmux servers: the project is added to the running cockpit (`cockpitRunning`) instead. */
   insideOrcTmux: false,
@@ -225,11 +225,11 @@ function mockTmux(spawnMock: ReturnType<typeof vi.fn>, { available = true } = {}
     }),
     createTmuxAdapter: vi.fn().mockImplementation(() => ({ stop: tmuxFake.stop })),
   }));
-  vi.doMock('./cockpit2.ts', async () => {
+  vi.doMock('./cockpit.ts', async () => {
     const { quitHint } = await vi.importActual<typeof import('../lib/cockpit2/app.ts')>('../lib/cockpit2/app.ts');
     return {
-      cockpit2KeysHint: vi.fn().mockImplementation(quitHint),
-      launchCockpit2: vi.fn().mockImplementation((options: CockpitLaunchCall & { onClaimed?(replaced: unknown): void }) => {
+      cockpitOpeningHint: vi.fn().mockImplementation(quitHint),
+      launchCockpit: vi.fn().mockImplementation((options: CockpitLaunchCall & { onClaimed?(replaced: unknown): void }) => {
         tmuxFake.cockpitLaunches.push({ projectId: options.projectId, keys: options.keys });
         if (tmuxFake.cockpitFails) return Promise.reject(new Error('the cockpit running as pid 4242 did not exit within 5 s'));
         if (tmuxFake.insideOrcTmux) return Promise.resolve({ kind: 'added', running: tmuxFake.cockpitRunning });

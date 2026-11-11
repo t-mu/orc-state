@@ -64,6 +64,7 @@ The sidebar and the tab bar only show a question. Answer it through the master, 
 
 - Quit with `Ctrl-q` or `F12 d`, or close the terminal. The master, the workers and the coordinator keep running, and the master's MCP tools keep working.
 - Run `orc start-session` again to reopen the cockpit. A live master is reattached with no prompts and no state reset, and the cockpit opens with the tabs it had.
+- `orc cockpit` opens the cockpit on the current project without starting a coordinator or a master; it moves between terminals and adds projects as `orc start-session` does.
 - One cockpit runs at a time. Run `orc start-session` in another terminal and the cockpit moves there: the old one exits and says the cockpit moved to another terminal.
 - Run it in another registered project, from another terminal, and the cockpit moves there with that project shown; the other projects and their tabs stay in it (quit the cockpit first to run it in the same terminal). Back in a project already there, it shows the tab you left it on.
 - From a shell inside orc's tmux sessions, such as the master's, `orc start-session` opens no second cockpit: it adds the project to the running cockpit, which shows it.

@@ -25,7 +25,7 @@ describe('explorerSessionName and explorerScript', () => {
   it('names one session per project, without the characters tmux reserves in targets', () => {
     expect(explorerSessionName('demo')).toBe('explorer-demo');
     expect(explorerSessionName('a.b:c/d')).toBe('explorer-a_b_c_d');
-    expect(EXPLORER_SOCKET).toBe('orc-cockpit2');
+    expect(EXPLORER_SOCKET).toBe('orc-explorer');
   });
 
   it('keeps a failing explorer\'s error on screen and lets a clean exit end the session', () => {

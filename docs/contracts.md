@@ -407,7 +407,7 @@ A run that ends drops out of `claims.active`, so its attention goes with it. `re
 
 | Group | Commands |
 |---|---|
-| Session and setup | `start-session`, `cockpit` (inside the cockpit), `cockpit2` (preview), `init`, `install`, `install-agents`, `install-skills`, `project`, `mcp-server` |
+| Session and setup | `start-session`, `cockpit`, `init`, `install`, `install-agents`, `install-skills`, `project`, `mcp-server` |
 | Inspection | `status`, `watch`, `attach`, `doctor`, `preflight`, `runs`, `run-info`, `sessions`, `events`, `event-cursor`, `worker-status`, `terminal`, `memory-status`, `memory-search` |
 | Master / operator | `delegate`, `task-mark-done`, `task-reset`, `task-unblock`, `task-cancel`, `run-expire`, `run-close`, `run-input-respond`, `worker-remove`, `worker-gc`, `kill-all`, `pr-diff`, `pr-review`, `pr-merge`, `pr-status` |
 | Worker lifecycle (flags below) | `report-for-duty`, `run-start`, `progress`, `review-submit`, `review-read`, `run-work-complete`, `run-finish`, `run-fail`, `run-input-request`, `memory-wake-up`, `memory-record` |

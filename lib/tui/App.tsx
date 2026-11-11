@@ -1,21 +1,10 @@
 import { Box, Text, useInput, useStdin, useStdout } from 'ink';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { isMouseInput, useMouseClicks } from './mouse.ts';
 import {
-  agentRowParts, buildSidebarModel, computeSidebarLayout, fitRow, fitText, sidebarRowTarget,
+  agentRowParts, buildSidebarModel, computeSidebarLayout, fitRow, fitText,
   type AttentionKind, type SidebarAgent, type SidebarModel, type SidebarProject, type SidebarProjectState,
 } from './sidebar.ts';
 import { buildProjectViews, type TuiWatchSource } from './status.ts';
-
-/** What selecting does in the cockpit: each resolves to the line the footer shows, or rejects with why it failed. */
-export interface SidebarActions {
-  /** `orc cockpit project <id>`: show the project in the slot. */
-  selectProject: (project: SidebarProject) => Promise<string>;
-  /** `orc cockpit open <agent_id> <project_id>`: open the agent's tab, or show it. */
-  openAgent: (agent: SidebarAgent, project: SidebarProject) => Promise<string>;
-  /** Esc: focus the slot; a throw is shown in the footer. */
-  focusSlot: () => void;
-}
 
 export interface AppProps {
   /** The project watcher (orc-state/client) the sidebar reads every project from. */
@@ -24,23 +13,16 @@ export interface AppProps {
   stateDir: string;
   /** Re-read the watcher at least this often, besides on each of its updates. */
   intervalMs?: number;
-  /** The cockpit's actions; without them (outside a cockpit) selecting only moves the sidebar, and says so. */
-  actions?: SidebarActions;
-  /** The cockpit's active project, read every `intervalMs`: a change (e.g. its project keys) becomes the sidebar's. */
-  activeProject?: () => string | null;
-  /** Read mouse clicks (tmux SGR reports); off by default, as it writes mode sequences to stdout. */
-  mouse?: boolean;
   /** The clock elapsed times are measured with. */
   now?: () => number;
 }
 
-/** The key bindings line, each at most 32 columns (the sidebar's inside). */
-export const KEYS_HINT = '↑↓ Tab ⏎ select · Esc slot';
-export const KEYS_HINT_STANDALONE = '↑↓ Tab ⏎ select';
-/** Selecting an agent outside a cockpit. */
+/** The key bindings line, at most 32 columns (the sidebar's inside). */
+export const KEYS_HINT = '↑↓ Tab ⏎ select';
+/** Selecting an agent: `orc watch` only shows it. */
 export const NO_COCKPIT_HINT = 'terminals open in the cockpit';
 
-/** The sidebar's width without a TTY (the cockpit's sidebar pane). */
+/** The sidebar's width without a TTY. */
 const DEFAULT_COLUMNS = 34;
 
 const STATE_COLOR: Record<SidebarProjectState, string> = {
@@ -80,13 +62,12 @@ function useTerminalSize(): { rows: number | undefined; columns: number | undefi
  * stored (so rendered) when it differs from the last one: unchanged data does
  * not repaint the screen. `setActive` makes a project the active one.
  */
-function useSidebarModel(props: Required<Pick<AppProps, 'source' | 'stateDir' | 'intervalMs' | 'now'>> & { activeProject: AppProps['activeProject'] | undefined }): {
+function useSidebarModel(props: Required<Pick<AppProps, 'source' | 'stateDir' | 'intervalMs' | 'now'>>): {
   model: SidebarModel;
   setActive: (projectId: string) => void;
 } {
-  const { source, stateDir, intervalMs, now, activeProject } = props;
+  const { source, stateDir, intervalMs, now } = props;
   const chosen = useRef<string | null>(null);
-  const polled = useRef<string | null>(null);
   const registryError = useRef<string | null>(null);
   const keyRef = useRef('');
   const build = (): SidebarModel => buildSidebarModel(buildProjectViews(source.projects()), {
@@ -105,31 +86,14 @@ function useSidebarModel(props: Required<Pick<AppProps, 'source' | 'stateDir' | 
     keyRef.current = key;
     setModel(next);
   };
-  const poll = useRef(() => {});
-  poll.current = () => {
-    if (!activeProject) return;
-    let id: string | null;
-    try {
-      id = activeProject();
-    } catch {
-      return;
-    }
-    if (id && id !== polled.current) {
-      polled.current = id;
-      chosen.current = id;
-    }
-  };
-
   useEffect(() => {
     const unsubscribe = source.onUpdate((update) => {
       if (update.type === 'registry_error') registryError.current = update.error.message;
       else if (update.type === 'added' || update.type === 'removed') registryError.current = null;
       refresh.current();
     });
-    poll.current();
     refresh.current();
     const timer = setInterval(() => {
-      poll.current();
       refresh.current();
     }, intervalMs);
     return () => {
@@ -153,8 +117,8 @@ function indexOf(keys: string[], key: string | null, fallback: number): number {
   return index >= 0 ? index : Math.max(0, Math.min(fallback, keys.length - 1));
 }
 
-export function App({ source, stateDir, intervalMs = 3000, actions, activeProject, mouse = false, now = Date.now }: AppProps) {
-  const { model, setActive } = useSidebarModel({ source, stateDir, intervalMs, now, activeProject });
+export function App({ source, stateDir, intervalMs = 3000, now = Date.now }: AppProps) {
+  const { model, setActive } = useSidebarModel({ source, stateDir, intervalMs, now });
   const { rows, columns } = useTerminalSize();
   const { isRawModeSupported } = useStdin();
   const keys = isRawModeSupported === true;
@@ -163,7 +127,7 @@ export function App({ source, stateDir, intervalMs = 3000, actions, activeProjec
   const [focus, setFocus] = useState<Focus>('agents');
   const [projectKey, setProjectKey] = useState<string | null>(null);
   const [agentKey, setAgentKey] = useState<string | null>(null);
-  const [result, setResult] = useState<{ text: string; error: boolean } | null>(null);
+  const [result, setResult] = useState<string | null>(null);
 
   const projectIndex = indexOf(model.projects.map(project => project.project_id), projectKey ?? model.activeProjectId, 0);
   const agentIndex = indexOf(model.agents.map(agent => agent.key), agentKey, 0);
@@ -174,51 +138,21 @@ export function App({ source, stateDir, intervalMs = 3000, actions, activeProjec
   );
   const activeProjectView = model.projects.find(project => project.active) ?? null;
 
-  const report = (outcome: Promise<string>) => {
-    outcome.then(
-      text => setResult({ text, error: false }),
-      (error: unknown) => setResult({ text: (error as Error).message, error: true }),
-    );
-  };
   const selectProject = (project: SidebarProject) => {
     setProjectKey(project.project_id);
     if (project.project_id !== model.activeProjectId) setAgentKey(null);
-    const previous = model.activeProjectId;
     setActive(project.project_id);
     setResult(null);
-    if (!actions) return;
-    actions.selectProject(project).then(
-      text => setResult({ text, error: false }),
-      (error: unknown) => {
-        // The cockpit did not switch: the Agents box goes back to the project it shows.
-        if (previous) setActive(previous);
-        setResult({ text: (error as Error).message, error: true });
-      },
-    );
   };
   const openAgent = (agent: SidebarAgent) => {
     setAgentKey(agent.key);
-    if (!actions || !activeProjectView) {
-      setResult({ text: NO_COCKPIT_HINT, error: false });
-      return;
-    }
-    setResult(null);
-    report(actions.openAgent(agent, activeProjectView));
+    setResult(NO_COCKPIT_HINT);
   };
 
   useInput((input, key) => {
-    if (isMouseInput(input)) return;
     if (key.tab) {
       setFocus(current => (current === 'projects' ? 'agents' : 'projects'));
       setResult(null);
-      return;
-    }
-    if (key.escape) {
-      try {
-        actions?.focusSlot();
-      } catch (error) {
-        setResult({ text: (error as Error).message, error: true });
-      }
       return;
     }
     const list = focus === 'projects' ? model.projects.length : model.agents.length;
@@ -237,17 +171,6 @@ export function App({ source, stateDir, intervalMs = 3000, actions, activeProjec
     if (focus === 'projects') setProjectKey(model.projects[next].project_id);
     else setAgentKey(model.agents[next].key);
   }, { isActive: keys });
-
-  useMouseClicks(({ y }) => {
-    const target = sidebarRowTarget(model, layout, y);
-    if (target?.kind === 'project') {
-      setFocus('projects');
-      selectProject(model.projects[target.index]);
-    } else if (target?.kind === 'agent') {
-      setFocus('agents');
-      openAgent(model.agents[target.index]);
-    }
-  }, mouse && keys);
 
   const inner = width - 2;
   return (
@@ -284,8 +207,8 @@ export function App({ source, stateDir, intervalMs = 3000, actions, activeProjec
       </Panel>
       {keys
         ? result
-          ? <Text color={result.error ? 'red' : 'green'} wrap="truncate">{result.text}</Text>
-          : <Text dimColor wrap="truncate">{actions ? KEYS_HINT : KEYS_HINT_STANDALONE}</Text>
+          ? <Text color="green" wrap="truncate">{result}</Text>
+          : <Text dimColor wrap="truncate">{KEYS_HINT}</Text>
         : null}
     </Box>
   );

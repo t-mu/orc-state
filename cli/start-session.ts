@@ -20,11 +20,12 @@
  *   2. Reuse/replace/register the master
  *   3. Start the master provider CLI in a tmux session (resuming its Claude
  *      conversation when one is recorded)
- *   4. Run the cockpit (cli/cockpit2.ts) in this terminal on this project: the
+ *   4. Run the cockpit (cli/cockpit.ts) in this terminal on this project: the
  *      master for a new one, the tab it last showed otherwise. One cockpit runs
  *      per user: a running one is asked to exit; from inside orc's tmux
  *      servers (the master's shell) the project is added to the running
- *      cockpit instead. A leftover tmux-pane cockpit server is ended first.
+ *      cockpit instead. What an older orc's cockpit left (its lock, its
+ *      tmux servers) is retired first.
  *      `--no-cockpit` attaches to the master directly
  *
  * Quitting the cockpit (Ctrl-q, or its prefix then d: F12 d by default), the
@@ -267,8 +268,8 @@ function attachMaster(agent: NonNullable<typeof master>, sessionName: string) {
 }
 
 /**
- * Run the cockpit on this project in this terminal (cli/cockpit2.ts
- * `launchCockpit2`) until it quits or another cockpit takes over; from inside
+ * Run the cockpit on this project in this terminal (cli/cockpit.ts
+ * `launchCockpit`) until it quits or another cockpit takes over; from inside
  * orc's tmux servers, only add the project to the running cockpit. Returns
  * false, with a warning, when the cockpit could not run, so the caller
  * attaches to the master directly.
@@ -280,13 +281,13 @@ async function openCockpit(agent: NonNullable<typeof master>, sessionName: strin
   let launch;
   try {
     // Loaded only for a cockpit: --no-cockpit and a run without a TTY never load the renderer.
-    const { cockpit2KeysHint, launchCockpit2 } = await import('./cockpit2.ts');
-    launch = await launchCockpit2({
+    const { cockpitOpeningHint, launchCockpit } = await import('./cockpit.ts');
+    launch = await launchCockpit({
       projectId: project.id,
       keys,
       onClaimed: (replaced) => {
         if (replaced) console.log(`\nAsked the cockpit running in another terminal (pid ${replaced.pid}) to exit.`);
-        console.log(`\nOpening the cockpit on master '${agent.agent_id}' (${project.name}). ${cockpit2KeysHint(keys)}.`);
+        console.log(`\nOpening the cockpit on master '${agent.agent_id}' (${project.name}). ${cockpitOpeningHint(keys)}.`);
       },
     });
   } catch (error) {

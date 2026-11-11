@@ -109,15 +109,10 @@ describe('cli/orc.ts', () => {
     expect(args.slice(2)).toEqual(['/tmp/watch.ts', '--once']);
   });
 
-  it('dispatches cockpit (the tab bar, the explorer) through tsx/esm from source, not compiled', () => {
-    expect(buildNodeArgs('cockpit', '/tmp/cockpit.ts', ['bar']).slice(0, 1)).toEqual(['--import']);
-    expect(buildNodeArgs('cockpit', '/tmp/cockpit.js', ['bar'])).toEqual(['/tmp/cockpit.js', 'bar']);
-  });
-
-  it('dispatches cockpit2 (its task explorer) through tsx/esm from source, not compiled', () => {
-    expect(buildNodeArgs('cockpit2', '/tmp/cockpit2.ts', ['explorer']).slice(0, 1)).toEqual(['--import']);
-    expect(buildNodeArgs('cockpit2', '/tmp/cockpit2.ts', ['explorer']).slice(2)).toEqual(['/tmp/cockpit2.ts', 'explorer']);
-    expect(buildNodeArgs('cockpit2', '/tmp/cockpit2.js', ['explorer'])).toEqual(['/tmp/cockpit2.js', 'explorer']);
+  it('dispatches cockpit (its task explorer) through tsx/esm from source, not compiled', () => {
+    expect(buildNodeArgs('cockpit', '/tmp/cockpit.ts', ['explorer']).slice(0, 1)).toEqual(['--import']);
+    expect(buildNodeArgs('cockpit', '/tmp/cockpit.ts', ['explorer']).slice(2)).toEqual(['/tmp/cockpit.ts', 'explorer']);
+    expect(buildNodeArgs('cockpit', '/tmp/cockpit.js', ['explorer'])).toEqual(['/tmp/cockpit.js', 'explorer']);
   });
 
   it('dispatches watch without tsx/esm when running compiled', () => {

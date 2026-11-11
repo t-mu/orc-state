@@ -1,8 +1,8 @@
 /**
  * lib/cockpit2/explorer.ts — the task explorer tab and the attention queue (Plan 6 Step 11).
  *
- * The task explorer (`orc cockpit2 explorer --project=<id>`, lib/tui/ExplorerView.ts)
- * runs in a session of the cockpit's private tmux server (`orc-cockpit2`), so
+ * The task explorer (`orc cockpit explorer --project=<id>`, lib/tui/ExplorerView.ts)
+ * runs in a session of the cockpit's private tmux server (`orc-explorer`), so
  * the cockpit shows it through the same control client, screen and slot as
  * an agent's tab. It exists only while it is shown: opening it starts the
  * session, closing it kills the session and the active tab is shown again,
@@ -21,7 +21,7 @@ import type { AttentionAgent, CockpitTabState } from '../cockpitTabs.ts';
 import type { TmuxTarget } from './viewState.ts';
 
 /** The cockpit's private tmux server: it hosts only views the cockpit started (the task explorer). */
-export const EXPLORER_SOCKET = 'orc-cockpit2';
+export const EXPLORER_SOCKET = 'orc-explorer';
 
 /** The explorer's tmux session for `projectId`; tmux reserves `:` and `.` in target names. */
 export function explorerSessionName(projectId: string): string {
@@ -48,7 +48,7 @@ export interface ExplorerHost {
 
 export interface TmuxExplorerHostOptions {
   tmuxBinary: string;
-  /** The private server's socket name (default `orc-cockpit2`). */
+  /** The private server's socket name (default `orc-explorer`). */
   socket?: string;
   /** The shell command that runs the explorer for a project. */
   command: (projectId: string) => string;

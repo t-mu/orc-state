@@ -38,7 +38,6 @@ export const COMMANDS: Record<string, string> = {
   'status':             'status.ts',
   'watch':              'watch.ts',
   'cockpit':            'cockpit.ts',
-  'cockpit2':           'cockpit2.ts',
   'attach':             'attach.ts',
   'task-mark-done':     'task-mark-done.ts',
   'delegate':           'delegate-task.ts',
@@ -136,8 +135,8 @@ const INSPECTION = [
 ];
 
 export function buildNodeArgs(subcommand: string, scriptPath: string, rest: string[]): string[] {
-  // watch, cockpit and cockpit2 (their task explorer, the old cockpit's tab bar) load TSX views, which plain Node cannot run from source.
-  if ((subcommand === 'watch' || subcommand === 'cockpit' || subcommand === 'cockpit2') && scriptPath.endsWith('.ts')) {
+  // watch and cockpit (its task explorer) load TSX views, which plain Node cannot run from source.
+  if ((subcommand === 'watch' || subcommand === 'cockpit') && scriptPath.endsWith('.ts')) {
     // Resolved from orc's own install: a bare `tsx/esm` would resolve from the
     // caller's cwd, which for a registered project is the target repository.
     return ['--import', import.meta.resolve('tsx/esm'), scriptPath, ...rest];

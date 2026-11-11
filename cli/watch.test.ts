@@ -8,7 +8,7 @@ import { startControlServer } from '../lib/controlServer.ts';
 import { closeAllDatabases } from '../lib/eventLog.ts';
 import { buildStatus } from '../lib/statusView.ts';
 import { createTempStateDir, cleanupTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
-import { cockpitActions, runFallbackWatch, runOrcCommand, watchedProjectList, type WatchSource } from './watch.ts';
+import { runFallbackWatch, watchedProjectList, type WatchSource } from './watch.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
@@ -193,31 +193,3 @@ function runCli(args: string[]) {
     encoding: 'utf8',
   });
 }
-
-describe('cockpit sidebar actions', () => {
-  const orc = ['/usr/bin/node', '/orc/cli/orc.ts'];
-  const project = {
-    project_id: 'p-1', name: 'app', state_dir: '/state/p-1', target_repo_root: '/repo/app',
-    connection: 'running' as const, state: 'running' as const, error: null, attention: 0, active: true,
-  };
-  const agent = { key: 'p-1/w1', agent_id: 'w1', role: 'worker', phase: 'implement', elapsed: '3m', detail: null, attention: null };
-
-  it('selects a project and opens an agent through orc cockpit; Esc focuses the slot', async () => {
-    const run = vi.fn((command: string[]) => Promise.resolve(`ran ${command.slice(2).join(' ')}`));
-    const focusSlot = vi.fn();
-    const actions = cockpitActions(orc, run, focusSlot);
-
-    await expect(actions.selectProject(project)).resolves.toBe('ran cockpit project p-1');
-    expect(run).toHaveBeenLastCalledWith([...orc, 'cockpit', 'project', 'p-1']);
-    await expect(actions.openAgent(agent, project)).resolves.toBe('ran cockpit open w1 p-1');
-    expect(run).toHaveBeenLastCalledWith([...orc, 'cockpit', 'open', 'w1', 'p-1']);
-    actions.focusSlot();
-    expect(focusSlot).toHaveBeenCalledTimes(1);
-  });
-
-  it('resolves to what the command printed, and rejects with its error output', async () => {
-    await expect(runOrcCommand([process.execPath, '-e', 'console.log("Switched to project p-1.")'])).resolves.toBe('Switched to project p-1.');
-    await expect(runOrcCommand([process.execPath, '-e', 'console.error("orc cockpit runs inside the cockpit"); process.exit(1)']))
-      .rejects.toThrow('orc cockpit runs inside the cockpit');
-  });
-});
