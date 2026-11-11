@@ -1,5 +1,5 @@
 /**
- * lib/cockpit2/app.ts — the cockpit2 app (Plan 6 Steps 6 and 7).
+ * lib/cockpit2/app.ts — the cockpit2 app (Plan 6 Steps 6 to 9).
  *
  * Draws the whole terminal: a sidebar (left, fixed width), a tab bar (top
  * right, fixed height) and the slot, which shows the active tab: a project's
@@ -22,13 +22,22 @@
  * through `paste()`. The pane's cursor key mode is mirrored to the real
  * terminal. The quit key (`C-q` by default) or the prefix then `d` ends the
  * app; masters, workers and coordinators keep running, and closing a tab only
- * detaches its view. Sidebar and tab bar are placeholders that Step 9
- * replaces (with focus switching), mouse routing comes with Step 10, the
- * explorer and attention keys with Step 11.
+ * detaches its view.
+ *
+ * The sidebar and the tab bar are drawn by widgets.ts from the pure models of
+ * lib/tui. The keys belong to the slot or to a sidebar box: the dashboard key
+ * (F10 by default) or the prefix then `o` focus the sidebar, where arrows (or
+ * j/k), Tab, Enter and Esc navigate, open and return to the pane. Clicks on a
+ * sidebar row open that project or agent, on a tab show it, on a tab's close
+ * marker close it (only the view: the agent keeps running). Pane mouse routing
+ * comes with Step 10, the explorer and attention keys with Step 11.
  */
 import { tmuxSessionTarget, type ProjectConnectionState, type ProjectWatchState, type ProjectWatchUpdate, type StatusView } from '../../client.ts';
-import { MASTER_TAB, closeTab, closedTabs, cycleProject, cycleTab, selectTab, shownTab, showProject, type CockpitTabState, type OpenTab, type TabTransition } from '../cockpitTabs.ts';
+import { MASTER_TAB, closeTab, closedTabs, cycleProject, cycleTab, openAgent, selectTab, shownTab, showProject, type CockpitTabState, type OpenTab, type TabTransition } from '../cockpitTabs.ts';
 import { keyLabel, type CockpitKeys } from '../cockpitKeys.ts';
+import { buildSidebarModel } from '../tui/sidebar.ts';
+import { buildProjectViews } from '../tui/status.ts';
+import { buildTabBarModel, tabAttention, tabBarClickTarget } from '../tui/tabBarModel.ts';
 import { DEFAULT_STYLE, blitScreen, createFrame, drawText, slotCursor, type Frame, type Region } from './frame.ts';
 import { createDispatcher, cursorKeyMirror, modeNotice, type DispatchContext } from './dispatch.ts';
 import { createTokenizer, type Token } from './input.ts';
@@ -39,6 +48,10 @@ import { Sessions, type ConnectPane, type PaneSession } from './sessions.ts';
 import type { TerminalSession } from './terminal.ts';
 import { TmuxControlClient } from './tmuxControl.ts';
 import type { TmuxTarget, ViewState, ViewStateStore } from './viewState.ts';
+import {
+  INITIAL_SIDEBAR_NAV, drawSidebar, drawTabBar, navigateSidebar, sidebarClick, sidebarView, tabBarView, withModeMarks,
+  type SidebarBox, type SidebarCommand, type SidebarNav, type SidebarStep,
+} from './widgets.ts';
 
 // ── layout ────────────────────────────────────────────────────────────────────
 
@@ -87,7 +100,7 @@ export function hitTest(layout: Layout, x: number, y: number): { region: RegionN
   return null;
 }
 
-/** What a mouse event in a region does; Steps 9 and 10 fill these in. */
+/** What a mouse event in a region does; Step 9 fills in the sidebar and tab bar, Step 10 the slot. */
 export type MouseHandlers = Partial<Record<RegionName, (event: MouseEvent, at: { x: number; y: number }) => void>>;
 
 /** Hands a mouse event to the handler of the region under it; returns that region, or null. */
@@ -164,6 +177,8 @@ export interface AppOptions {
   frameMs?: number;
   /** How long a layout change waits before the screen is captured again (default 50 ms). */
   resyncDelayMs?: number;
+  /** How often the sidebar's run times are brought up to date (default 30 s); a render with no change writes nothing. */
+  tickMs?: number;
 }
 
 export interface App {
@@ -180,70 +195,14 @@ export interface App {
 
 const MUTED_STYLE = { ...DEFAULT_STYLE, dim: true };
 const TITLE_STYLE = { ...DEFAULT_STYLE, bold: true };
-const INVERSE_STYLE = { ...DEFAULT_STYLE, bold: true, inverse: true };
-
-function drawBox(frame: Frame, region: Region, title: string): void {
-  if (region.cols < 2 || region.rows < 2) return;
-  const right = region.x + region.cols - 1;
-  const bottom = region.y + region.rows - 1;
-  const horizontal = '─'.repeat(region.cols - 2);
-  drawText(frame, region.x, region.y, `╭${horizontal}╮`, MUTED_STYLE);
-  drawText(frame, region.x, bottom, `╰${horizontal}╯`, MUTED_STYLE);
-  for (let y = region.y + 1; y < bottom; y++) {
-    drawText(frame, region.x, y, '│', MUTED_STYLE);
-    drawText(frame, right, y, '│', MUTED_STYLE);
-  }
-  if (title && region.cols > 4) drawText(frame, region.x + 2, region.y, ` ${title} `, TITLE_STYLE, region.cols - 4);
-}
 
 /** How to quit, as the tab bar shows it. */
 export function quitHint(keys: CockpitKeys): string {
   return [...(keys.quit ? [`${keyLabel(keys.quit)}: quit`] : []), `${keyLabel(keys.prefix)} d: quit`].join(' · ');
 }
 
-/** The placeholder sidebar: the cockpit's projects, the active one marked (Step 9 draws the real one). */
-function drawSidebar(frame: Frame, region: Region, tabs: CockpitTabState, nameOf: (projectId: string) => string): void {
-  const active = tabs.activeProject;
-  drawBox(frame, region, active ? nameOf(active) : 'orc');
-  tabs.projects.forEach((project, index) => {
-    if (index + 2 >= region.rows || region.cols < 6) return;
-    const isActive = project.projectId === active;
-    drawText(frame, region.x + 2, region.y + 1 + index, `${isActive ? '›' : ' '} ${nameOf(project.projectId)}`,
-      isActive ? TITLE_STYLE : MUTED_STYLE, region.cols - 4);
-  });
-}
-
-/** The mark before an agent tab in typing mode. */
-export const TYPING_MARK = '✎';
-
-/**
- * The placeholder tab bar (Step 9 draws the real one): the shown tab's mode
- * and its keys on the top row, then the active project's tabs, the active one
- * bold and a typing tab marked, and how to quit. `mode` is null when no tab is shown.
- */
-function drawTabBar(frame: Frame, region: Region, tabs: CockpitTabState, keys: CockpitKeys, saveError: string | null,
-  mode: DispatchContext | null, typing: (agentId: string) => boolean): void {
-  if (region.cols === 0 || region.rows === 0) return;
-  const row = region.y + Math.min(1, region.rows - 1);
-  const notice = mode ? modeNotice(mode) : null;
-  if (notice && region.rows >= 2) {
-    drawText(frame, region.x + 1, region.y, notice, mode?.agentTab && mode.mode === 'typing' ? INVERSE_STYLE : MUTED_STYLE, region.cols - 1);
-  }
-  const project = tabs.projects.find((entry) => entry.projectId === tabs.activeProject);
-  let x = region.x + 1;
-  for (const tab of project ? [null, ...project.tabs] : []) {
-    const label = ` ${tab !== null && typing(tab) ? `${TYPING_MARK} ` : ''}${tab ?? MASTER_TAB} `;
-    const room = region.x + region.cols - x;
-    if (room <= 0) break;
-    drawText(frame, x, row, label, tab === project?.active ? TITLE_STYLE : MUTED_STYLE, room);
-    x += label.length + 1;
-  }
-  if (region.rows >= 3) drawText(frame, region.x, region.y + region.rows - 1, '─'.repeat(region.cols), MUTED_STYLE);
-  // Without a row of its own (a tiny terminal) the mode takes the quit hint's place.
-  const hint = saveError ? `view state not saved: ${saveError}` : notice && region.rows < 2 ? notice : quitHint(keys);
-  const room = region.x + region.cols - x;
-  if (room > 0) drawText(frame, Math.max(x, region.x + region.cols - hint.length - 1), row, hint, MUTED_STYLE, room);
-}
+/** Where the keys go: the slot (the shown tab) or a sidebar box. */
+export type Focus = 'slot' | SidebarBox;
 
 function drawMessage(frame: Frame, region: Region, lines: string[]): void {
   lines.forEach((line, index) => {
@@ -308,8 +267,11 @@ export function runApp(options: AppOptions): App {
   let renderTimer: ReturnType<typeof setTimeout> | null = null;
   let lastRender = 0;
   let closed = false;
-  /** Only the slot exists to focus until Step 9 makes the sidebar focusable. */
-  const focus: RegionName = 'slot';
+  let focus: Focus = 'slot';
+  let nav: SidebarNav = INITIAL_SIDEBAR_NAV;
+  /** Why the last tab transition was refused; shown in the tab bar until the next input. */
+  let refusal: string | null = null;
+  let registryError: string | null = null;
 
   let resolveDone!: () => void;
   const done = new Promise<void>((resolve) => { resolveDone = resolve; });
@@ -338,7 +300,6 @@ export function runApp(options: AppOptions): App {
     const state = watched.get(projectId);
     return { stateDir: state?.project.state_dir ?? null, running: state?.connection === 'running', status: state?.status ?? null };
   };
-  const nameOf = (projectId: string) => watched.get(projectId)?.project.name ?? projectId;
 
   /** Keeps each running project's master target from its status view, so the master can be found while the coordinator is down. */
   function rememberMasterTargets(): boolean {
@@ -373,7 +334,13 @@ export function runApp(options: AppOptions): App {
   }
 
   const stopWatching = options.projects.onUpdate((update) => {
-    if (closed || update.type === 'event' || update.type === 'registry_error') return;
+    if (closed || update.type === 'event') return;
+    if (update.type === 'registry_error') {
+      registryError = update.error.message;
+      scheduleRender();
+      return;
+    }
+    if (update.type === 'removed' || update.type === 'added') registryError = null;
     if (update.type === 'removed') watched.delete(update.project_id);
     else if (update.type === 'added') watched.set(update.project_id, update.state);
     else {
@@ -390,6 +357,31 @@ export function runApp(options: AppOptions): App {
     showActive();
   });
 
+  // ── widgets ──
+  /** The sidebar as drawn now: every registered project, the active one's agents. */
+  function currentSidebar() {
+    const model = buildSidebarModel(buildProjectViews([...watched.values()]), {
+      stateDir: '', activeProjectId: tabs.activeProject, nowMs: Date.now(), registryError,
+    });
+    return sidebarView(model, layout.sidebar.rows, nav);
+  }
+
+  /** The tab bar as drawn now: the active project's tabs, agent tabs marked with their mode and badged when they need a human. */
+  function currentTabBar() {
+    const project = tabs.activeProject;
+    const model = buildTabBarModel(tabs, tabAttention(buildProjectViews([...watched.values()]), project));
+    const marked = withModeMarks(model, (agentId) => project !== null && typingTabs.has(tabKey({ projectId: project, agentId })));
+    return tabBarView(marked, layout.tabBar.cols);
+  }
+
+  /** The keys' context: the shown tab's mode, and whether the sidebar has the keys. */
+  function keyContext(): DispatchContext {
+    const tab = shownTab(tabs);
+    // With no tab shown nothing takes keys; cockpit keys still work.
+    const context: DispatchContext = tab ? inputContext(tab) : { mode: 'view', agentTab: false };
+    return focus === 'slot' ? context : { ...context, sidebar: true };
+  }
+
   // ── rendering ──
   function render(): void {
     renderTimer = null;
@@ -397,9 +389,12 @@ export function runApp(options: AppOptions): App {
     lastRender = Date.now();
     const frame = createFrame(layout.cols, layout.rows);
     const tab = shownTab(tabs);
-    drawSidebar(frame, layout.sidebar, tabs, nameOf);
-    drawTabBar(frame, layout.tabBar, tabs, keys, lastSaveError, tab ? inputContext(tab) : null,
-      (agentId) => tabs.activeProject !== null && typingTabs.has(tabKey({ projectId: tabs.activeProject, agentId })));
+    drawSidebar(frame, layout.sidebar, currentSidebar(), { focus: focus === 'slot' ? null : focus, footer: modeNotice(keyContext()) });
+    drawTabBar(frame, layout.tabBar, currentTabBar(), {
+      slotFocused: focus === 'slot',
+      error: refusal ?? (lastSaveError ? `view state not saved: ${lastSaveError}` : null),
+      hint: quitHint(keys),
+    });
     const session = sessions.shown();
     const project = tab && watched.get(tab.projectId);
     const message = slotMessage({
@@ -430,7 +425,13 @@ export function runApp(options: AppOptions): App {
   // ── tabs ──
   function apply(transition: (state: CockpitTabState) => TabTransition): TabTransition {
     const result = transition(tabs);
-    if (closed || !result.ok) return result;
+    if (closed) return result;
+    if (!result.ok) {
+      refusal = result.message;
+      scheduleRender();
+      return result;
+    }
+    refusal = null;
     // Closing a tab only detaches its view; the agent keeps running.
     for (const tab of closedTabs(tabs, result.state)) {
       sessions.close(tabKey(tab));
@@ -447,8 +448,50 @@ export function runApp(options: AppOptions): App {
   /** Agent tabs in typing mode, by tab key; every other agent tab is view-only. */
   const typingTabs = new Set<string>();
   const mirrorCursorKeys = cursorKeyMirror((data) => terminal.write(data));
-  /** Steps 9 and 10 fill these in: sidebar and tab bar clicks, pane mouse routing. */
-  const mouseHandlers: MouseHandlers = {};
+  /** A plain left-button press: what selects a row or a tab (motion, releases, wheel and modified clicks do nothing here). */
+  const isClick = (event: MouseEvent) => event.button === 'left' && !event.motion && !event.release && !event.shift && !event.alt && !event.ctrl;
+
+  function setFocus(next: Focus): void {
+    if (focus === next) return;
+    focus = next;
+    scheduleRender();
+  }
+
+  /** Runs what a sidebar key or click asks for; opening never moves the keys away from the sidebar. */
+  function runSidebar(step: SidebarStep): void {
+    nav = step.nav;
+    scheduleRender();
+    const command: SidebarCommand | null = step.command;
+    if (!command) return;
+    if (command.type === 'focusSlot') setFocus('slot');
+    else if (command.type === 'openProject') apply((state) => showProject(state, command.projectId));
+    else apply((state) => openAgent(state, command.projectId, command.agentId));
+  }
+
+  /** Sidebar and tab bar clicks; a click in the slot gives it the keys (Step 10 routes pane mouse events). */
+  const mouseHandlers: MouseHandlers = {
+    sidebar: (event, at) => {
+      if (!isClick(event)) return;
+      const step = sidebarClick(currentSidebar(), nav, at.y);
+      if (!step) return;
+      setFocus(step.nav.box);
+      runSidebar(step);
+    },
+    tabBar: (event, at) => {
+      if (!isClick(event)) return;
+      const { model, layout: bar } = currentTabBar();
+      const click = tabBarClickTarget(model, bar, at.x);
+      if (!click) return;
+      const id = click.tab.agentId ?? MASTER_TAB;
+      // Closing only detaches the view; the agent keeps running.
+      if (click.kind === 'close') apply((state) => closeTab(state, id));
+      else {
+        setFocus('slot');
+        apply((state) => selectTab(state, id));
+      }
+    },
+    slot: (event) => { if (isClick(event)) setFocus('slot'); },
+  };
 
   /** The shown tab's input mode: the master always types, an agent tab only after `i`. */
   function inputContext(tab: OpenTab): DispatchContext {
@@ -466,9 +509,11 @@ export function runApp(options: AppOptions): App {
   function onToken(token: Token): void {
     if (closed) return;
     const tab = shownTab(tabs);
-    // With no tab shown nothing takes keys; cockpit keys still work.
-    const context: DispatchContext = tab ? inputContext(tab) : { mode: 'view', agentTab: false };
-    const action = dispatcher.dispatch(token, context);
+    if (refusal && token.kind !== 'mouse') {
+      refusal = null;
+      scheduleRender();
+    }
+    const action = dispatcher.dispatch(token, keyContext());
     switch (action.type) {
       case 'forward': sessions.shown()?.sendBytes(action.bytes)?.catch(ignoreInputError); return;
       // A paste is UTF-8 text from the terminal; a byte that is not UTF-8 arrives as U+FFFD (cockpit2 runs the real terminal as UTF-8).
@@ -491,13 +536,25 @@ export function runApp(options: AppOptions): App {
         else typingTabs.delete(tabKey(tab));
         scheduleRender();
         return;
-      // Focus switching comes with Step 9, the explorer and attention jump with Step 11.
-      case 'switchFocus': case 'focusSidebar': case 'explorer': case 'attention': case 'drop': return;
+      case 'switchFocus': setFocus(focus === 'slot' ? nav.box : 'slot'); return;
+      case 'focusSidebar': setFocus(nav.box); return;
+      case 'sidebar': {
+        // Only a focused sidebar gets these: the box the keys are in follows the cursor.
+        const step = navigateSidebar(currentSidebar(), nav, action.key);
+        setFocus(step.nav.box);
+        runSidebar(step);
+        return;
+      }
+      // The explorer and attention jump come with Step 11.
+      case 'explorer': case 'attention': case 'drop': return;
     }
   }
 
   const tokenizer = createTokenizer({ onFlush: (tokens) => tokens.forEach(onToken) });
   const stopInput = terminal.onInput((chunk) => tokenizer.push(chunk).forEach(onToken));
+  // Run times in the sidebar change by the minute; a render with nothing changed writes nothing.
+  const ticker = setInterval(scheduleRender, options.tickMs ?? 30_000);
+  ticker.unref?.();
   const stopResize = terminal.onResize(() => {
     const { cols, rows } = terminal.size();
     layout = computeLayout(cols, rows);
@@ -509,6 +566,7 @@ export function runApp(options: AppOptions): App {
     if (closed) return;
     closed = true;
     if (renderTimer) clearTimeout(renderTimer);
+    clearInterval(ticker);
     tokenizer.flush();
     stopInput();
     stopResize();

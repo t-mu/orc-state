@@ -238,15 +238,24 @@ class MemoryStore implements ViewStateStore {
 const MASTER_TARGET = { socket: 'orc-sock', session: 'orc-master' };
 const W1_TARGET = { socket: 'orc-sock', session: 'orc-w1' };
 
-function projectState(id: string, options: { running?: boolean; master?: TmuxTarget | null; workers?: Array<{ agent_id: string } & TmuxTarget> } = {}): ProjectWatchState {
+type FakeWorker = { agent_id: string; attention?: { kind: 'question' | 'permission_prompt' | 'stalled' | 'no_progress'; detail: string | null } } & TmuxTarget;
+
+function projectState(id: string, options: { running?: boolean; master?: TmuxTarget | null; workers?: FakeWorker[]; name?: string } = {}): ProjectWatchState {
   const { running = true, master = MASTER_TARGET, workers = [] } = options;
   return {
-    project: { id, name: `${id}-project`, target_repo_root: `/repo/${id}`, state_dir: `/state/${id}`, repo_present: true, control_socket: null, coordinator_running: running },
+    project: { id, name: options.name ?? `${id}-project`, target_repo_root: `/repo/${id}`, state_dir: `/state/${id}`, repo_present: true, control_socket: null, coordinator_running: running },
     connection: running ? 'running' : 'stopped',
     error: null,
     status: {
       master: { agent_id: 'master', tmux_socket: master?.socket ?? null, tmux_session: master?.session ?? null },
-      worker_capacity: { slots: workers.map((worker) => ({ ...worker, tmux_socket: worker.socket, tmux_session: worker.session, session_handle: `tmux:${worker.socket}:${worker.session}` })) },
+      worker_capacity: {
+        configured_slots: 2, used_slots: workers.length,
+        slots: workers.map((worker) => ({
+          ...worker, role: 'worker', status: 'running', slot_state: 'busy', attention: worker.attention ?? null,
+          tmux_socket: worker.socket, tmux_session: worker.session, session_handle: `tmux:${worker.socket}:${worker.session}`,
+        })),
+      },
+      claims: { active: [] },
       scouts: [],
     } as never,
     cursor: null,
@@ -281,6 +290,21 @@ async function waitForTabBar(terminal: FakeTerminal, y: number, part: string): P
   const until = Date.now() + 2_000;
   while (!text(await shown(terminal), y, SIDEBAR_COLS).includes(part)) {
     if (Date.now() > until) throw new Error(`timed out waiting for ${JSON.stringify(part)} in tab bar row ${y}: ${text(await shown(terminal), y, SIDEBAR_COLS)}`);
+    await sleep(25);
+  }
+}
+
+/** The sidebar's rows as the real terminal shows them. */
+async function sidebarRows(terminal: FakeTerminal): Promise<string[]> {
+  const screen = await shown(terminal);
+  return Array.from({ length: terminal.rows }, (_, y) => text(screen, y, 0, SIDEBAR_COLS));
+}
+
+/** Waits until some sidebar row contains `part`. */
+async function waitForSidebar(terminal: FakeTerminal, part: string): Promise<void> {
+  const until = Date.now() + 2_000;
+  while (!(await sidebarRows(terminal)).some((row) => row.includes(part))) {
+    if (Date.now() > until) throw new Error(`timed out waiting for ${JSON.stringify(part)} in the sidebar:\n${(await sidebarRows(terminal)).join('\n')}`);
     await sleep(25);
   }
 }
@@ -324,14 +348,14 @@ async function attached(terminal: FakeTerminal, session = 'orc-master'): Promise
 }
 
 describe('runApp (fake tmux client)', () => {
-  it('shows the master in the slot next to the placeholder sidebar and tab bar, its window sized to the slot', async () => {
+  it('shows the master in the slot next to the sidebar and tab bar, its window sized to the slot', async () => {
     const { terminal, clients } = start();
     await attached(terminal);
     expect(clients.map((fake) => [fake.target, fake.ignoreSize])).toEqual([[MASTER_TARGET, false]]);
     expect(clients[0].resizes).toEqual(['46x21']);
     const screen = await shown(terminal);
     expect(text(screen, 3, 34)).toBe('$ hello from orc-master');
-    expect(text(screen, 0, 0, 34)).toContain('demo-project');
+    expect((await sidebarRows(terminal)).some((row) => row.includes('▸ demo-project'))).toBe(true);
     expect(text(screen, 1, 34)).toContain('master');
     expect(text(screen, 1, 34)).toContain('Ctrl-q: quit · F12 d: quit');
     // The cursor is where the pane has it, in frame coordinates.
@@ -573,10 +597,11 @@ describe('runApp tabs and projects (fake tmux clients)', () => {
     expect(worker.sent).toEqual([]);
     expect(worker.pastes).toEqual([]);
     expect(clients[0].sent).toEqual([]);
-    await waitForTabBar(terminal, 0, '[view] i: type · q/Esc/Ctrl-D/C/]: close');
+    await waitForSidebar(terminal, '[view] i: type · q/Esc: close');
+    await waitForTabBar(terminal, 1, '○ w1');
 
     terminal.type('i');
-    await waitForTabBar(terminal, 0, '[typing → agent] Ctrl-]: stop typing');
+    await waitForSidebar(terminal, '[typing] Ctrl-]: stop typing');
     await waitForTabBar(terminal, 1, '✎ w1');
     expect(worker.sent).toEqual([]); // i itself only starts typing
     terminal.type(`q\x04\x03${ESC}[A`);
@@ -585,7 +610,7 @@ describe('runApp tabs and projects (fake tmux clients)', () => {
     expect(worker.pastes).toEqual(['%2 pasted']);
 
     terminal.type('\x1d'); // Ctrl-] back to view mode
-    await waitForTabBar(terminal, 0, '[view]');
+    await waitForSidebar(terminal, '[view]');
     terminal.type('x');
     expect(worker.sent).toHaveLength(4);
     expect(app.tabs().projects[0].tabs).toEqual(['w1']);
@@ -733,9 +758,7 @@ describe('runApp tabs and projects (fake tmux clients)', () => {
     store.failWith = new Error('EACCES: permission denied');
     app.apply((state) => openAgent(state, 'demo', 'w1'));
     await waitFor(() => app.saveError() === 'EACCES: permission denied');
-    for (let until = Date.now() + 4_000; !text(await shown(terminal), 1, 34).includes('view state not saved'); await sleep(25)) {
-      if (Date.now() > until) throw new Error(`no save error in the tab bar: ${text(await shown(terminal), 1, 34)}`);
-    }
+    await waitForTabBar(terminal, 2, 'view state not saved: EACCES');
     store.failWith = null;
     app.apply((state) => selectTab(state, MASTER_TAB));
     await waitFor(() => app.saveError() === null);
@@ -760,11 +783,183 @@ describe('runApp tabs and projects (fake tmux clients)', () => {
     await attached(terminal, 'orc-master-other');
     expect(clients.map((fake) => fake.target)).toEqual([MASTER_TARGET, other]);
     expect(clients[0].paused).toEqual(['%1']);
-    expect(text(await shown(terminal), 0, 0, 34)).toContain('other-project');
+    await waitForSidebar(terminal, '▸ other-project');
     app.apply((state) => showProject(state, 'demo'));
     await waitForSlotLine(terminal, '$ hello from orc-master');
     expect(clients[0].resumed).toEqual(['%1']);
     expect(app.tabs().projects.map((project) => project.projectId)).toEqual(['demo', 'other']);
+  });
+});
+
+// ── sidebar and tab bar widgets ───────────────────────────────────────────────
+
+const F10 = `${ESC}[21~`;
+const WIDE_TARGET = { socket: 'orc-sock', session: 'orc-wide' };
+const WIDE_AGENT = '作業者-🚀';
+/** An SGR left-button press (or release) at frame cell (x, y). */
+const click = (x: number, y: number, release = false) => `${ESC}[<0;${x + 1};${y + 1}${release ? 'm' : 'M'}`;
+/** The frame column of the first cell on row `y` whose grapheme is `grapheme` (a wide one takes two columns), or -1. */
+async function columnOf(terminal: FakeTerminal, y: number, grapheme: string, from = 0): Promise<number> {
+  const row = (await shown(terminal)).row(y);
+  return row.findIndex((cell, x) => x >= from && cell.text === grapheme);
+}
+async function sidebarRow(terminal: FakeTerminal, part: string): Promise<number> {
+  await waitForSidebar(terminal, part);
+  return (await sidebarRows(terminal)).findIndex((row) => row.includes(part));
+}
+
+describe('runApp sidebar and tab bar (fake tmux clients)', () => {
+  const withWorkers = () => start({
+    projects: [
+      projectState('demo', { workers: [{ agent_id: 'w1', ...W1_TARGET }, { agent_id: WIDE_AGENT, ...WIDE_TARGET, attention: { kind: 'question', detail: 'Which one?' } }] }),
+      projectState('other', { master: { socket: 'orc-other', session: 'orc-master-other' }, name: '日本語' }),
+    ],
+  });
+
+  it('draws the sidebar from the watched projects and agents, wide names included, and badges an agent needing attention', async () => {
+    const { terminal } = withWorkers();
+    await attached(terminal);
+    await waitForSidebar(terminal, '▸ demo-project');
+    await waitForSidebar(terminal, '日本語');
+    await waitForSidebar(terminal, `${WIDE_AGENT}`);
+    const rows = await sidebarRows(terminal);
+    // The agent needing attention sorts first and shows its badge in its phase's place.
+    const wide = rows.findIndex((row) => row.includes(WIDE_AGENT));
+    expect(rows[wide]).toContain('QUESTION');
+    expect(wide).toBeLessThan(rows.findIndex((row) => row.includes('w1 ')));
+    expect(rows[0].endsWith('╮')).toBe(true);
+    // Every box row ends on the sidebar's right border, wide names or not.
+    const screen = await shown(terminal);
+    for (let y = 0; y < 14; y++) expect(screen.row(y)[SIDEBAR_COLS - 1].text).toMatch(/[╮│╯]/);
+    expect(rows[23]).toContain('[master] keys go to the master');
+  });
+
+  it('opens an agent on a click on its row, shows a tab on a click and closes it on its close marker, the worker untouched', async () => {
+    const { terminal, clients, app } = withWorkers();
+    terminal.resizeTo(120, 30); // room for all three tabs
+    await waitForSlotText(terminal, '$ hello from orc-master');
+    terminal.type(click(3, await sidebarRow(terminal, 'w1 ')));
+    expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: ['w1'], active: 'w1' });
+    await waitForSlotText(terminal, '$ hello from orc-w1');
+    // The second row of an agent opens it too; a wide name's tab lays out by display width.
+    terminal.type(click(3, (await sidebarRow(terminal, WIDE_AGENT)) + 1));
+    expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: ['w1', WIDE_AGENT], active: WIDE_AGENT });
+    await waitForSlotText(terminal, '$ hello from orc-wide');
+    await waitForTabBar(terminal, 1, `○ ${WIDE_AGENT} QUESTION ×`);
+
+    // A release, motion or a right click does nothing; a press on the master tab shows it.
+    const masterX = (await columnOf(terminal, 1, 'm', SIDEBAR_COLS));
+    terminal.type(click(masterX, 1, true));
+    terminal.type(`${ESC}[<32;${masterX + 1};2M${ESC}[<2;${masterX + 1};2M`);
+    expect(app.tabs().projects[0].active).toBe(WIDE_AGENT);
+    terminal.type(click(masterX, 1));
+    expect(app.tabs().projects[0].active).toBe(null);
+    await waitForSlotText(terminal, '$ hello from orc-master');
+
+    // The close marker of the wide-named tab, found by its column on the real terminal.
+    const firstClose = await columnOf(terminal, 1, '×', SIDEBAR_COLS);
+    const wideClose = await columnOf(terminal, 1, '×', firstClose + 1);
+    terminal.type(click(wideClose, 1));
+    expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: ['w1'], active: null });
+    const wideClient = clients.find((fake) => fake.target.session === 'orc-wide')!;
+    expect(wideClient.closed).toBe(1);
+    expect(wideClient.sent).toEqual([]);
+    expect(wideClient.pastes).toEqual([]);
+    for (let until = Date.now() + 2_000; text(await shown(terminal), 1, SIDEBAR_COLS).includes(WIDE_AGENT); await sleep(25)) {
+      if (Date.now() > until) throw new Error('the closed tab is still drawn');
+    }
+    // A click on the master tab's text never closes it.
+    terminal.type(click(masterX + 7, 1));
+    expect(app.tabs().projects[0].tabs).toEqual(['w1']);
+  });
+
+  it('switches projects on a click on a project row', async () => {
+    const { terminal, app } = withWorkers();
+    await attached(terminal);
+    terminal.type(click(5, await sidebarRow(terminal, '日本語')));
+    expect(app.tabs().activeProject).toBe('other');
+    await attached(terminal, 'orc-master-other');
+    await waitForSidebar(terminal, '▸ 日本語');
+  });
+
+  it('navigates the sidebar by keyboard: F10 focuses it, arrows move, Enter opens, Tab switches box, Esc returns to the pane', async () => {
+    const { terminal, clients, app } = withWorkers();
+    await attached(terminal);
+    const master = clients[0];
+    terminal.type(F10);
+    await waitForSidebar(terminal, '↑↓ Tab · Enter: open · Esc: pane');
+    // The cursor starts on the first agent (the one needing attention); down moves to w1, Enter opens it.
+    terminal.type(`${ESC}[B\r`);
+    expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: ['w1'], active: 'w1' });
+    // The keys stay with the sidebar: nothing reaches a pane, not even a paste.
+    terminal.type(`xi${ESC}[200~p${ESC}[201~`);
+    await sleep(30);
+    expect(master.sent).toEqual([]);
+    expect(clients.every((fake) => fake.sent.length === 0 && fake.pastes.length === 0)).toBe(true);
+    // k moves up again, Enter opens the wide-named agent.
+    terminal.type('k\r');
+    expect(app.tabs().projects[0].active).toBe(WIDE_AGENT);
+
+    // Tab to the projects box: down and Enter switch project.
+    terminal.type('\tj\r');
+    expect(app.tabs().activeProject).toBe('other');
+    await waitForSidebar(terminal, '▸ 日本語');
+    terminal.type(`${ESC}[Z`); // Shift-Tab back to the agents box
+    terminal.type(ESC);
+    // Esc goes to the pane after the lone-Esc timeout: then keys reach the master again.
+    await waitForSidebar(terminal, '[master] keys go to the master');
+    await attached(terminal, 'orc-master-other');
+    const other = clients.find((fake) => fake.target.session === 'orc-master-other')!;
+    terminal.type('y');
+    expect(other.sent).toEqual(['%' + other.paneId.slice(1) + ' y']);
+  });
+
+  it('toggles the focus with the prefix then o, and a click in the slot gives it the keys', async () => {
+    const { terminal, client } = withWorkers();
+    await attached(terminal);
+    terminal.type(`${F12}o`);
+    await waitForSidebar(terminal, 'Enter: open');
+    let screen = await shown(terminal);
+    expect(screen.cursor().visible).toBe(false); // the pane's cursor is not shown while the sidebar has the keys
+    terminal.type(`${F12}o`);
+    await waitForSidebar(terminal, '[master]');
+    terminal.type('a');
+    expect(client().sent).toEqual(['%1 a']);
+    terminal.type(F10);
+    await waitForSidebar(terminal, 'Enter: open');
+    terminal.type(click(50, 10));
+    await waitForSidebar(terminal, '[master]');
+    screen = await shown(terminal);
+    expect(screen.cursor().visible).toBe(true);
+  });
+
+  it('shows why a tab transition was refused until the next key', async () => {
+    const { terminal, app } = withWorkers();
+    await attached(terminal);
+    terminal.type(`${F12}&`);
+    await waitForTabBar(terminal, 2, 'The master tab stays open');
+    terminal.type('x');
+    for (let until = Date.now() + 2_000; text(await shown(terminal), 2, SIDEBAR_COLS).includes('stays open'); await sleep(25)) {
+      if (Date.now() > until) throw new Error('the refusal is still shown');
+    }
+    expect(app.tabs().projects[0].tabs).toEqual([]);
+  });
+
+  it('keeps the sidebar width and the tab bar height on every resize, usable at 80x24', async () => {
+    const { terminal } = withWorkers();
+    await attached(terminal);
+    for (const [cols, rows] of [[200, 60], [80, 24], [120, 40]] as const) {
+      terminal.resizeTo(cols, rows);
+      await waitForSidebar(terminal, '▸ demo-project');
+      for (let until = Date.now() + 2_000; ; await sleep(25)) {
+        const screen = await shown(terminal);
+        const footer = text(screen, rows - 1, 0, SIDEBAR_COLS);
+        if (screen.row(0)[SIDEBAR_COLS - 1].text === '╮' && footer.includes('[master]') && text(screen, 2, SIDEBAR_COLS).startsWith('╯')) break;
+        if (Date.now() > until) throw new Error(`layout not redrawn at ${cols}x${rows}`);
+      }
+      const { slot } = computeLayout(cols, rows);
+      expect(slot).toEqual({ x: SIDEBAR_COLS, y: TAB_BAR_ROWS, cols: cols - SIDEBAR_COLS, rows: rows - TAB_BAR_ROWS });
+    }
   });
 });
 

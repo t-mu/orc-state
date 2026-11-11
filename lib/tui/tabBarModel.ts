@@ -1,3 +1,4 @@
+import { stringWidth } from '../cellWidth.ts';
 import { ATTENTION_BADGE, fitText, type AttentionKind } from './sidebar.ts';
 import type { TuiProjectView } from './status.ts';
 
@@ -7,7 +8,8 @@ import type { TuiProjectView } from './status.ts';
  * the active one open towards the slot, an agent needing attention with its
  * badge, and a window around the active tab when they do not all fit. Pure
  * data, so the view can compare two models and skip a render when nothing
- * changed, and hit-test a click by column.
+ * changed, and hit-test a click by column. Widths and columns are display
+ * widths (lib/cellWidth.ts), so wide-character names lay out correctly.
  */
 
 /** The cockpit's tab state as `orc cockpit` stores it (lib/cockpitTabs.ts), structurally. */
@@ -91,7 +93,7 @@ const tabText = (tab: TabBarTab) => ` ${tab.number} ${tab.label}`;
 const tabBadge = (tab: TabBarTab) => (tab.attention ? ` ${ATTENTION_BADGE[tab.attention]}` : '');
 const tabTail = (tab: TabBarTab) => `${tab.closable ? ` ${CLOSE_MARKER}` : ''} `;
 /** A tab's width: its borders, its text, badge, close marker and padding. */
-export const tabWidth = (tab: TabBarTab) => 2 + tabText(tab).length + tabBadge(tab).length + tabTail(tab).length;
+export const tabWidth = (tab: TabBarTab) => 2 + stringWidth(tabText(tab)) + stringWidth(tabBadge(tab)) + stringWidth(tabTail(tab));
 
 const leftMarkerOf = (hidden: number) => (hidden > 0 ? `‹ ${hidden} ` : '');
 const rightMarkerOf = (hidden: number) => (hidden > 0 ? ` ${hidden} ›` : '');
@@ -106,7 +108,7 @@ export function layoutTabBar(model: TabBarModel, columns: number): TabBarLayout 
   const { tabs } = model;
   const widths = tabs.map(tabWidth);
   const total = (start: number, end: number) => widths.slice(start, end).reduce((sum, width) => sum + width, 0)
-    + leftMarkerOf(start).length + rightMarkerOf(tabs.length - end).length;
+    + stringWidth(leftMarkerOf(start)) + stringWidth(rightMarkerOf(tabs.length - end));
   const fits = (start: number, end: number) => total(start, end) <= columns;
 
   let start = 0;
@@ -133,20 +135,20 @@ export function layoutTabBar(model: TabBarModel, columns: number): TabBarLayout 
   // Below zero when even the active tab alone does not fit: its text is cut, then its badge.
   const spare = columns - total(start, end);
   const cells: TabBarCell[] = [];
-  let x = leftMarker.length;
+  let x = stringWidth(leftMarker);
   for (let index = start; index < end; index += 1) {
     const tab = tabs[index];
     const tail = tabTail(tab);
     let text = tabText(tab);
     let badge = tabBadge(tab);
     if (spare < 0) {
-      const room = Math.max(0, columns - leftMarker.length - rightMarker.length - 2 - tail.length);
+      const room = Math.max(0, columns - stringWidth(leftMarker) - stringWidth(rightMarker) - 2 - stringWidth(tail));
       // The badge says the agent needs a human: the name gives way first, down to its number.
-      text = fitText(text, Math.min(text.length, Math.max(4, room - badge.length)));
-      badge = fitText(badge, Math.max(0, room - text.length));
+      text = fitText(text, Math.min(stringWidth(text), Math.max(4, room - stringWidth(badge))));
+      badge = fitText(badge, Math.max(0, room - stringWidth(text)));
     }
-    const width = 2 + text.length + badge.length + tail.length;
-    cells.push({ index, x, width, text, badge, closeX: tab.closable ? x + 1 + text.length + badge.length + 1 : null });
+    const width = 2 + stringWidth(text) + stringWidth(badge) + stringWidth(tail);
+    cells.push({ index, x, width, text, badge, closeX: tab.closable ? x + 1 + stringWidth(text) + stringWidth(badge) + 1 : null });
     x += width;
   }
   return { cells, hiddenLeft: start, hiddenRight: tabs.length - end, leftMarker, rightMarker };
@@ -179,9 +181,9 @@ export function tabBarRows(model: TabBarModel, layout: TabBarLayout, columns: nu
   const middle: TabBarSegment[] = [];
   const bottom: TabBarSegment[] = [];
   if (layout.leftMarker) {
-    top.push({ kind: 'border', text: ' '.repeat(layout.leftMarker.length) });
+    top.push({ kind: 'border', text: ' '.repeat(stringWidth(layout.leftMarker)) });
     middle.push({ kind: 'marker', text: layout.leftMarker });
-    bottom.push({ kind: 'rule', text: '─'.repeat(layout.leftMarker.length) });
+    bottom.push({ kind: 'rule', text: '─'.repeat(stringWidth(layout.leftMarker)) });
   }
   for (const cell of layout.cells) {
     const tab = model.tabs[cell.index];
@@ -199,7 +201,7 @@ export function tabBarRows(model: TabBarModel, layout: TabBarLayout, columns: nu
     bottom.push({ kind: 'border', text: tab.active ? `╯${' '.repeat(inner)}╰` : `┴${'─'.repeat(inner)}┴`, tab: cell.index });
   }
   if (layout.rightMarker) middle.push({ kind: 'marker', text: layout.rightMarker });
-  const used = layout.leftMarker.length + layout.cells.reduce((sum, cell) => sum + cell.width, 0);
+  const used = stringWidth(layout.leftMarker) + layout.cells.reduce((sum, cell) => sum + cell.width, 0);
   if (width > used) bottom.push({ kind: 'rule', text: '─'.repeat(width - used) });
   return [top, middle, bottomError ?? bottom];
 }

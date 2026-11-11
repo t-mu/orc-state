@@ -4,13 +4,16 @@
  * Pure apart from the prefix state it keeps between tokens. Order of decisions:
  *
  * 1. `incomplete` tokens are dropped: a sequence cut short is never typed into a pane.
- * 2. Mouse reports go to the mouse router; pastes go to the pane (dropped in view mode).
+ * 2. Mouse reports go to the mouse router; pastes go to the pane (dropped in
+ *    view mode and while the sidebar has the focus).
  * 3. Cockpit keys, in every mode: the quit key, the direct keys (F1-F11 by
  *    default) and the prefix. After the prefix: `d` quits, `o` switches focus,
  *    `n`/`p` cycle tabs, `&` closes the active tab, `1`-`9` select a tab,
  *    `N`/`P` cycle projects, `t` opens the task explorer, and the prefix again
  *    reaches the pane (typing mode only). Any other key after the prefix is dropped.
- * 4. The tab's mode decides the rest. The master tab is always `typing`.
+ * 4. With the sidebar focused, the rest is sidebar navigation (arrows or
+ *    j/k, Tab or Shift-Tab, Enter, Esc); no key or paste reaches a pane.
+ * 5. Otherwise the tab's mode decides the rest. The master tab is always `typing`.
  *    Worker and scout tabs open in `view`: no key reaches the agent; `q`, Esc,
  *    Ctrl-D, Ctrl-C and Ctrl-] close the tab, `i` starts typing. In `typing`
  *    every key goes to the pane byte-exact, a lone Esc included, except Ctrl-]
@@ -51,27 +54,42 @@ export type DispatchAction =
   | { type: 'explorer' }
   | { type: 'startTyping' }
   | { type: 'stopTyping' }
+  /** A sidebar navigation key while the sidebar has the focus. */
+  | { type: 'sidebar'; key: SidebarKey }
   /** Nothing happens; `reason` for tests and debugging. */
-  | { type: 'drop'; reason: 'incomplete' | 'view' | 'prefix' };
+  | { type: 'drop'; reason: 'incomplete' | 'view' | 'prefix' | 'sidebar' };
+
+/** Sidebar navigation: move the cursor, switch between the projects and agents boxes, open, back to the pane. */
+export type SidebarKey = 'up' | 'down' | 'switchBox' | 'open' | 'back';
 
 export interface DispatchContext {
   /** The shown tab's mode; the master tab passes `typing`. */
   mode: InputMode;
   /** The shown tab is an agent (worker or scout) tab: Ctrl-] toggles its mode. False for the master. */
   agentTab: boolean;
+  /** The sidebar has the focus: keys navigate it and nothing reaches the pane. */
+  sidebar?: boolean;
 }
 
 /** Keys of agent tabs, the same as `orc terminal --view-first` (lib/terminalKeys.ts). */
 export const VIEW_CLOSE_KEYS = ['q', 'Escape', 'C-d', 'C-c', 'C-]'];
 export const START_TYPING_KEY = 'i';
 export const STOP_TYPING_KEY = 'C-]';
+/** Sidebar navigation keys by tmux key name. */
+export const SIDEBAR_KEYS: Readonly<Record<string, SidebarKey>> = {
+  Up: 'up', k: 'up', Down: 'down', j: 'down', Tab: 'switchBox', BTab: 'switchBox', Enter: 'open', Escape: 'back',
+};
 
-/** One line naming the shown tab's mode and its keys, for the tab bar: at most 45 columns, so it fits at 80 by 24. */
+/**
+ * One line naming the focus or the shown tab's mode and its keys, for the
+ * sidebar's last row: at most 32 columns, the sidebar's inside.
+ */
 export function modeNotice(context: DispatchContext): string {
+  if (context.sidebar) return '↑↓ Tab · Enter: open · Esc: pane';
   if (!context.agentTab) return '[master] keys go to the master';
   return context.mode === 'view'
-    ? '[view] i: type · q/Esc/Ctrl-D/C/]: close'
-    : '[typing → agent] Ctrl-]: stop typing';
+    ? '[view] i: type · q/Esc: close'
+    : '[typing] Ctrl-]: stop typing';
 }
 
 export interface Dispatcher {
@@ -108,6 +126,7 @@ export function createDispatcher(keys: CockpitKeys): Dispatcher {
   const matchClose = keyMatcher(VIEW_CLOSE_KEYS);
   const matchStart = keyMatcher([START_TYPING_KEY]);
   const matchStop = keyMatcher([STOP_TYPING_KEY]);
+  const matchSidebar = keyMatcher(Object.keys(SIDEBAR_KEYS));
   let prefixPending = false;
 
   function dispatch(token: Token, context: DispatchContext): DispatchAction {
@@ -117,16 +136,26 @@ export function createDispatcher(keys: CockpitKeys): Dispatcher {
       prefixPending = false;
       if (token.kind !== 'paste') {
         // The prefix twice reaches the pane, as tmux's send-prefix does; only a tab in typing mode takes it.
-        if (matchPrefix(token)) return context.mode === 'typing' ? { type: 'forward', bytes: token.raw } : { type: 'drop', reason: 'view' };
+        if (matchPrefix(token)) {
+          if (context.sidebar) return { type: 'drop', reason: 'sidebar' };
+          return context.mode === 'typing' ? { type: 'forward', bytes: token.raw } : { type: 'drop', reason: 'view' };
+        }
         const name = matchPrefixTable(token);
         return name ? PREFIX_TABLE[name] : { type: 'drop', reason: 'prefix' };
       }
     }
-    if (token.kind === 'paste') return context.mode === 'typing' ? { type: 'paste', data: token.data } : { type: 'drop', reason: 'view' };
+    if (token.kind === 'paste') {
+      if (context.sidebar) return { type: 'drop', reason: 'sidebar' };
+      return context.mode === 'typing' ? { type: 'paste', data: token.data } : { type: 'drop', reason: 'view' };
+    }
     if (matchQuit(token)) return { type: 'quit' };
     if (matchPrefix(token)) { prefixPending = true; return { type: 'drop', reason: 'prefix' }; }
     const direct = matchDirect(token);
     if (direct) return directAction(directByKey.get(direct)!);
+    if (context.sidebar) {
+      const key = matchSidebar(token);
+      return key ? { type: 'sidebar', key: SIDEBAR_KEYS[key] } : { type: 'drop', reason: 'sidebar' };
+    }
     if (context.mode === 'typing') {
       if (context.agentTab && matchStop(token)) return { type: 'stopTyping' };
       return { type: 'forward', bytes: token.raw };

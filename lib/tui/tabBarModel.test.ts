@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { stringWidth } from '../cellWidth.ts';
 import type { TuiProjectView, TuiStatus } from './status.ts';
 import {
   NO_PROJECT_NOTICE, buildTabBarModel, layoutTabBar, tabAttention, tabBarClickTarget, tabBarRows, tabBarText, tabWidth,
@@ -109,6 +110,30 @@ describe('layoutTabBar overflow', () => {
     const rows = tabBarText(tabBarRows(model, layout, 30));
     expect(rows.every(row => row.length <= 30)).toBe(true);
     expect(rows[1]).toBe('‹ 1 │ 2 a-very… PERMISSION × │');
+  });
+});
+
+describe('wide-character tab names', () => {
+  const model = buildTabBarModel(state(['作業者', 'agent-🚀'], '作業者'), new Map([['作業者', 'question']]));
+
+  it('measures tabs by display width, so borders, close markers and clicks line up', () => {
+    expect(tabWidth(model.tabs[1])).toBe(2 + stringWidth(' 2 作業者') + ' QUESTION'.length + ' × '.length);
+    const layout = layoutTabBar(model, 80);
+    const rows = tabBarText(tabBarRows(model, layout, 80));
+    expect(rows.map(row => stringWidth(row))).toEqual([51, 51, 80]); // the rule under the tabs runs to the right edge
+    expect(rows[1]).toBe('│ 1 master ││ 2 作業者 QUESTION × ││ 3 agent-🚀 × │');
+    for (const cell of layout.cells.slice(1)) {
+      expect(tabBarClickTarget(model, layout, cell.closeX!)?.kind).toBe('close');
+      expect(tabBarClickTarget(model, layout, cell.closeX! - 2)?.kind).toBe('select');
+    }
+  });
+
+  it('cuts a wide name by display width when the active tab alone does not fit', () => {
+    const long = buildTabBarModel(state(['日本語のとても長いエージェント名'], '日本語のとても長いエージェント名'));
+    const layout = layoutTabBar(long, 24);
+    const rows = tabBarText(tabBarRows(long, layout, 24));
+    for (const row of rows) expect(stringWidth(row)).toBeLessThanOrEqual(24);
+    expect(rows[1]).toBe('‹ 1 │ 2 日本語のと… × │'); // the next character would not fit its two columns
   });
 });
 

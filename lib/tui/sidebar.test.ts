@@ -3,6 +3,7 @@ import {
   agentRowParts, buildSidebarModel, computeSidebarLayout, fitRow, formatElapsed, projectState, sidebarRowTarget,
   type SidebarAgent, type SidebarModel,
 } from './sidebar.ts';
+import { stringWidth } from '../cellWidth.ts';
 import type { TuiProjectView, TuiStatus } from './status.ts';
 
 const NOW = Date.parse('2026-11-10T12:00:00Z');
@@ -103,6 +104,19 @@ describe('rows', () => {
     expect(fitRow('name', 'running', 15)).toEqual({ left: 'name', gap: '    ', right: 'running' });
     expect(fitRow('a-long-name', 'running', 12)).toEqual({ left: 'a-l…', gap: ' ', right: 'running' });
     expect(fitRow('name', 'incompatible', 8)).toEqual({ left: '', gap: '', right: 'incompa…' });
+  });
+
+  it('fits wide-character names by display width, never splitting a character', () => {
+    // 日本語プロジェクト is 9 characters and 18 columns.
+    expect(fitRow('日本語プロジェクト', 'running', 30)).toEqual({ left: '日本語プロジェクト', gap: '     ', right: 'running' });
+    // 8 columns for the name: a fourth wide character would not fit beside the ellipsis, so the gap takes the odd column.
+    expect(fitRow('日本語プロジェクト', 'running', 16)).toEqual({ left: '日本語…', gap: '  ', right: 'running' });
+    expect(fitRow('🚀rocket', 'ok', 11)).toEqual({ left: '🚀rocket', gap: ' ', right: 'ok' }); // the emoji takes two columns
+    expect(fitRow('🚀rocket', 'ok', 10)).toEqual({ left: '🚀rock…', gap: ' ', right: 'ok' });
+    const agent: SidebarAgent = { key: 'a/作業者', agent_id: '作業者-一号-エージェント', role: 'worker', phase: 'implement', elapsed: '12m', detail: null, attention: null };
+    const parts = agentRowParts(agent, 30);
+    expect(parts).toEqual({ name: '作業者-一号-エ…', gap: '  ', tag: 'implement', elapsed: ' 12m' });
+    expect(stringWidth(Object.values(parts).join(''))).toBe(30);
   });
 
   it('keeps the phase and elapsed time on an agent row, cutting the name', () => {
