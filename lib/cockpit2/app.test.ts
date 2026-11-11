@@ -1,34 +1,22 @@
-import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { afterAll, afterEach, describe, expect, it } from 'vitest';
-import { tmuxSessionTarget, type ProjectWatchState, type ProjectWatchUpdate } from '../../client.ts';
+import { afterEach, describe, expect, it } from 'vitest';
+import { tmuxSessionTarget, type ProjectWatchState } from '../../client.ts';
 import { MASTER_TAB, closeTab, openAgent, selectTab, showProject } from '../cockpitTabs.ts';
 import { DEFAULT_COCKPIT_KEYS, type CockpitKeys } from '../cockpitKeys.ts';
 import {
   SIDEBAR_COLS, TAB_BAR_ROWS, agentTarget, computeLayout, dispatchMouse, hitTest, masterTarget, quitHint, runApp, shortQuitHint, slotMessage,
-  type App,
 } from './app.ts';
 import type { ColorDepth } from './color.ts';
-import { tmuxExplorerHost, type ExplorerHost } from './explorer.ts';
+import type { ExplorerHost } from './explorer.ts';
 import type { MouseEvent } from './mouse.ts';
 import { EDGE_COLUMN, EDGE_ROW } from './frame.ts';
-import { createScreen, type Screen } from './screen.ts';
 import type { PaneClient } from './sessions.ts';
-import type { TerminalSession } from './terminal.ts';
 import type { PaneReport } from './tmuxControl.ts';
-import { DEFAULT_VIEW_STATE, type TmuxTarget, type ViewState, type ViewStateStore } from './viewState.ts';
-
-const ESC = '\x1b';
-const F12 = `${ESC}[24~`;
-
-async function waitFor(check: () => boolean | Promise<boolean>, ms = 5_000): Promise<void> {
-  const until = Date.now() + ms;
-  while (!(await check())) {
-    if (Date.now() > until) throw new Error('timed out');
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-}
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+import { DEFAULT_VIEW_STATE, type TmuxTarget } from './viewState.ts';
+import {
+  ESC, F12, FakeTerminal, FakeWatcher, MASTER_TARGET, MemoryStore, W1_TARGET, apps, projectState, shown, sidebarRows, sleep, slotRows, text,
+  waitFor, waitForSidebar, waitForSlotLine, waitForSlotText, waitForTabBar,
+} from './appFakes.ts';
 
 // ── layout ────────────────────────────────────────────────────────────────────
 
@@ -203,126 +191,6 @@ class FakeClient extends EventEmitter {
   close() { this.closed++; }
 }
 
-class FakeTerminal implements TerminalSession {
-  cols = 80;
-  rows = 24;
-  writes: string[] = [];
-  restored = 0;
-  private input = new Set<(chunk: Buffer) => void>();
-  private resizes = new Set<() => void>();
-  size() { return { cols: this.cols, rows: this.rows }; }
-  write(data: string) { this.writes.push(data); }
-  onInput(listener: (chunk: Buffer) => void) { this.input.add(listener); return () => this.input.delete(listener); }
-  onResize(listener: () => void) { this.resizes.add(listener); return () => this.resizes.delete(listener); }
-  restore() { this.restored++; }
-  type(text: string) { for (const listener of this.input) listener(Buffer.from(text, 'latin1')); }
-  resizeTo(cols: number, rows: number) { this.cols = cols; this.rows = rows; for (const listener of this.resizes) listener(); }
-}
-
-class FakeWatcher {
-  private listeners = new Set<(update: ProjectWatchUpdate) => void>();
-  constructor(public states: ProjectWatchState[]) {}
-  projects() { return this.states; }
-  onUpdate(listener: (update: ProjectWatchUpdate) => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
-  emit(update: ProjectWatchUpdate) { for (const listener of this.listeners) listener(update); }
-}
-
-class MemoryStore implements ViewStateStore {
-  /** Set to make the next updates fail. */
-  failWith: Error | null = null;
-  constructor(public state: ViewState = DEFAULT_VIEW_STATE) {}
-  load() { return this.state; }
-  update(change: (stored: ViewState) => ViewState) {
-    if (this.failWith) return Promise.reject(this.failWith);
-    this.state = structuredClone(change(this.state));
-    return Promise.resolve(this.state);
-  }
-}
-
-const MASTER_TARGET = { socket: 'orc-sock', session: 'orc-master' };
-const W1_TARGET = { socket: 'orc-sock', session: 'orc-w1' };
-
-type FakeWorker = { agent_id: string; attention?: { kind: 'question' | 'permission_prompt' | 'stalled' | 'no_progress'; detail: string | null } } & TmuxTarget;
-
-function projectState(id: string, options: { running?: boolean; master?: TmuxTarget | null; workers?: FakeWorker[]; name?: string } = {}): ProjectWatchState {
-  const { running = true, master = MASTER_TARGET, workers = [] } = options;
-  return {
-    project: { id, name: options.name ?? `${id}-project`, target_repo_root: `/repo/${id}`, state_dir: `/state/${id}`, repo_present: true, control_socket: null, coordinator_running: running },
-    connection: running ? 'running' : 'stopped',
-    error: null,
-    status: {
-      master: { agent_id: 'master', tmux_socket: master?.socket ?? null, tmux_session: master?.session ?? null },
-      worker_capacity: {
-        configured_slots: 2, used_slots: workers.length,
-        slots: workers.map((worker) => ({
-          ...worker, role: 'worker', status: 'running', slot_state: 'busy', attention: worker.attention ?? null,
-          tmux_socket: worker.socket, tmux_session: worker.session, session_handle: `tmux:${worker.socket}:${worker.session}`,
-        })),
-      },
-      claims: { active: [] },
-      scouts: [],
-    } as never,
-    cursor: null,
-  };
-}
-
-/** The real terminal as a user would see it: every write replayed into an emulator. */
-async function shown(terminal: FakeTerminal): Promise<Screen> {
-  const screen = createScreen({ cols: terminal.cols, rows: terminal.rows, scrollback: 0 });
-  await screen.write(terminal.writes.join(''));
-  return screen;
-}
-const text = (screen: Screen, y: number, x = 0, cols = screen.cols) =>
-  screen.row(y).slice(x, x + cols).map((cell) => cell.text).join('').trimEnd();
-/** The slot's rows as the real terminal shows them. */
-async function slotRows(terminal: FakeTerminal): Promise<string[]> {
-  const screen = await shown(terminal);
-  const { slot } = computeLayout(terminal.cols, terminal.rows);
-  return Array.from({ length: slot.rows }, (_, y) => text(screen, slot.y + y, slot.x, slot.cols));
-}
-/** Waits until a slot row is `line` on the real terminal (the renderer writes only changed cells, so the bytes alone do not say). */
-async function waitForSlotLine(terminal: FakeTerminal, line: string, ms = 5_000): Promise<void> {
-  const until = Date.now() + ms;
-  while (!(await slotRows(terminal)).includes(line)) {
-    if (Date.now() > until) throw new Error(`timed out waiting for ${JSON.stringify(line)} in the slot:\n${(await slotRows(terminal)).join("\n")}`);
-    await sleep(25);
-  }
-}
-
-/** Waits until row `y` of the tab bar contains `part`. */
-async function waitForTabBar(terminal: FakeTerminal, y: number, part: string): Promise<void> {
-  const until = Date.now() + 2_000;
-  while (!text(await shown(terminal), y, SIDEBAR_COLS).includes(part)) {
-    if (Date.now() > until) throw new Error(`timed out waiting for ${JSON.stringify(part)} in tab bar row ${y}: ${text(await shown(terminal), y, SIDEBAR_COLS)}`);
-    await sleep(25);
-  }
-}
-
-/** The sidebar's rows as the real terminal shows them. */
-async function sidebarRows(terminal: FakeTerminal): Promise<string[]> {
-  const screen = await shown(terminal);
-  return Array.from({ length: terminal.rows }, (_, y) => text(screen, y, 0, SIDEBAR_COLS));
-}
-
-/** Waits until some sidebar row contains `part`. */
-async function waitForSidebar(terminal: FakeTerminal, part: string): Promise<void> {
-  const until = Date.now() + 2_000;
-  while (!(await sidebarRows(terminal)).some((row) => row.includes(part))) {
-    if (Date.now() > until) throw new Error(`timed out waiting for ${JSON.stringify(part)} in the sidebar:\n${(await sidebarRows(terminal)).join('\n')}`);
-    await sleep(25);
-  }
-}
-
-/** Waits until some slot row contains `part` (messages are drawn indented). */
-async function waitForSlotText(terminal: FakeTerminal, part: string): Promise<void> {
-  const until = Date.now() + 5_000;
-  while (!(await slotRows(terminal)).some((row) => row.includes(part))) {
-    if (Date.now() > until) throw new Error(`timed out waiting for ${JSON.stringify(part)} in the slot:\n${(await slotRows(terminal)).join('\n')}`);
-    await sleep(25);
-  }
-}
-
-const apps: App[] = [];
 afterEach(() => { for (const app of apps.splice(0)) app.quit(); });
 
 interface StartOptions {
@@ -1415,149 +1283,4 @@ describe('runApp pane mouse (fake tmux clients)', () => {
     terminal.type(sgr(0, SX + 1, SY));
     expect(worker.sent).toEqual([`%2 ${ESC}[<0;2;1M`]);
   });
-});
-
-// ── the app against a private tmux server ────────────────────────────────────
-
-const hasTmux = spawnSync('tmux', ['-V'], { encoding: 'utf8' }).status === 0;
-
-describe.skipIf(!hasTmux)('runApp (private tmux server)', () => {
-  const socket = `orc-cockpit2-app-test-${process.pid}-${Date.now()}`;
-  const tmux = (...args: string[]) => spawnSync('tmux', ['-L', socket, '-f', '/dev/null', ...args], { encoding: 'utf8' });
-  /** The explorer's private server, standing in for `orc-cockpit2`. */
-  const explorerSocket = `${socket}-explorer`;
-  const explorerTmux = (...args: string[]) => spawnSync('tmux', ['-L', explorerSocket, ...args], { encoding: 'utf8' });
-  afterAll(() => { tmux('kill-server'); explorerTmux('kill-server'); });
-  const windowSize = (session: string) => tmux('display-message', '-p', '-t', `=${session}:`, '#{window_width}x#{window_height}').stdout.trim();
-
-  function startReal(projects: ProjectWatchState[], explorer?: ExplorerHost) {
-    const terminal = new FakeTerminal();
-    const app = runApp({
-      terminal, keys: DEFAULT_COCKPIT_KEYS, tmuxBinary: 'tmux', store: new MemoryStore(),
-      projects: new FakeWatcher(projects), projectId: 'fake', explorer,
-    });
-    apps.push(app);
-    return { terminal, app };
-  }
-
-  it('shows the master\'s shell, types into it, follows a resize and leaves the session running on quit', async () => {
-    const session = 'orc-master-fake';
-    const created = tmux('new-session', '-d', '-s', session, '-x', '100', '-y', '30',
-      'env -i TERM=tmux-256color PS1="$ " LANG=C.UTF-8 sh');
-    expect(created.status, created.stderr).toBe(0);
-    const { terminal, app } = startReal([projectState('fake', { master: { socket, session } })]);
-    await waitFor(() => windowSize(session) === '46x21');
-
-    // Typed bytes arrive and the output appears in the slot.
-    await waitForSlotLine(terminal, '$');
-    terminal.type('echo cockpit-$((6*7))\r');
-    await waitForSlotLine(terminal, 'cockpit-42');
-
-    // A resize re-lays out: the window follows the slot and the shell sees the new size.
-    terminal.resizeTo(120, 40);
-    await waitFor(() => windowSize(session) === '86x37');
-    // tmux applies the pane's new tty size a moment after the window's: ask again until the shell sees it.
-    await waitFor(() => tmux('display-message', '-p', '-t', `=${session}:`, '#{pane_width}x#{pane_height}').stdout.trim() === '86x37');
-    for (let attempt = 0; ; attempt++) {
-      terminal.type('clear; stty size\r');
-      try { await waitForSlotLine(terminal, '37 86', 1_000); break; } catch (error) { if (attempt === 4) throw error; }
-    }
-    expect((await shown(terminal)).row(0).length).toBe(120);
-
-    terminal.type('\x11');
-    await app.done;
-    expect(terminal.restored).toBe(1);
-    expect(tmux('has-session', '-t', `=${session}`).status).toBe(0);
-  }, 20_000);
-
-  it('quits on the prefix then d and leaves the master\'s session running', async () => {
-    const session = 'orc-master-prefix';
-    const created = tmux('new-session', '-d', '-s', session, '-x', '100', '-y', '30', 'env -i PS1="$ " sh');
-    expect(created.status, created.stderr).toBe(0);
-    const { terminal, app } = startReal([projectState('fake', { master: { socket, session } })]);
-    await waitForSlotLine(terminal, '$');
-    terminal.type(`${F12}d`);
-    await app.done;
-    expect(terminal.restored).toBe(1);
-    expect(tmux('has-session', '-t', `=${session}`).status).toBe(0);
-  }, 20_000);
-
-  it('switches between master and worker tabs without resizing the worker, and shows output written while a tab was hidden', async () => {
-    const master = 'orc-master-tabs';
-    const worker = 'orc-w1-tabs';
-    for (const [session, size] of [[master, ['100', '30']], [worker, ['70', '15']]] as const) {
-      const created = tmux('new-session', '-d', '-s', session, '-x', size[0], '-y', size[1], 'env -i TERM=tmux-256color PS1="$ " LANG=C.UTF-8 sh');
-      expect(created.status, created.stderr).toBe(0);
-    }
-    const before = windowSize(worker);
-    expect(before).toBe('70x15');
-    const { terminal, app } = startReal([projectState('fake', { master: { socket, session: master }, workers: [{ agent_id: 'w1', socket, session: worker }] })]);
-    await waitFor(() => windowSize(master) === '46x21');
-    await waitForSlotLine(terminal, '$');
-
-    // The worker's tab: its screen keeps the worker's size inside the slot, the window is untouched.
-    tmux('send-keys', '-t', `=${worker}:`, 'echo worker-$((6*7))', 'Enter');
-    app.apply((state) => openAgent(state, 'fake', 'w1'));
-    await waitForSlotLine(terminal, 'worker-42');
-    expect(windowSize(worker)).toBe(before);
-    const workerRows = await slotRows(terminal);
-    expect(workerRows[0].length).toBeLessThanOrEqual(46);
-    expect(workerRows[15]).toBe(EDGE_ROW.repeat(46)); // the edge marker row under the 15-row screen
-
-    // Output written to the master while its tab is hidden is shown after switching back, as capture-pane has it.
-    tmux('send-keys', '-t', `=${master}:`, 'clear; for i in 1 2 3; do echo hidden-$i; done', 'Enter');
-    await waitFor(() => tmux('capture-pane', '-p', '-t', `=${master}:`).stdout.includes('hidden-3'));
-    app.apply((state) => selectTab(state, MASTER_TAB));
-    await waitForSlotLine(terminal, 'hidden-3');
-    const captured = tmux('capture-pane', '-p', '-t', `=${master}:`).stdout.split('\n').slice(0, 21).map((line) => line.trimEnd());
-    expect(await slotRows(terminal)).toEqual(captured);
-
-    // Back to the worker and once more: its window still has its own size.
-    app.apply((state) => selectTab(state, 'w1'));
-    await waitForSlotLine(terminal, 'worker-42');
-    expect(windowSize(worker)).toBe(before);
-    app.apply((state) => closeTab(state));
-    await waitForSlotLine(terminal, 'hidden-3');
-    expect(tmux('has-session', '-t', `=${worker}`).status).toBe(0);
-    expect(windowSize(worker)).toBe(before);
-  }, 30_000);
-
-  it('opens the task explorer as a tab on its private server, sized to the slot, and closes it back to the master', async () => {
-    const master = 'orc-master-explorer';
-    const created = tmux('new-session', '-d', '-s', master, '-x', '100', '-y', '30', 'env -i TERM=tmux-256color PS1="$ " LANG=C.UTF-8 sh');
-    expect(created.status, created.stderr).toBe(0);
-    // A stand-in for `orc cockpit2 explorer`: it shows its project, echoes each read in brackets and quits on q, as the explorer's list does.
-    const reader = "process.stdin.setRawMode(true); process.stdin.on('data', (d) => { const s = d.toString(); if (s === 'q') process.exit(0); process.stdout.write('[' + s + ']'); });".replace(/'/g, '"');
-    const host = tmuxExplorerHost({
-      tmuxBinary: 'tmux', socket: explorerSocket,
-      command: (projectId) => `echo explorer-for-$(printf %s ${projectId}); exec ${process.execPath} -e '${reader}'`,
-    });
-    const { terminal, app } = startReal([projectState('fake', { master: { socket, session: master } })], host);
-    await waitForSlotLine(terminal, '$');
-    const before = app.tabs();
-
-    terminal.type(`${F12}t`);
-    await waitForSlotLine(terminal, 'explorer-for-fake');
-    expect(explorerTmux('display-message', '-p', '-t', '=explorer-fake:', '#{window_width}x#{window_height} #{status}').stdout.trim()).toBe('46x21 off');
-    await waitForTabBar(terminal, 1, '2 tasks ×');
-    // Its keys reach it one read each, also when they arrive in one read (j and k navigate the real explorer); the master gets none.
-    terminal.type('jjk');
-    await waitForSlotLine(terminal, '[j][j][k]');
-
-    // q makes it quit: its session ends, the cockpit closes the tab and shows the master again with the keys.
-    terminal.type('q');
-    await waitFor(() => explorerTmux('has-session', '-t', '=explorer-fake').status !== 0);
-    await waitForSlotLine(terminal, '$');
-    expect(app.tabs()).toEqual(before);
-    expect(tmux('capture-pane', '-p', '-t', `=${master}:`).stdout).not.toContain('jjk');
-    await waitForTabBar(terminal, 1, 'tasks Ctrl-q: quit');
-
-    // Opened again, it closes with the cockpit.
-    terminal.type(`${F12}t`);
-    await waitForSlotLine(terminal, 'explorer-for-fake');
-    terminal.type('\x11');
-    await app.done;
-    await waitFor(() => explorerTmux('has-session', '-t', '=explorer-fake').status !== 0);
-    expect(tmux('has-session', '-t', `=${master}`).status).toBe(0);
-  }, 30_000);
 });
