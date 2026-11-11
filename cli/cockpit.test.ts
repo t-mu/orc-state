@@ -173,7 +173,7 @@ describe('runCockpit', () => {
     expect(await runCockpit(['open', 'w2'], fake.deps)).toBe(0);
     expect(fake.state().projects[0]).toEqual({ projectId: 'p-1', tabs: ['w1', 'w2'], active: 'w2' });
     expect(fake.resolver()!('p-1', 'w2')).toMatchObject({
-      projectId: 'p-1', projectName: 'name-p-1', root: '/work/p-1', command: ['/node', '/orc.js', 'terminal', 'w2', '--write', '--project=p-1'],
+      projectId: 'p-1', projectName: 'name-p-1', root: '/work/p-1', command: ['/node', '/orc.js', 'terminal', 'w2', '--view-first', '--project=p-1'],
     });
     expect(await runCockpit(['open', 'x1', 'p-2'], fake.deps)).toBe(0);
     expect(fake.state().activeProject).toBe('p-2');

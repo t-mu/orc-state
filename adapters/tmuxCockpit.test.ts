@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { tmuxSocketPath } from './tmux.ts';
+import { TERMINAL_CLOSED_EXIT } from '../lib/terminalKeys.ts';
 import {
   COCKPIT_SOCKET, DEFAULT_COCKPIT_KEYS, SIDEBAR_COLUMNS, TAB_BAR_ROWS, agentTabScript, cockpitAgentTab, cockpitAttachCommand, cockpitKeyOptions, cockpitKeysHint,
   cockpitRunShell, cockpitServerEnv, cockpitServerOptions, cockpitStoppedProject, sidebarPaneScript, focusSlotCommands, frameOf, frameResizeHook, frameSizeCommands, holdingFitCommands, insideCockpit,
@@ -341,7 +342,7 @@ describe('terminalHasTrueColor', () => {
 describe('agent tabs', () => {
   it('runs the stream with ORC_* and TMUX unset first, then says when it ended and waits to close or reconnect', () => {
     const script = agentTabScript({
-      agentId: 'w1', projectName: "Bob's app", command: ['/usr/bin/node', '/orc/cli/orc.ts', 'terminal', 'w1', '--write', '--project=p-1'],
+      agentId: 'w1', projectName: "Bob's app", command: ['/usr/bin/node', '/orc/cli/orc.ts', 'terminal', 'w1', '--view-first', '--project=p-1'],
       close: ['/opt/node #2/node', '/orc/cli/orc.ts', 'cockpit', 'close', 'w1'], env: { ORC_STATE_DIR: '/state/p 1' },
     }, '/opt/tmux');
     expect(parsesAsShell(script)).toBe(true);
@@ -349,11 +350,43 @@ describe('agent tabs', () => {
     expect(lines[0]).toBe('cockpit_tmux=$TMUX');
     expect(lines[1]).toBe('unset TMUX ORC_PROJECT_ID ORC_STATE_DIR ORC_CONTROL_SOCKET ORC_PROJECT_FLAG');
     expect(lines[2]).toBe("export ORC_STATE_DIR='/state/p 1'");
-    expect(script).toContain("'/usr/bin/node' '/orc/cli/orc.ts' 'terminal' 'w1' '--write' '--project=p-1'");
+    expect(script).toContain("'/usr/bin/node' '/orc/cli/orc.ts' 'terminal' 'w1' '--view-first' '--project=p-1'");
     expect(script).toContain("The terminal of w1 (Bob'\\''s app) is closed");
     expect(script).toContain('[ "$answer" = r ] && continue');
     // Enter closes the tab through the cockpit server, which outlives this pane; # is doubled for run-shell.
     expect(script).toContain("TMUX=$cockpit_tmux '/opt/tmux' run-shell -b ''\\''/opt/node ##2/node'\\'' '\\''/orc/cli/orc.ts'\\'' '\\''cockpit'\\'' '\\''close'\\'' '\\''w1'\\'''");
+  });
+});
+
+describe('agent tab script run', () => {
+  let dir = '';
+  afterEach(() => { if (dir) rmSync(dir, { recursive: true, force: true }); dir = ''; });
+
+  /** Runs the tab script with a stream that exits `code`; a fake tmux records the close command. */
+  function runTab(code: number, input: string) {
+    dir = mkdtempSync(join(tmpdir(), 'orc-agent-tab-'));
+    const tmux = join(dir, 'tmux');
+    writeFileSync(tmux, `#!/bin/sh\nprintf '%s\\n' "$*" >> '${join(dir, 'calls')}'\nexit 1\n`, { mode: 0o755 });
+    const script = agentTabScript({
+      agentId: 'w1', projectName: 'app', command: ['sh', '-c', `echo streamed >> '${join(dir, 'runs')}'; exit ${code}`], close: ['orc', 'cockpit', 'close', 'w1'], env: {},
+    }, tmux);
+    const result = spawnSync('/bin/sh', ['-c', script], { input, encoding: 'utf8', env: { ...process.env, TERM: 'dumb' }, timeout: 10_000 });
+    const read = (name: string) => { try { return readFileSync(join(dir, name), 'utf8'); } catch { return ''; } };
+    return { stdout: result.stdout, calls: read('calls'), runs: read('runs').split('\n').filter(Boolean).length };
+  }
+
+  it('closes the tab at once when its user closed the stream', () => {
+    const tab = runTab(TERMINAL_CLOSED_EXIT, '');
+    expect(tab.stdout).not.toContain('is closed');
+    expect(tab.calls).toContain("run-shell -b 'orc' 'cockpit' 'close' 'w1'");
+  });
+
+  it('asks before closing after an unexpected end, and r reconnects', () => {
+    const tab = runTab(0, 'r\n\n');
+    expect(tab.stdout).toContain('The terminal of w1 (app) is closed (exit 0).');
+    expect(tab.stdout).toContain('Enter: close the tab · r Enter: reconnect');
+    expect(tab.runs).toBe(2);
+    expect(tab.calls).toContain("run-shell -b 'orc' 'cockpit' 'close' 'w1'");
   });
 });
 
@@ -363,13 +396,13 @@ describe('cockpitAgentTab', () => {
   it('streams a registered project\'s agent with --project', () => {
     expect(cockpitAgentTab('w1', { project_id: 'p-1', name: 'app', state_dir: '/s/p-1', target_repo_root: '/work/app' }, orc)).toEqual({
       projectId: 'p-1', projectName: 'app', agentId: 'w1', root: '/work/app',
-      command: [...orc, 'terminal', 'w1', '--write', '--project=p-1'], close: [...orc, 'cockpit', 'close', 'w1'], env: {},
+      command: [...orc, 'terminal', 'w1', '--view-first', '--project=p-1'], close: [...orc, 'cockpit', 'close', 'w1'], env: {},
     });
   });
 
   it('selects an unregistered project by its state directory', () => {
     const tab = cockpitAgentTab('w1', { project_id: 'unregistered:/s/x', name: 'x', state_dir: '/s/x', target_repo_root: '/work/x' }, orc);
-    expect(tab.command).toEqual([...orc, 'terminal', 'w1', '--write']);
+    expect(tab.command).toEqual([...orc, 'terminal', 'w1', '--view-first']);
     expect(tab.env).toEqual({ ORC_STATE_DIR: '/s/x' });
   });
 });

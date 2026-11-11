@@ -30,6 +30,7 @@ import {
 import { COCKPIT_ACTIONS, cockpitKeysHint, type CockpitAction, type CockpitKeys } from '../lib/cockpitKeys.ts';
 import { acquireLock, releaseLock } from '../lib/lock.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
+import { TERMINAL_CLOSED_EXIT } from '../lib/terminalKeys.ts';
 import { shellQuote, tmuxBinary, tmuxSocketPath } from './tmux.ts';
 
 /** The per-user cockpit server: tmux keeps it in the per-user 0700 socket directory. */
@@ -814,9 +815,10 @@ export function insideCockpit(env: NodeJS.ProcessEnv = process.env): boolean {
 
 // ── Agent tabs ───────────────────────────────────────────────────────────────
 // A worker's or scout's live terminal is a tab of its own in its project:
-// `orc terminal <agent_id> --write`, a control-API stream, so opening it never
+// `orc terminal <agent_id> --view-first`, a control-API stream, so opening it never
 // attaches a tmux client to the agent's server (no resize on attach; only the
-// lease holder sizes the pane, as docs/terminal-streaming.md says).
+// lease holder sizes the pane, as docs/terminal-streaming.md says). The tab
+// opens in view mode: no key reaches the agent until `i` (lib/terminalKeys.ts).
 
 export interface CockpitAgentTab {
   projectId: string;
@@ -824,7 +826,7 @@ export interface CockpitAgentTab {
   agentId: string;
   /** Where the tab's shell starts. */
   root: string;
-  /** What the tab runs: `orc terminal <agent_id> --write` for the agent's project. */
+  /** What the tab runs: `orc terminal <agent_id> --view-first` for the agent's project. */
   command: string[];
   /** What closes the tab: `orc cockpit close <agent_id>`. */
   close: string[];
@@ -839,7 +841,7 @@ export const UNREGISTERED_PROJECT_PREFIX = 'unregistered:';
 export interface CockpitTabProject { project_id: string; name: string; state_dir: string; target_repo_root: string }
 
 /**
- * The tab of `agentId`'s live terminal: `orc terminal <agent_id> --write` for
+ * The tab of `agentId`'s live terminal: `orc terminal <agent_id> --view-first` for
  * its project (`--project=<id>`, or `ORC_STATE_DIR` for an unregistered one).
  */
 export function cockpitAgentTab(agentId: string, project: CockpitTabProject, orc: string[]): CockpitAgentTab {
@@ -849,7 +851,7 @@ export function cockpitAgentTab(agentId: string, project: CockpitTabProject, orc
     projectName: project.name,
     agentId,
     root: project.target_repo_root,
-    command: [...orc, 'terminal', agentId, '--write', ...(unregistered ? [] : [`--project=${project.project_id}`])],
+    command: [...orc, 'terminal', agentId, '--view-first', ...(unregistered ? [] : [`--project=${project.project_id}`])],
     close: [...orc, 'cockpit', 'close', agentId],
     env: unregistered ? { ORC_STATE_DIR: project.state_dir } : {},
   };
@@ -861,10 +863,11 @@ export function cockpitStoppedProject(project: CockpitTabProject): CockpitStoppe
 }
 
 /**
- * An agent tab's script: run the stream; when it ends (the agent's session
- * ended, the stream fell behind, or its own Ctrl-] detached it), say so and
- * wait: Enter closes the tab (`orc cockpit close`, run by the cockpit server
- * so it outlives this pane), `r` reconnects. Closing the tab only ends the
+ * An agent tab's script: run the stream. When its user closed it (a close key
+ * in view mode: exit TERMINAL_CLOSED_EXIT), close the tab at once (`orc cockpit
+ * close`, run by the cockpit server so it outlives this pane). When it ended
+ * otherwise (the agent's session ended, the stream fell behind), say so and
+ * wait: Enter closes the tab, `r` reconnects. Closing the tab only ends the
  * stream; the agent's session keeps running.
  */
 export function agentTabScript(tab: Pick<CockpitAgentTab, 'agentId' | 'projectName' | 'command' | 'close' | 'env'>, tmux: string): string {
@@ -879,9 +882,11 @@ export function agentTabScript(tab: Pick<CockpitAgentTab, 'agentId' | 'projectNa
     '  clear',
     `  ${tab.command.map(shellQuote).join(' ')}`,
     '  code=$?',
-    `  printf '\\n%s (exit %s).\\n%s\\n' ${shellQuote(ended)} "$code" ${shellQuote('Closing this tab never stops the agent. Enter: close the tab · r Enter: reconnect')}`,
-    '  read -r answer || exit 0',
-    '  [ "$answer" = r ] && continue',
+    `  if [ "$code" != ${TERMINAL_CLOSED_EXIT} ]; then`,
+    `    printf '\\n%s (exit %s).\\n%s\\n' ${shellQuote(ended)} "$code" ${shellQuote('Closing this tab never stops the agent. Enter: close the tab · r Enter: reconnect')}`,
+    '    read -r answer || exit 0',
+    '    [ "$answer" = r ] && continue',
+    '  fi',
     // The cockpit swaps the next tab in and closes this pane; exit only if it did not.
     `  TMUX=$cockpit_tmux ${shellQuote(tmux)} run-shell -b ${shellQuote(close)} 2>/dev/null || exit 0`,
     '  sleep 5',
