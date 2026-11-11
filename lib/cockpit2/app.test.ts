@@ -16,7 +16,7 @@ import { DEFAULT_VIEW_STATE, addProject, type TmuxTarget } from './viewState.ts'
 import {
   ESC, F12, FakeTerminal, FakeWatcher, MASTER_TARGET, MemoryStore, W1_TARGET, apps, projectState, shown, sidebarRows, sleep, slotRows, text,
   waitFor, waitForSidebar, waitForSlotLine, waitForSlotText, waitForTabBar,
-} from './appFakes.ts';
+} from '../../test-fixtures/cockpitAppFakes.ts';
 
 // ── layout ────────────────────────────────────────────────────────────────────
 

@@ -16,6 +16,6 @@ PATH="$(pwd)/test-fixtures/bin:$PATH"
 | `FAKE_PROVIDER_CRASH_ON_START=1` | `FIXTURE_CRASH_ON_START` on stderr, exit 42 |
 | `FAKE_PROVIDER_HEARTBEAT_MS=<n>` | `FIXTURE_HEARTBEAT` every `<n>` ms |
 
-Other fixtures: `fake-codex-app-server.ts` (Codex app-server), `fakeCoordinator.ts`, `projectCli.ts`, `projectModeProbe.ts`, `stateHelpers.ts`.
+Other fixtures: `fake-codex-app-server.ts` (Codex app-server), `cockpitAppFakes.ts` (the cockpit app's fake terminal, watcher and view-state store), `fakeCoordinator.ts`, `projectCli.ts`, `projectModeProbe.ts`, `stateHelpers.ts`.
 
 Suites that run real sessions need tmux ≥ 3.2 and skip without it ([docs/testing.md](../docs/testing.md)).

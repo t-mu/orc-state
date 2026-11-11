@@ -1,7 +1,7 @@
 /**
- * Key handling of `orc terminal --view-first` (a cockpit agent tab): it opens
- * in view mode, where no key reaches the agent, and switches to typing mode
- * only on `i`.
+ * Key handling of `orc terminal --view-first` (standalone view-first mode; the
+ * cockpit's agent tabs use the same keys): it opens in view mode, where no key
+ * reaches the agent, and switches to typing mode only on `i`.
  */
 
 /** `starting`: `i` was pressed and the lease is on its way; every key is dropped. */

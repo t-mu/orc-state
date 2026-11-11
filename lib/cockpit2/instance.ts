@@ -119,7 +119,11 @@ export async function claimInstance(options: InstanceOptions): Promise<InstanceC
     }
     throw error;
   }
-  // The request is answered: a later wake-up of this cockpit is a reload.
-  try { unlinkSync(exitRequestPath(lockPath)); } catch { /* none was written */ }
+  // The request is answered: a later wake-up of this cockpit is a reload. A request from another
+  // launch still running is kept: it wrote it after this one took the lock and is waiting on it.
+  const requester = parseHolder(readLockFile(exitRequestPath(lockPath)));
+  if (!requester || sameHolder(requester, self) || !isRunning(requester)) {
+    try { unlinkSync(exitRequestPath(lockPath)); } catch { /* none was written */ }
+  }
   return { replaced, release: () => releaseLockFile(lockPath, token) };
 }

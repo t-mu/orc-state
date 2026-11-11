@@ -62,7 +62,7 @@ orc doctor
 
 | Symptom | Check | Fix |
 |---------|-------|-----|
-| The cockpit hangs or its keys do nothing | `cat <data home>/cockpit/cockpit.lock` (its `pid`) | Run `orc start-session` from another terminal: it asks the hung cockpit to exit and opens there. Or `kill <pid>`: SIGTERM and SIGHUP restore the terminal and free the lock |
+| The cockpit hangs or its keys do nothing | `cat <data home>/cockpit/cockpit.lock` (its `pid`) | While its event loop still runs (it handles SIGUSR2 and reads `cockpit.lock.exit`), `orc start-session` from another terminal asks it to exit and opens there. A truly stuck process ignores that request: `kill <pid>` (SIGTERM and SIGHUP restore the terminal and free the lock), `kill -9 <pid>` if it stays (see the next row) |
 | `could not open the cockpit (the cockpit running as pid N did not exit within 5 s …)` | `ps -p N` | start-session attached straight to the master. `kill N` (`kill -9 N` if it stays), then `orc start-session` again |
 | A terminal left in raw mode or the alternate screen (after `kill -9`) | | `reset` in that terminal. The lock it left is stale and the next cockpit takes it over silently: no need to delete it |
 | A lock naming a dead pid, or a pid now used by another process | `cat <data home>/cockpit/cockpit.lock`, `ps -p <pid> -o lstart=` | Nothing to do: a lock whose pid is dead or whose process start time differs is taken over silently. Never delete it while its cockpit runs |

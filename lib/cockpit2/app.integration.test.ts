@@ -6,7 +6,7 @@ import { DEFAULT_COCKPIT_KEYS } from '../cockpitKeys.ts';
 import { runApp } from './app.ts';
 import { tmuxExplorerHost, type ExplorerHost } from './explorer.ts';
 import { EDGE_ROW } from './frame.ts';
-import { FakeTerminal, FakeWatcher, F12, MemoryStore, apps, projectState, shown, slotRows, waitFor, waitForSlotLine, waitForTabBar } from './appFakes.ts';
+import { FakeTerminal, FakeWatcher, F12, MemoryStore, apps, projectState, shown, slotRows, waitFor, waitForSlotLine, waitForTabBar } from '../../test-fixtures/cockpitAppFakes.ts';
 
 // ── the app against a private tmux server ────────────────────────────────────
 

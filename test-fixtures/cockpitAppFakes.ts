@@ -1,8 +1,8 @@
-import type { ProjectWatchState, ProjectWatchUpdate } from '../../client.ts';
-import { createScreen, type Screen } from './screen.ts';
-import type { TerminalSession } from './terminal.ts';
-import { DEFAULT_VIEW_STATE, type TmuxTarget, type ViewState, type ViewStateStore } from './viewState.ts';
-import { SIDEBAR_COLS, computeLayout, type App } from './app.ts';
+import type { ProjectWatchState, ProjectWatchUpdate } from '../client.ts';
+import { createScreen, type Screen } from '../lib/cockpit2/screen.ts';
+import type { TerminalSession } from '../lib/cockpit2/terminal.ts';
+import { DEFAULT_VIEW_STATE, type TmuxTarget, type ViewState, type ViewStateStore } from '../lib/cockpit2/viewState.ts';
+import { SIDEBAR_COLS, computeLayout, type App } from '../lib/cockpit2/app.ts';
 
 // Fakes and wait helpers shared by app.test.ts and app.integration.test.ts.
 export const ESC = '\x1b';
