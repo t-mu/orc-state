@@ -262,6 +262,16 @@ describe('themeFromEnv', () => {
   });
 });
 
+describe('docs/configuration.md', () => {
+  it('lists every role in the ORC_COCKPIT_THEME row', () => {
+    const docs = readFileSync(new URL('../../docs/configuration.md', import.meta.url), 'utf8');
+    const row = docs.split('\n').find((line) => line.startsWith('| `ORC_COCKPIT_THEME` |')) ?? '';
+    const missing = THEME_ROLES.filter((role) => !role.endsWith('.badge') && !row.includes(`\`${role}\``));
+    expect(missing).toEqual([]);
+    expect(row).toContain('each also with a `.badge` variant');
+  });
+});
+
 describe('purity', () => {
   it('imports no fs and reads no process.env', () => {
     const source = readFileSync(new URL('./theme.ts', import.meta.url), 'utf8');

@@ -1307,6 +1307,14 @@ describe('cli/start-session.ts', () => {
       expect(readAgents()[0]).toMatchObject({ status: 'running', session_handle: 'tmux:master' });
     });
 
+    it('reports a bad theme on a nested add too, as it reports bad keys', async () => {
+      tmuxFake.insideOrcTmux = true;
+      const { launch, warnings } = await launchWithTheme('/no/such-theme.json');
+      expect(launch.theme.name).toBe('amber');
+      expect(tmuxFake.attaches).toHaveLength(0);
+      expect(warnings).toContainEqual(expect.stringMatching(/^Warning: ORC_COCKPIT_THEME: '\/no\/such-theme\.json' is not a built-in theme/));
+    });
+
     it('says where the added project opens when no cockpit runs', async () => {
       seedState();
       mockSpawn();
