@@ -92,6 +92,7 @@ import { createMotionCoalescer, encodeMouse, parseSgrMouse, routeSlotMouse, type
 import { renderDiff, sameStyle } from './render.ts';
 import type { Cursor, Screen } from './screen.ts';
 import { DEFAULT_THEME, styleOf, type Theme } from './theme.ts';
+import { drawPaneFrame } from './chrome.ts';
 import { highlightSelection, osc52, selectionText, type CellPoint, type Selection } from './selection.ts';
 import { Sessions, type ConnectPane, type PaneSession } from './sessions.ts';
 import type { TerminalSession } from './terminal.ts';
@@ -130,8 +131,13 @@ export interface Layout {
   sidebar: Region;
   /** Right, below the header and above the slot. */
   tabBar: Region;
-  /** The rest: the active tab's screen. */
+  /** The rest: the active tab's screen (inside the pane frame when there is one). */
   slot: Region;
+  /**
+   * The container around the slot: its sides and bottom row; its top edge is
+   * the tab bar's bottom rule. Null when the terminal has no room for it.
+   */
+  paneFrame: Region | null;
   /** Bottom row, full width; zero rows when the terminal is too short (dropped before the header). */
   footer: Region;
 }
@@ -156,13 +162,17 @@ export function computeLayout(cols: number, rows: number): Layout {
   const footerRows = Math.min(FOOTER_ROWS, spare);
   const rightCols = Math.max(0, cols - sidebarCols);
   const middleRows = Math.max(0, rows - headerRows - footerRows);
+  const slot = { x: sidebarCols, y: headerRows + tabBarRows, cols: rightCols, rows: Math.max(0, middleRows - tabBarRows) };
+  // The frame needs the tab bar's rule as its top edge and costs two columns and a row.
+  const framed = tabBarRows === TAB_BAR_ROWS && slot.cols - 2 >= MIN_SLOT_COLS && slot.rows - 1 >= MIN_SLOT_ROWS;
   return {
     cols,
     rows,
     header: { x: 0, y: 0, cols, rows: headerRows },
     sidebar: { x: 0, y: headerRows, cols: sidebarCols, rows: middleRows },
     tabBar: { x: sidebarCols, y: headerRows, cols: rightCols, rows: tabBarRows },
-    slot: { x: sidebarCols, y: headerRows + tabBarRows, cols: rightCols, rows: Math.max(0, middleRows - tabBarRows) },
+    slot: framed ? { x: slot.x + 1, y: slot.y, cols: slot.cols - 2, rows: slot.rows - 1 } : slot,
+    paneFrame: framed ? slot : null,
     footer: { x: 0, y: rows - footerRows, cols, rows: footerRows },
   };
 }
@@ -617,6 +627,7 @@ export function runApp(options: AppOptions): App {
       error: refusal ?? (lastSaveError ? `view state not saved: ${lastSaveError}` : null),
       theme,
     });
+    if (layout.paneFrame) drawPaneFrame(frame, layout.paneFrame, styleOf(theme, focus === 'slot' ? 'chrome.borderFocus' : 'chrome.border'));
     drawFooter(frame, layout.footer, { mode: modeNotice(keyContext()), breadcrumb: breadcrumb(), hints: footerHints(keys), theme });
     const { message, screen } = slotContent();
     let cursor: Cursor = { x: 0, y: 0, visible: false };

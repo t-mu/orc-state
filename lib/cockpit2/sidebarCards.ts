@@ -298,7 +298,9 @@ export function sidebarCardsLayout(model: SidebarModel, rows: number, nav: Sideb
     ? BORDERS + blocks[cursor.agentIndex].length + (model.agents.length > 1 ? 1 : 0)
     : MIN_CARD_ROWS;
 
-  let project = PROJECT_ROWS;
+  // The notice row only while there is a notice.
+  const projectFull = model.notice ? PROJECT_ROWS : PROJECT_ROWS - 1;
+  let project = projectFull;
   let other = othersFull;
   if (project + other + agentsFull > rows) other = Math.max(othersMin, Math.min(othersFull, rows - project - agentsFull));
   if (rows - project - other < agentsMin) project = Math.max(MIN_CARD_ROWS, rows - other - agentsMin);
@@ -313,8 +315,8 @@ export function sidebarCardsLayout(model: SidebarModel, rows: number, nav: Sideb
   // An expanded block can leave the Agents window well short of its card: a shrunk Project card takes those rows
   // back first, then a shrunk Other projects, the reverse of the order they shrank in.
   const anyExpanded = model.agents.some((agent) => nav.expanded.has(agent.key));
-  if (anyExpanded && project < PROJECT_ROWS && model.projects.length > 0) {
-    const spare = Math.min(PROJECT_ROWS - project, unused());
+  if (anyExpanded && project < projectFull && model.projects.length > 0) {
+    const spare = Math.min(projectFull - project, unused());
     if (spare > 0) { project += spare; agents -= spare; }
   }
   if (anyExpanded && other > 0 && other < othersFull) {
@@ -325,7 +327,7 @@ export function sidebarCardsLayout(model: SidebarModel, rows: number, nav: Sideb
   // With no project at all the card says so (`(none)`, as the old projects box did) above the notice that tells why.
   const projectLines: CardLine[] = (model.projects.length === 0
     ? [{ kind: 'noProjects' }, { kind: 'notice' }] as CardLine[]
-    : [{ kind: 'coordinator' }, { kind: 'workers' }, { kind: 'notice' }] as CardLine[]).slice(0, body(project));
+    : [{ kind: 'coordinator' }, { kind: 'workers' }, ...(model.notice ? [{ kind: 'notice' }] : [])] as CardLine[]).slice(0, body(project));
   const cards: CardLayout[] = [{ card: 'project', y: 0, rows: project, lines: projectLines }];
   if (other > 0) cards.push({ card: 'otherProjects', y: project, rows: other, lines: otherLines(others, body(other), otherCursor) });
   cards.push({ card: 'agents', y: project + other, rows: agents, lines: agentLines(blocks, body(agents), cursor.agentIndex) });
@@ -407,6 +409,8 @@ const runsText = (runs: readonly Run[]): string => runs.map(([text]) => text).jo
 
 interface CardRow {
   left: string;
+  /** A shorter `left` used instead of cutting `left` (an agent row drops its role rather than show it as `…`). */
+  leftShort?: string;
   /** `left` as shown (cut to fit) split into styled runs. */
   leftRuns: (left: string) => Run[];
   /** Flush right: `before` runs, the badge, `after` runs; `before` is dropped first, then all of them, when the row is too narrow. */
@@ -431,8 +435,12 @@ function drawCardRow(frame: Frame, x: number, y: number, cols: number, row: Card
     before = [];
     fitted = fitRow(row.left, tailOf(before), cols);
   }
+  if (row.leftShort !== undefined && fitted.left !== row.left) {
+    const short = fitRow(row.leftShort, tailOf(before), cols);
+    if (short.right === fitted.right) fitted = short;
+  }
   const showTail = row.badge !== undefined && fitted.right === tailOf(before);
-  const left = showTail ? fitted.left : fitText(row.left, cols);
+  const left = showTail ? fitted.left : fitText(row.leftShort ?? row.left, cols);
   const gap = showTail ? fitted.gap : ' '.repeat(Math.max(0, cols - stringWidth(left)));
   let runs: Run[] = [...row.leftRuns(left), [gap, styleOf(theme, 'text.primary')], ...(showTail ? before : [])];
   let tail = after;
@@ -545,6 +553,7 @@ export function drawSidebarCards(frame: Frame, region: Region, layout: SidebarCa
   function agentRow(agent: SidebarAgent, expanded: boolean, cursor: boolean): CardRow {
     return {
       left: `${collapseMarker(expanded)} ${agent.agent_id} ${agent.role}`,
+      leftShort: `${collapseMarker(expanded)} ${agent.agent_id}`,
       leftRuns: (left) => agentRuns(agent, expanded, left),
       before: agent.elapsed ? [[`${agent.elapsed} `, role('text.muted')]] : [],
       badge: { label: agent.attention ? ATTENTION_BADGE[agent.attention] : agent.phase, role: agentStatusRole(agent) },

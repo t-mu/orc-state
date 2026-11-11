@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { collapseMarker, drawBadge, drawBox, type BoxOptions } from './chrome.ts';
-import { cellAt, createFrame, DEFAULT_STYLE, type Frame, type Region } from './frame.ts';
+import { collapseMarker, drawBadge, drawBox, drawPaneFrame, type BoxOptions } from './chrome.ts';
+import { cellAt, createFrame, DEFAULT_STYLE, drawText, type Frame, type Region } from './frame.ts';
 import { BUILT_IN_THEMES, STATUS_ROLES, styleOf, type BuiltInThemeName } from './theme.ts';
 
 const THEMES = Object.keys(BUILT_IN_THEMES) as BuiltInThemeName[];
@@ -208,5 +208,49 @@ describe('collapseMarker', () => {
   it('is [-] expanded and [+] collapsed', () => {
     expect(collapseMarker(true)).toBe('[-]');
     expect(collapseMarker(false)).toBe('[+]');
+  });
+});
+
+describe('drawPaneFrame', () => {
+  const RULE = styleOf(BUILT_IN_THEMES.amber, 'chrome.border');
+  const BORDER = styleOf(BUILT_IN_THEMES.amber, 'chrome.borderFocus');
+  /** A 12-column tab rule on row 0 and the frame drawn under it, rows 1-4. */
+  function framed(rule: string) {
+    const frame = createFrame(12, 5);
+    drawText(frame, 0, 0, rule, RULE, 12);
+    drawPaneFrame(frame, { x: 0, y: 1, cols: 12, rows: 4 }, BORDER);
+    return frame;
+  }
+
+  it('draws the sides and the bottom and turns a plain rule\'s ends into corners', () => {
+    const frame = framed('─'.repeat(12));
+    expect(frameText(frame)).toEqual([
+      `┌${'─'.repeat(10)}┐`,
+      `│${' '.repeat(10)}│`,
+      `│${' '.repeat(10)}│`,
+      `│${' '.repeat(10)}│`,
+      `└${'─'.repeat(10)}┘`,
+    ]);
+    // The joins keep the rule's style; the sides and bottom take the frame's.
+    expect(cellAt(frame, 0, 0)!.style).toEqual(RULE);
+    expect(cellAt(frame, 11, 0)!.style).toEqual(RULE);
+    for (const [x, y] of [[0, 1], [11, 3], [0, 4], [5, 4], [11, 4]]) expect(cellAt(frame, x, y)!.style, `${x},${y}`).toEqual(BORDER);
+    // The inside is left alone.
+    expect(cellAt(frame, 5, 2)!.style).toBe(DEFAULT_STYLE);
+  });
+
+  it('runs an active tab\'s open edge at either end straight into the side', () => {
+    expect(rowText(framed('┘    └─────'.padEnd(12, '─')), 0)).toBe('│    └─────┐');
+    expect(rowText(framed('──────┘    └'), 0)).toBe('┌─────┘    │');
+  });
+
+  it('joins an inactive tab\'s edge, or an active tab\'s far edge, to the side with a junction', () => {
+    expect(rowText(framed('┴────┴──────'), 0)).toBe('├────┴─────┐');
+    expect(rowText(framed('──────┴────┴'), 0)).toBe('┌─────┴────┤');
+    expect(rowText(framed('└──────────┘'), 0)).toBe('├──────────┤');
+  });
+
+  it('leaves any other glyph at the rule\'s ends as it is', () => {
+    expect(rowText(framed(' tab label  '), 0)).toBe(' tab label  ');
   });
 });
