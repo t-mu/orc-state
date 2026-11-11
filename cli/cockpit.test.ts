@@ -6,8 +6,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { DEFAULT_COCKPIT_KEYS } from '../lib/cockpitKeys.ts';
 import { readProcessStart } from '../lib/processIdentity.ts';
 import {
-  addToCockpit, cockpitLaunch, cockpitOpeningHint, cockpitPaths, explorerCommand, insideOrcTmux, launchCockpit, oldCockpitLockPath, retireOldCockpit,
+  addToCockpit, cockpitLaunch, cockpitTheme, cockpitOpeningHint, cockpitPaths, explorerCommand, insideOrcTmux, launchCockpit, oldCockpitLockPath, readTextOrNull, retireOldCockpit,
 } from './cockpit.ts';
+import { BUILT_IN_THEMES } from '../lib/cockpit2/theme.ts';
 import { createViewStateStore } from '../lib/cockpit2/viewState.ts';
 
 describe('cockpitPaths', () => {
@@ -99,6 +100,56 @@ describe('explorerCommand', () => {
   it('runs orc cockpit explorer for the project, without the launching project\'s selection', () => {
     expect(explorerCommand(['/usr/bin/node', '/orc/cli/orc.js'], 'demo'))
       .toBe("unset ORC_PROJECT_ID ORC_STATE_DIR ORC_CONTROL_SOCKET ORC_PROJECT_FLAG; '/usr/bin/node' '/orc/cli/orc.js' 'cockpit' 'explorer' '--project=demo'");
+  });
+});
+
+describe('cockpitTheme', () => {
+  const resolve = (env: Record<string, string | undefined>, files: Record<string, string> = {}) => {
+    const warnings: string[] = [];
+    const read: string[] = [];
+    const theme = cockpitTheme(env, (path) => { read.push(path); return files[path] ?? null; }, (message) => warnings.push(message));
+    return { theme, warnings, read };
+  };
+
+  it('draws in amber with no setting, in a named built-in theme, and in mono under NO_COLOR', () => {
+    expect(resolve({})).toEqual({ theme: BUILT_IN_THEMES.amber, warnings: [], read: [] });
+    expect(resolve({ ORC_COCKPIT_THEME: 'classic' })).toEqual({ theme: BUILT_IN_THEMES.classic, warnings: [], read: [] });
+    expect(resolve({ NO_COLOR: '1', ORC_COCKPIT_THEME: 'classic' })).toEqual({ theme: BUILT_IN_THEMES.mono, warnings: [], read: [] });
+  });
+
+  it('reads a theme file through the reader it is given', () => {
+    const { theme, warnings, read } = resolve(
+      { ORC_COCKPIT_THEME: '/themes/violet.json' },
+      { '/themes/violet.json': '{ "base": "amber", "roles": { "chrome.border": { "fg": "#7c3aed" } } }' },
+    );
+    expect(read).toEqual(['/themes/violet.json']);
+    expect(warnings).toEqual([]);
+    expect(theme.roles['chrome.border'].fg).toEqual({ type: 'rgb', r: 0x7c, g: 0x3a, b: 0xed });
+    expect(theme.roles['chrome.title']).toEqual(BUILT_IN_THEMES.amber.roles['chrome.title']);
+  });
+
+  it('warns about an unreadable or invalid theme file and draws in amber', () => {
+    const missing = resolve({ ORC_COCKPIT_THEME: '/no/such.json' });
+    expect(missing.theme).toBe(BUILT_IN_THEMES.amber);
+    expect(missing.warnings).toEqual([expect.stringMatching(/^Warning: ORC_COCKPIT_THEME: '\/no\/such\.json' is not a built-in theme .* or a readable file; using amber$/)]);
+    const broken = resolve({ ORC_COCKPIT_THEME: '/t.json' }, { '/t.json': '{ nope' });
+    expect(broken.theme).toBe(BUILT_IN_THEMES.amber);
+    expect(broken.warnings).toEqual([expect.stringMatching(/^Warning: ORC_COCKPIT_THEME: \/t\.json is not valid JSON/)]);
+  });
+
+  it('warns once per bad role and keeps the rest of the file', () => {
+    const { theme, warnings } = resolve(
+      { ORC_COCKPIT_THEME: '/t.json' },
+      { '/t.json': '{ "roles": { "chrome.nope": {}, "chrome.border": { "fg": "red" }, "text.muted": { "bold": true } } }' },
+    );
+    expect(warnings).toHaveLength(2);
+    for (const warning of warnings) expect(warning).toMatch(/^Warning: ORC_COCKPIT_THEME \/t\.json: /);
+    expect(theme.roles['chrome.border']).toEqual(BUILT_IN_THEMES.amber.roles['chrome.border']);
+    expect(theme.roles['text.muted']).toEqual({ ...BUILT_IN_THEMES.amber.roles['text.muted'], bold: true });
+  });
+
+  it('reads a missing file as null', () => {
+    expect(readTextOrNull(join(tmpdir(), 'orc-cockpit-theme-that-does-not-exist.json'))).toBeNull();
   });
 });
 

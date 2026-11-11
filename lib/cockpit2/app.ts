@@ -82,7 +82,7 @@ import { createTokenizer, type Token } from './input.ts';
 import { createMotionCoalescer, encodeMouse, parseSgrMouse, routeSlotMouse, type MouseEvent } from './mouse.ts';
 import { renderDiff, sameStyle } from './render.ts';
 import type { Cursor, Screen } from './screen.ts';
-import { BUILT_IN_THEMES, styleOf } from './theme.ts';
+import { DEFAULT_THEME, styleOf, type Theme } from './theme.ts';
 import { highlightSelection, osc52, selectionText, type CellPoint, type Selection } from './selection.ts';
 import { Sessions, type ConnectPane, type PaneSession } from './sessions.ts';
 import type { TerminalSession } from './terminal.ts';
@@ -237,6 +237,8 @@ export interface AppOptions {
   explorer?: ExplorerHost | undefined;
   /** The outer terminal's colour depth (color.ts `colorDepthFromEnv`, from the CLI layer; default `truecolor`). */
   colorDepth?: ColorDepth | undefined;
+  /** The theme everything the cockpit draws itself is styled with (theme.ts `themeFromEnv`, from the CLI layer; default `amber`). */
+  theme?: Theme | undefined;
   /** The pause after each key sent to the task explorer before the next one (default 4 ms). */
   explorerKeyGapMs?: number;
 }
@@ -263,9 +265,6 @@ export interface App {
   tabs(): CockpitTabState;
 }
 
-/** The theme the cockpit draws in. */
-const THEME = BUILT_IN_THEMES.amber;
-
 /** How to quit, as the slot's messages show it. */
 export function quitHint(keys: CockpitKeys): string {
   return [...(keys.quit ? [`${keyLabel(keys.quit)}: quit`] : []), `${keyLabel(keys.prefix)} d: quit`].join(' · ');
@@ -279,9 +278,9 @@ export function shortQuitHint(keys: CockpitKeys): string {
 /** Where the keys go: the slot (the shown tab) or a sidebar box. */
 export type Focus = 'slot' | SidebarBox;
 
-function drawMessage(frame: Frame, region: Region, lines: string[]): void {
+function drawMessage(frame: Frame, region: Region, lines: string[], theme: Theme): void {
   lines.forEach((line, index) => {
-    if (index + 1 < region.rows) drawText(frame, region.x + 1, region.y + 1 + index, line, styleOf(THEME, index === 0 ? 'chrome.title' : 'text.muted'), region.cols - 2);
+    if (index + 1 < region.rows) drawText(frame, region.x + 1, region.y + 1 + index, line, styleOf(theme, index === 0 ? 'chrome.title' : 'text.muted'), region.cols - 2);
   });
 }
 
@@ -333,6 +332,7 @@ export function slotMessage({ tab, project, target, session, keys }: SlotContext
 /** Starts the cockpit on an opened terminal; it runs until `quit()`, the quit key or prefix then `d`. */
 export function runApp(options: AppOptions): App {
   const { terminal, keys, store } = options;
+  const theme = options.theme ?? DEFAULT_THEME;
   const frameMs = options.frameMs ?? 16;
   const connect: ConnectPane = options.connect
     ?? ((target, { ignoreSize }) => new TmuxControlClient({ tmuxBinary: options.tmuxBinary, socket: target.socket, session: target.session, ignoreSize }));
@@ -544,18 +544,18 @@ export function runApp(options: AppOptions): App {
     if (closed) return;
     lastRender = Date.now();
     const frame = createFrame(layout.cols, layout.rows);
-    drawSidebar(frame, layout.sidebar, currentSidebar(), { focus: focus === 'slot' ? null : focus, footer: modeNotice(keyContext()), theme: THEME });
+    drawSidebar(frame, layout.sidebar, currentSidebar(), { focus: focus === 'slot' ? null : focus, footer: modeNotice(keyContext()), theme });
     drawTabBar(frame, layout.tabBar, currentTabBar(), {
       slotFocused: focus === 'slot',
       error: refusal ?? (lastSaveError ? `view state not saved: ${lastSaveError}` : null),
-      theme: THEME,
+      theme,
     });
     const { message, screen } = slotContent();
     let cursor: Cursor = { x: 0, y: 0, visible: false };
     if (!screen) {
-      drawMessage(frame, layout.slot, message ?? []);
+      drawMessage(frame, layout.slot, message ?? [], theme);
     } else {
-      blitScreen(frame, screen, layout.slot, { theme: THEME });
+      blitScreen(frame, screen, layout.slot, { theme });
       if (selection?.moved && selection.key === shownKey()) highlightSelection(frame, layout.slot, screen, selection);
       cursor = slotCursor(screen, layout.slot, focus === 'slot');
     }
