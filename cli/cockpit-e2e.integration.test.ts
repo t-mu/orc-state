@@ -353,7 +353,7 @@ describe.skipIf(!tmuxOk)('orc cockpit end to end, in a host tmux pane', () => {
     await waitFor('the footer', () => lines()[HOST_ROWS - 1].includes('quit'));
     await waitFor('the card titles', () => {
       const shown = sidebar().join('\n');
-      return shown.includes(`[ ${alpha.name.toUpperCase()} ]`) && shown.includes('[ OTHER PROJECTS ]') && shown.includes('[ AGENTS ]');
+      return shown.includes(`[ ${alpha.name.toUpperCase()} ]`) && shown.includes('[ PROJECTS ]') && shown.includes('[ AGENTS ]');
     });
     await waitFor('the worker in the Agents card', () => sidebarRow('worker-a') !== '');
 
