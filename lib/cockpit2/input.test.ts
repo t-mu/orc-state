@@ -126,6 +126,50 @@ describe('createTokenizer', () => {
     expect(tokenizer.push(bytes('\x1b\x1bOP'))).toEqual([{ kind: 'ss3', raw: bytes('\x1b\x1bOP'), params: '', final: 'P', meta: true }]);
   });
 
+  it('waits the long timeout for a started sequence and joins a mouse report split across reads', () => {
+    const timers = manualTimers();
+    const flushed: Token[] = [];
+    const tokenizer = createTokenizer({ timers, onFlush: (tokens) => flushed.push(...tokens) });
+    expect(tokenizer.push(bytes('\x1b[<0;1'))).toEqual([]);
+    expect(timers.lastMs).toBe(500);
+    expect(shape(tokenizer.push(bytes('0;5M')))).toEqual([['mouse', '\x1b[<0;10;5M']]);
+    expect(timers.pending()).toBe(false);
+    expect(flushed).toEqual([]);
+    const custom = manualTimers();
+    createTokenizer({ timers: custom, sequenceTimeoutMs: 900 }).push(bytes('\x1bO5'));
+    expect(custom.lastMs).toBe(900);
+  });
+
+  it('uses the short timeout only for a lone ESC or ESC plus one byte', () => {
+    for (const text of ['\x1b', '\x1b[', '\x1bO', '\x1b\x1b']) {
+      const timers = manualTimers();
+      createTokenizer({ timers }).push(bytes(text));
+      expect(timers.lastMs, JSON.stringify(text)).toBe(25);
+    }
+    for (const text of ['\x1b[1', '\x1b[<', '\x1bO5', '\x1b\x1b[1', '\x1b[[']) {
+      const timers = manualTimers();
+      createTokenizer({ timers }).push(bytes(text));
+      expect(timers.lastMs, JSON.stringify(text)).toBe(500);
+    }
+  });
+
+  it('flushes a sequence that never completes as an incomplete token, never as csi or ss3', () => {
+    const timers = manualTimers();
+    const flushed: Token[] = [];
+    const tokenizer = createTokenizer({ timers, onFlush: (tokens) => flushed.push(...tokens) });
+    tokenizer.push(bytes('\x1b[<0;1'));
+    timers.fire();
+    expect(flushed).toEqual([{ kind: 'incomplete', raw: bytes('\x1b[<0;1') }]);
+    expect(shape(tokenizer.push(bytes('a')))).toEqual([['char', 'a']]);
+    for (const text of ['\x1b[15', '\x1bO5', '\x1b[[', '\x1b\x1b[11']) {
+      tokenizer.push(bytes(text));
+      expect(shape(tokenizer.flush()), JSON.stringify(text)).toEqual([['incomplete', text]]);
+    }
+    // A byte that cannot continue a sequence cuts it short the same way.
+    expect(shape(tokenize(bytes('\x1b[<0;1\x03')).tokens)).toEqual([['incomplete', '\x1b[<0;1'], ['control', '\x03']]);
+    expect(shape(tokenize(bytes('\x1bO5\r')).tokens)).toEqual([['incomplete', '\x1bO5'], ['control', '\r']]);
+  });
+
   it('ends an rxvt Shift-function key at its $', () => {
     expect(tokenize(bytes('\x1b[24$\x1b[23$')).tokens).toEqual([
       { kind: 'csi', raw: bytes('\x1b[24$'), params: '24', intermediates: '', final: '$' },
@@ -203,6 +247,19 @@ describe('keyMatcher', () => {
       expect(meta(one(`\x1b\x1b[${RXVT[key]}$`))).toBe(`M-S-${key}`);
       expect(meta(one(`\x1b\x1b[${RXVT[key]}@`))).toBe(`C-M-S-${key}`);
     }
+  });
+
+  it('matches rxvt Shift-F3..F10', () => {
+    const SHIFTED: Record<string, string> = { F3: '25', F4: '26', F5: '28', F6: '29', F7: '31', F8: '32', F9: '33', F10: '34' };
+    for (const [key, code] of Object.entries(SHIFTED)) {
+      const match = keyMatcher([`S-${key}`, `C-S-${key}`, `M-S-${key}`]);
+      expect(match(one(`\x1b[${code}~`)), key).toBe(`S-${key}`);
+      expect(match(one(`\x1b[${code}^`)), key).toBe(`C-S-${key}`);
+      expect(match(one(`\x1b\x1b[${code}~`)), key).toBe(`M-S-${key}`);
+      expect(keyMatcher([key])(one(`\x1b[${code}~`)), key).toBeNull();
+    }
+    expect(keyMatcher(['S-F3', 'S-F5', 'S-F10'])(one('\x1b[28~'))).toBe('S-F5');
+    expect(keyMatcher(['S-F3'])(one('\x1b[25;2~'))).toBeNull();
   });
 
   it('matches F1-F12 in Linux console forms', () => {
