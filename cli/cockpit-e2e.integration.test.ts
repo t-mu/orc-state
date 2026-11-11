@@ -18,6 +18,7 @@ import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_pr
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { stringWidth } from '../lib/cellWidth.ts';
 import { checkTmux, shellQuote, tmuxSessionName, tmuxSocketName } from '../adapters/tmux.ts';
 import { startControlServer, type ControlServer } from '../lib/controlServer.ts';
 import { setRunInputState } from '../lib/claimManager.ts';
@@ -62,6 +63,7 @@ process.stdin.on('data', (data) => {
 let temp: string;
 let dir: string;
 let dataHome: string;
+let tmuxTmpdir: string;
 let alpha: ProjectRecord;
 let beta: ProjectRecord;
 let server: ControlServer | null = null;
@@ -110,6 +112,77 @@ function clickSidebar(text: string): void {
   send(`${ESC}[<0;${x + 1};${y + 1}M${ESC}[<0;${x + 1};${y + 1}m`);
 }
 
+/**
+ * The user's terminal, with the cockpit started in alpha under `extraEnv`
+ * (replacing a terminal left by an earlier test); its exit status stays on the screen.
+ */
+function launchCockpit(extraEnv: Record<string, string>): void {
+  tmux(HOST, ['kill-session', '-t', `=${HOST}`]);
+  const env = { NO_COLOR: '', ...extraEnv, ORC_DATA_HOME: dataHome, TMUX_TMPDIR: tmuxTmpdir, ORC_PROJECT_ID: alpha.id, ORC_STATE_DIR: dir };
+  const cockpit = ['env', ...Object.entries(env).map(([key, value]) => `${key}=${value}`), ...orc, 'cockpit'].map(shellQuote).join(' ');
+  const command = `${cockpit}; echo COCKPIT-EXIT $?; sleep 600`;
+  const host = tmux(HOST, ['new-session', '-d', '-s', HOST, '-x', String(HOST_COLS), '-y', String(HOST_ROWS), '-c', repoRoot, command]);
+  expect(host.status, host.stderr).toBe(0);
+}
+
+/** A cell of a `capture-pane -e` capture: its text and the SGR colour it is drawn in (null for the terminal's default). */
+interface StyledCell { text: string; fg: string | null; bg: string | null }
+
+/**
+ * The cockpit's screen with each cell's colour, from `capture-pane -e`: the
+ * SGR sequences are replayed (`0` resets; `30`-`37`, `90`-`97`, `38;5;n`,
+ * `38;2;r;g;b` set the foreground, `39` resets it; the same for the
+ * background), attributes are ignored.
+ */
+function styledScreen(): StyledCell[][] {
+  const captured = tmux(HOST, ['capture-pane', '-p', '-e', '-t', `=${HOST}:`]).stdout;
+  return captured.split('\n').map((line) => {
+    const cells: StyledCell[] = [];
+    let fg: string | null = null;
+    let bg: string | null = null;
+    const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+    for (const part of line.split(/(\x1b\[[0-9;:]*m)/)) {
+      const sgr = /^\x1b\[([0-9;:]*)m$/.exec(part);
+      if (!sgr) {
+        for (const { segment } of segmenter.segment(part)) {
+          const cell = { text: segment, fg, bg };
+          cells.push(cell);
+          for (let extra = 1; extra < stringWidth(segment); extra++) cells.push({ ...cell, text: '' });
+        }
+        continue;
+      }
+      const params = sgr[1] === '' ? [0] : sgr[1].split(/[;:]/).map(Number);
+      for (let i = 0; i < params.length; i++) {
+        const p = params[i];
+        if (p === 0) { fg = null; bg = null; }
+        else if ((p >= 30 && p <= 37) || (p >= 90 && p <= 97)) fg = String(p);
+        else if ((p >= 40 && p <= 47) || (p >= 100 && p <= 107)) bg = String(p);
+        else if (p === 39) fg = null;
+        else if (p === 49) bg = null;
+        else if (p === 38 || p === 48) {
+          const count = params[i + 1] === 2 ? 5 : 3;
+          const color = params.slice(i, i + count).join(';');
+          if (p === 38) fg = color;
+          else bg = color;
+          i += count - 1;
+        }
+      }
+    }
+    return cells;
+  });
+}
+
+/** The cells the cockpit draws itself, by where: the header row, the footer row, the sidebar columns between them. */
+function chromeCells(cells: StyledCell[][]): { where: string; cell: StyledCell }[] {
+  const rows = cells.slice(0, HOST_ROWS);
+  const at = (where: string, row: StyledCell[]) => row.map((cell, x) => ({ where: `${where} col ${x}`, cell }));
+  return [
+    ...at('header', rows[0]),
+    ...at('footer', rows[HOST_ROWS - 1]),
+    ...rows.slice(1, HOST_ROWS - 1).flatMap((row, y) => at(`sidebar row ${y + 1}`, row.slice(0, 34))),
+  ];
+}
+
 /** The tabs the cockpit saved to its view-state file. */
 const savedTabs = () => parseViewState(readFileSync(join(dataHome, 'cockpit', 'view-state.json'), 'utf8')).tabs;
 
@@ -130,7 +203,7 @@ function startCoordinatorTick(): NodeJS.Timeout {
 describe.skipIf(!tmuxOk)('orc cockpit end to end, in a host tmux pane', () => {
   beforeAll(async () => {
     temp = mkdtempSync(join(tmpdir(), 'orc-cockpit-e2e-'));
-    const tmuxTmpdir = join(temp, 'tmux');
+    tmuxTmpdir = join(temp, 'tmux');
     mkdirSync(tmuxTmpdir);
     dataHome = join(temp, 'data');
     process.env.TMUX_TMPDIR = tmuxTmpdir;
@@ -184,12 +257,7 @@ describe.skipIf(!tmuxOk)('orc cockpit end to end, in a host tmux pane', () => {
     writeFileSync(join(dir, 'coordinator.pid'), JSON.stringify({ pid: coordinator.pid }));
     tickTimer = startCoordinatorTick();
 
-    // The user's terminal, with the cockpit started in alpha; its exit status stays on the screen.
-    const env = { ORC_DATA_HOME: dataHome, TMUX_TMPDIR: tmuxTmpdir, ORC_PROJECT_ID: alpha.id, ORC_STATE_DIR: dir };
-    const cockpit = ['env', ...Object.entries(env).map(([key, value]) => `${key}=${value}`), ...orc, 'cockpit'].map(shellQuote).join(' ');
-    const command = `${cockpit}; echo COCKPIT-EXIT $?; sleep 600`;
-    const host = tmux(HOST, ['new-session', '-d', '-s', HOST, '-x', String(HOST_COLS), '-y', String(HOST_ROWS), '-c', repoRoot, command]);
-    expect(host.status, host.stderr).toBe(0);
+    launchCockpit({ ORC_COCKPIT_THEME: '' });
   }, 30_000);
 
   afterAll(async () => {
@@ -278,4 +346,42 @@ describe.skipIf(!tmuxOk)('orc cockpit end to end, in a host tmux pane', () => {
     await waitFor('the cockpit to exit', () => screen().includes('COCKPIT-EXIT 0'));
     for (const agent of ['master', 'worker-a']) expect(tmux(tmuxSocketName(dir), ['has-session', '-t', `=${tmuxSessionName(agent)}`]).status).toBe(0);
   }, 90_000);
+
+  it('draws the header, footer and sidebar cards without a colour in mono, and expands an agent with Space', async () => {
+    launchCockpit({ ORC_COCKPIT_THEME: 'mono' });
+    await waitFor('the header', () => lines()[0].startsWith('ORC') && lines()[0].includes(alpha.name));
+    await waitFor('the footer', () => lines()[HOST_ROWS - 1].includes('quit'));
+    await waitFor('the card titles', () => {
+      const shown = sidebar().join('\n');
+      return shown.includes(`[ ${alpha.name.toUpperCase()} ]`) && shown.includes('[ OTHER PROJECTS ]') && shown.includes('[ AGENTS ]');
+    });
+    await waitFor('the worker in the Agents card', () => sidebarRow('worker-a') !== '');
+
+    // F10 gives the sidebar the keys (the Agents card, its first agent); Space expands the worker into its block.
+    send(`${ESC}[21~`);
+    await waitFor('the sidebar\'s keys in the footer', () => lines()[HOST_ROWS - 1].includes('Space: expand'));
+    send(' ');
+    await waitFor('the expanded agent block', () => sidebarRow('[-] worker-a') !== '' && sidebarRow('task  orch/task-a') !== '');
+
+    const coloured = chromeCells(styledScreen()).filter(({ cell }) => cell.fg !== null || cell.bg !== null);
+    expect(coloured.map(({ where, cell }) => `${where} ${JSON.stringify(cell)}`), screen()).toEqual([]);
+
+    send('\x11');
+    await waitFor('the cockpit to exit', () => screen().includes('COCKPIT-EXIT 0'));
+  }, 60_000);
+
+  it('draws a theme file\'s role colour as true colour', async () => {
+    const themeFile = join(temp, 'theme.json');
+    writeFileSync(themeFile, JSON.stringify({ base: 'mono', roles: { 'chrome.border': { fg: '#12ab34' } } }));
+    launchCockpit({ ORC_COCKPIT_THEME: themeFile, COLORTERM: 'truecolor' });
+    await waitFor('the card titles', () => sidebarRow('[ AGENTS ]') !== '');
+    await settle();
+
+    const borders = chromeCells(styledScreen()).filter(({ cell }) => cell.fg === '38;2;18;171;52');
+    expect(borders.length, screen()).toBeGreaterThan(0);
+    expect(borders.every(({ cell }) => /[─│┌┐└┘├┤ ]/.test(cell.text)), JSON.stringify(borders.filter(({ cell }) => !/[─│┌┐└┘├┤ ]/.test(cell.text)))).toBe(true);
+
+    send('\x11');
+    await waitFor('the cockpit to exit', () => screen().includes('COCKPIT-EXIT 0'));
+  }, 60_000);
 });
