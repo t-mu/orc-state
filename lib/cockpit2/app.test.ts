@@ -18,8 +18,6 @@ import {
   waitFor, waitForSidebar, waitForSlotLine, waitForSlotText, waitForTabBar,
 } from './appFakes.ts';
 
-
-
 // ── layout ────────────────────────────────────────────────────────────────────
 
 describe('computeLayout', () => {
