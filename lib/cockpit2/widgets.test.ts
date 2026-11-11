@@ -310,3 +310,67 @@ function columnOf(line: string, x: number): string | null {
   }
   return null;
 }
+
+// ── full-style snapshot ──────────────────────────────────────────────────────
+
+/** A cell style as a short key: attribute letters, then fg and bg (`p<index>`, `#rrggbb`, empty for default). */
+function styleKey(style: Frame['cells'][number]['style']): string {
+  const flags = (['bold', 'dim', 'italic', 'underline', 'blink', 'inverse', 'invisible', 'strikethrough'] as const)
+    .filter((name) => style[name]).map((name) => name[0] + name[1]).join('');
+  const color = (value: typeof style.fg) => value.type === 'palette' ? `p${value.index}`
+    : value.type === 'rgb' ? `#${[value.r, value.g, value.b].map((n) => n.toString(16).padStart(2, '0')).join('')}` : '';
+  return `${flags}/${color(style.fg)}/${color(style.bg)}`;
+}
+
+/** Every row of `frame` as runs of one style: `{style}text`, a wide grapheme's continuation cell kept as `·` so widths show. */
+const serialiseFrame = (frame: Frame): string[] => Array.from({ length: frame.rows }, (_, y) => {
+  let out = '';
+  let last: string | null = null;
+  for (const cell of frame.cells.slice(y * frame.cols, (y + 1) * frame.cols)) {
+    const key = styleKey(cell.style);
+    if (key !== last) out += `{${key}}`;
+    last = key;
+    out += cell.width === 0 ? '·' : cell.text;
+  }
+  return out;
+});
+
+describe('full-style snapshot at 80x24', () => {
+  const STATES = ['running', 'connecting', 'stopped', 'stale', 'incompatible'] as const;
+  const KINDS = ['permission_prompt', 'question', 'stalled', 'no_progress'] as const;
+  const projects = STATES.map((state, index) => project(`p${index + 1}`, { state, active: index === 0, attention: index === 0 ? 4 : index === 2 ? 1 : 0 }));
+  const agents = [...KINDS.map((kind) => agent(`a-${kind}`, { attention: kind, detail: `${kind} detail` })), agent('plain', { elapsed: null, detail: null })];
+  const tabAgents = KINDS.map((kind) => `a-${kind}`);
+  const tabAttention = new Map(KINDS.map((kind) => [`a-${kind}`, kind]));
+  const BUTTONS: TabBarButton[] = [{ action: 'explorer', text: 'tasks' }, { action: 'attention', text: '! 4' }];
+
+  function draw(sidebar: SidebarModel, focus: 'projects' | 'agents' | null, nav: SidebarNav, activeTab: string, slotFocused: boolean, error: string | null, explorer = false): string[] {
+    const layout = computeLayout(80, 24);
+    const frame = createFrame(80, 24);
+    drawSidebar(frame, layout.sidebar, sidebarView(sidebar, layout.sidebar.rows, nav), { focus, footer: '[sidebar] ↑↓ move · Enter open' });
+    const tabs = buildTabBarModel({ activeProject: 'p1', projects: [{ projectId: 'p1', tabs: tabAgents, active: activeTab }] }, tabAttention);
+    const marked = withModeMarks(tabs, (id) => id === 'a-question');
+    drawTabBar(frame, layout.tabBar, tabBarView(explorer ? withExplorerTab(marked) : marked, layout.tabBar.cols, 'Ctrl-q: quit', BUTTONS), { slotFocused, error });
+    return serialiseFrame(frame);
+  }
+
+  it('projects focused: every project state, the cursor row, a notice; a permission tab active with the slot unfocused', () => {
+    const sidebar = model({ projects, agents, notice: 'coordinator restarting', status: { coordinator: 'connecting', workers: null, attention: 4 } });
+    expect(draw(sidebar, 'projects', { box: 'projects', projectKey: 'p5', agentKey: null }, 'a-permission_prompt', false, null)).toMatchSnapshot();
+  });
+
+  it('agents focused: every attention kind, the cursor on an attention agent; a question tab active and focused', () => {
+    const sidebar = model({ projects: projects.slice(0, 2), agents, status: { coordinator: 'stale', workers: { used: 4, total: 4 }, attention: 1 } });
+    expect(draw(sidebar, 'agents', { box: 'agents', projectKey: null, agentKey: 'p1/a-stalled' }, 'a-question', true, null)).toMatchSnapshot();
+  });
+
+  it('a stale agent list with the cursor on a plain agent; stalled and no-progress tabs with an error line', () => {
+    const sidebar = model({ projects: projects.slice(0, 1), agents: [agents[4], agents[2], agents[3]], agentsStale: true, status: { coordinator: 'incompatible', workers: { used: 0, total: 2 }, attention: 0 } });
+    expect(draw(sidebar, 'agents', { box: 'agents', projectKey: null, agentKey: 'p1/plain' }, 'a-stalled', true, 'The master tab stays open.')).toMatchSnapshot();
+  });
+
+  it('no focus, a stopped coordinator with no agents; the explorer tab shown', () => {
+    const sidebar = model({ projects: [project('p1', { state: 'stopped', connection: 'stopped', active: true })], agents: [], status: { coordinator: 'stopped', workers: null, attention: 0 } });
+    expect(draw(sidebar, null, INITIAL_SIDEBAR_NAV, 'a-no_progress', false, null, true)).toMatchSnapshot();
+  });
+});
