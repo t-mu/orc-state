@@ -151,13 +151,14 @@ describe.skipIf(!hasTmux)('tmux session transport', () => {
     const clean = await adapter.start('worker-1', { working_directory: dir });
     expect(adapter.exitStatus(clean.session_handle)).toBeNull();
     await adapter.send(clean.session_handle, 'EXIT');
-    // exitStatus itself waits for tmux to reap the process; null only while the pane is still alive.
-    await waitFor(() => adapter.exitStatus(clean.session_handle) != null);
+    // Recorded: tmux has reaped the process (exitStatus's own wait gives up with no code and no signal).
+    const recorded = (handle: string) => { const status = adapter.exitStatus(handle); return status != null && (status.code != null || status.signal != null); };
+    await waitFor(() => recorded(clean.session_handle));
     expect(adapter.exitStatus(clean.session_handle)).toEqual({ code: 0, signal: null });
 
     const killed = await adapter.start('worker-2', { working_directory: dir });
     process.kill((killed.provider_ref as { pid: number }).pid, 'SIGKILL');
-    await waitFor(() => adapter.exitStatus(killed.session_handle) != null);
+    await waitFor(() => recorded(killed.session_handle));
     expect(adapter.exitStatus(killed.session_handle)).toEqual({ code: null, signal: 9 });
 
     await adapter.stop(killed.session_handle);
