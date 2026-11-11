@@ -239,6 +239,15 @@ describe('themeFromEnv', () => {
     expect(theme.roles.button).toEqual({ fg: palette(6), underline: true, bold: true });
   });
 
+  it('reports a file field other than base and roles and keeps the rest', () => {
+    const read = files({ '/t.json': JSON.stringify({ base: 'classic', role: { button: { bold: true } }, roles: { 'text.accent': { underline: true } } }) });
+    const { theme, problems } = themeFromEnv({ ORC_COCKPIT_THEME: '/t.json' }, read);
+    expect(problems).toEqual(["ORC_COCKPIT_THEME /t.json: unknown field 'role' (fields: base, roles)"]);
+    expect(theme.name).toBe('classic');
+    expect(theme.roles['text.accent']).toEqual({ bold: true, underline: true });
+    expect(theme.roles.button).toEqual(BUILT_IN_THEMES.classic.roles.button);
+  });
+
   it.each([
     ['an unreadable file', files({}), /not a built-in theme .* or a readable file/],
     ['invalid JSON', files({ '/t.json': '{ nope' }), /not valid JSON/],

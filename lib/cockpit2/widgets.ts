@@ -52,10 +52,16 @@ function drawRuns(frame: Frame, x: number, y: number, runs: readonly Run[], maxC
 /** A run's style with `over` applied (a stale row's dim). */
 const withStyle = (runs: readonly Run[], over: Partial<CellStyle>): Run[] => runs.map(([text, runStyle, status]) => (status ? [text, { ...runStyle, ...over }, true] : [text, { ...runStyle, ...over }]));
 
-/** The cursor row: `row.cursor` over each run, a status run taking only its attributes so its state colour stays. */
+/**
+ * The cursor row: `row.cursor` over each run. A status run keeps its colours
+ * so its state stays visible, takes the cursor's attributes, and takes the
+ * cursor's background where it has none of its own, so the bar has no gap.
+ */
 function cursorRow(runs: readonly Run[], theme: Theme): Run[] {
-  const { fg: _fg, bg: _bg, ...attributes } = theme.roles['row.cursor'];
-  return runs.map(([text, runStyle, status]) => (status ? [text, { ...runStyle, ...attributes }, true] : [text, { ...runStyle, ...theme.roles['row.cursor'] }]));
+  const { fg: _fg, bg: cursorBg, ...attributes } = theme.roles['row.cursor'];
+  return runs.map(([text, runStyle, status]) => (status
+    ? [text, { ...runStyle, ...attributes, bg: runStyle.bg.type === 'default' && cursorBg ? cursorBg : runStyle.bg }, true]
+    : [text, { ...runStyle, ...theme.roles['row.cursor'] }]));
 }
 
 // ── sidebar ──────────────────────────────────────────────────────────────────

@@ -411,4 +411,21 @@ describe('drawing with amber, the running cockpit theme', () => {
     const cursor = styleOf(AMBER, 'row.cursor');
     expect(cellOf(frame, EMOJI_AGENT).style).toMatchObject({ fg: cursor.fg, bg: cursor.bg, bold: true });
   });
+
+  it('fills the cursor bar under a project state, which keeps its colour', () => {
+    const layout = computeLayout(80, 24);
+    const frame = createFrame(80, 24);
+    const view = sidebarView(model(), layout.sidebar.rows, INITIAL_SIDEBAR_NAV);
+    drawSidebar(frame, layout.sidebar, view, { focus: 'projects', footer: 'f', theme: AMBER }); // the cursor on the active project
+    const y = Array.from({ length: frame.rows }, (_, row) => row).find((row) => rowText(frame, row).includes(CJK_PROJECT))!;
+    const x = rowText(frame, y).indexOf('running');
+    const cursor = styleOf(AMBER, 'row.cursor');
+    // The cell's index: rowText joins cell texts, and the CJK name's continuation cells add nothing.
+    const cells = frame.cells.slice(y * frame.cols, (y + 1) * frame.cols);
+    let seen = 0;
+    const state = cells.find((cell) => { const at = seen; seen += cell.text.length; return at === x; })!;
+    expect(state.text).toBe('r');
+    expect(state.style).toMatchObject({ fg: styleOf(AMBER, 'status.active').fg, bg: cursor.bg, bold: true });
+    expect(cellOf(frame, '1 needs you').style.bg).toEqual(styleOf(AMBER, 'status.attention.badge').bg);
+  });
 });

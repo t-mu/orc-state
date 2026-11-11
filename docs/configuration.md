@@ -116,11 +116,11 @@ Example: `ORC_COCKPIT_PREFIX=C-a ORC_COCKPIT_KEYS='dashboard=F12,attention=none'
 
 ### Cockpit theme
 
-Per user, for every project, read like the cockpit keys: when a cockpit starts, and anew by a cockpit that takes over. The theme styles what the cockpit draws itself (sidebar, tab bar, messages), not the panes it shows. A theme that cannot be used is reported as a warning and the cockpit draws in `amber`; an invalid role entry in a theme file is reported and skipped.
+Per user, for every project, read like the cockpit keys: when a cockpit starts, and anew by a cockpit that takes over. The theme styles what the cockpit draws itself (sidebar, tab bar, messages), not the panes it shows. A theme that cannot be used is reported as a warning and the cockpit draws in `amber`; an invalid role entry, or a file field other than `base` and `roles`, is reported and skipped.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ORC_COCKPIT_THEME` | A built-in theme, `amber`, `classic` (the cockpit's earlier look: the basic 16 colours with bold, dim and inverse) or `mono` (no colours, attributes only), or the path of a JSON theme file: `base` names the built-in theme it starts from (default `amber`) and `roles` overrides role styles (`fg`/`bg` as `#rrggbb`, a palette index 0–255 or `default`, `bold`, `dim`, `underline`, `inverse`), every role named in `lib/cockpit2/theme.ts` `THEME_ROLES` | `amber` |
+| `ORC_COCKPIT_THEME` | A built-in theme, `amber`, `classic` (the cockpit's earlier look: the basic 16 colours with bold, dim and inverse; attention kinds now take their status colours, and attention counts and tab badges are drawn inverse) or `mono` (no colours, attributes only), or the path of a JSON theme file: `base` names the built-in theme it starts from (default `amber`) and `roles` overrides role styles (`fg`/`bg` as `#rrggbb`, a palette index 0–255 or `default`, `bold`, `dim`, `underline`, `inverse`), the roles being `chrome.border`, `chrome.borderFocus`, `chrome.title`, `chrome.titleFocus`, `chrome.meta`, `text.primary`, `text.muted`, `text.accent`, `text.edge`, `row.cursor`, `button`, `button.attention`, `tab.close`, `error`, and `status.active`, `status.attention`, `status.warn`, `status.error`, `status.idle`, each also with a `.badge` variant | `amber` |
 | `NO_COLOR` | Non-empty selects `mono`, whatever `ORC_COCKPIT_THEME` says | unset |
 
 A theme file that gives the borders a violet colour:
