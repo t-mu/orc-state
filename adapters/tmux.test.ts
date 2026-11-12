@@ -3,10 +3,11 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  checkTmux, checkTmuxVersion, createTmuxAdapter, failedInspection, parseDeadPane, parseTmuxVersion, tmuxAttachCommand, tmuxSessionName,
+  checkTmux, checkTmuxVersion, createTmuxAdapter, failedInspection, parseDeadPane, parsePaneSignal, parseTmuxVersion, tmuxAttachCommand, tmuxSessionName,
   tmuxSocketName, tmuxSocketPath,
 } from './tmux.ts';
 import { EXPLORER_SOCKET } from '../lib/cockpit2/explorer.ts';
+import { classifySessionExit } from '../lib/sessionResume.ts';
 
 const originalBin = process.env.ORC_TMUX_BIN;
 
@@ -123,7 +124,27 @@ describe('parseDeadPane', () => {
     expect(parseDeadPane('1|||812\n')).toEqual({ dead: true, status: null, serverPid: 812 });
     expect(parseDeadPane('1|0||812\n')).toEqual({ dead: true, status: { code: 0, signal: null }, serverPid: 812 });
     expect(parseDeadPane('1||9|812\n')).toEqual({ dead: true, status: { code: null, signal: 9 }, serverPid: 812 });
-    expect(parseDeadPane('1||KILL|\n')).toEqual({ dead: true, status: { code: null, signal: 'KILL' }, serverPid: null });
+    expect(parseDeadPane('1||KILL|\n')).toEqual({ dead: true, status: { code: null, signal: 9 }, serverPid: null });
+  });
+
+  it('reads tmux 3.6\'s signal names (kill) as the numbers older tmux prints', () => {
+    expect(parseDeadPane('1||kill|812\n')).toEqual({ dead: true, status: { code: null, signal: 9 }, serverPid: 812 });
+    expect(parseDeadPane('1||term|812\n')).toEqual({ dead: true, status: { code: null, signal: 15 }, serverPid: 812 });
+    // Session resume still sees a crash.
+    expect(classifySessionExit(parseDeadPane('1||kill|812\n').status, { workComplete: true })).toBe('crash');
+  });
+});
+
+describe('parsePaneSignal', () => {
+  it('takes a number, or a name with or without SIG in any case, as the signal number', () => {
+    for (const text of ['9', 'kill', 'KILL', 'SIGKILL', 'sigkill']) expect(parsePaneSignal(text)).toBe(9);
+    expect(parsePaneSignal('hup')).toBe(1);
+  });
+
+  it('is null without a signal and keeps a name the platform does not know', () => {
+    expect(parsePaneSignal('')).toBeNull();
+    expect(parsePaneSignal(undefined)).toBeNull();
+    expect(parsePaneSignal('bogus')).toBe('bogus');
   });
 });
 

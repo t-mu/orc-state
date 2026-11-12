@@ -14,7 +14,7 @@
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { constants as osConstants, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { STATE_DIR, hookEventPath } from '../lib/paths.ts';
 import * as names from '../lib/tmuxNames.ts';
@@ -246,6 +246,19 @@ const EXIT_STATUS_POLL_MS = 50;
 const DEAD_PANE_FORMAT = '#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}|#{pid}';
 
 /**
+ * Pure: `#{pane_dead_signal}` as a signal number. tmux before 3.6 prints the
+ * number, 3.6 the name (`kill`); `KILL` and `SIGKILL` read the same. A name
+ * this platform does not know stays as text, so the exit still reads as a signal.
+ */
+export function parsePaneSignal(text: string | undefined): string | number | null {
+  if (!text) return null;
+  if (/^\d+$/.test(text)) return Number(text);
+  const name = text.toUpperCase();
+  const signals = osConstants.signals as Record<string, number | undefined>;
+  return signals[name.startsWith('SIG') ? name : `SIG${name}`] ?? text;
+}
+
+/**
  * Pure: a `DEAD_PANE_FORMAT` line. `status` is null until tmux has reaped the pane's process;
  * `serverPid` is the tmux server's pid.
  */
@@ -255,10 +268,9 @@ export function parseDeadPane(line: string): { dead: boolean; status: SessionExi
   const serverPid = Number.isSafeInteger(server) && server > 0 ? server : null;
   if (dead !== '1' || (!statusText && !signalText)) return { dead: dead === '1', status: null, serverPid };
   const code = statusText ? Number(statusText) : Number.NaN;
-  const sig = signalText ? Number(signalText) : Number.NaN;
   return {
     dead: true, serverPid,
-    status: { code: Number.isInteger(code) ? code : null, signal: Number.isInteger(sig) ? sig : (signalText || null) },
+    status: { code: Number.isInteger(code) ? code : null, signal: parsePaneSignal(signalText) },
   };
 }
 
