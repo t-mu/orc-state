@@ -97,6 +97,10 @@ import {
   changes, dialogClick, dialogKey, dialogLayout, dimFrame, drawSettingsDialog, openSettingsDialog,
   type DialogAction, type DialogKey, type SettingsDialogState, type SettingsHost,
 } from './settingsDialog.ts';
+import {
+  confirmDialogClick, confirmDialogKey, confirmDialogLayout, drawConfirmDialog, openConfirmDialog,
+  type ConfirmAction, type ConfirmDialogState, type ConfirmKey,
+} from './confirmDialog.ts';
 import { highlightSelection, osc52, selectionText, type CellPoint, type Selection } from './selection.ts';
 import { Sessions, type ConnectPane, type PaneSession } from './sessions.ts';
 import type { TerminalSession } from './terminal.ts';
@@ -301,6 +305,8 @@ export interface AppOptions {
   explorer?: ExplorerHost | undefined;
   /** Reads and writes project settings and restarts coordinators for the settings dialog; without it the dialog cannot open. */
   settings?: SettingsHost | undefined;
+  /** Kills agents for an expanded agent's `[ KILL ]` and the sidebar's kill key; without it they are refused. */
+  agents?: AgentActionHost | undefined;
   /** The outer terminal's colour depth (color.ts `colorDepthFromEnv`, from the CLI layer; default `truecolor`). */
   colorDepth?: ColorDepth | undefined;
   /** The theme everything the cockpit draws itself is styled with (theme.ts `themeFromEnv`, from the CLI layer; default `amber`). */
@@ -308,6 +314,17 @@ export interface AppOptions {
   /** The pause after each key sent to the task explorer before the next one (default 4 ms). */
   explorerKeyGapMs?: number;
 }
+
+/** What the cockpit asks of the CLI layer to act on an agent. */
+export interface AgentActionHost {
+  /** Kills an agent once the user confirmed: a worker's task is reset (`orc task-reset`), a scout removed; rejects with why it failed. */
+  kill(projectId: string, agentId: string, kind: 'worker' | 'scout', taskRef: string | null): Promise<void>;
+}
+
+/** The open dialog: the settings dialog, or a confirmation that runs `run` once confirmed. */
+type Modal =
+  | { kind: 'settings'; projectId: string; state: SettingsDialogState }
+  | { kind: 'confirm'; projectId: string; state: ConfirmDialogState; run: () => Promise<void> };
 
 /** Why the app ended: the user quit, or another cockpit took over (instance.ts). */
 export type AppExit = 'quit' | 'takeover';
@@ -562,8 +579,8 @@ export function runApp(options: AppOptions): App {
     if (update.type === 'removed' || update.type === 'added') registryError = null;
     if (update.type === 'removed') {
       watched.delete(update.project_id);
-      // Its settings dialog has nothing left to change.
-      if (dialog?.projectId === update.project_id) closeDialog();
+      // Its dialog has nothing left to change.
+      if (modal?.projectId === update.project_id) closeDialog();
     }
     else if (update.type === 'added') watched.set(update.project_id, update.state);
     else {
@@ -675,9 +692,11 @@ export function runApp(options: AppOptions): App {
     const model = buildSidebarModel([view], { stateDir: '', activeProjectId: view.project_id, nowMs: Date.now(), registryError: null, agentDetails: true });
     const agent = model.agents.find((candidate) => candidate.agent_id === tab.agentId);
     if (!agent) return { title: String(tab.agentId), parts: ['not running'], badge: null };
+    // The provider and its model as one part (the provider alone when the model is unknown); a scout has no task, so no task, role or phase part.
+    const runtime = agent.provider && agent.model ? `${agent.provider} · ${agent.model}` : agent.provider ?? agent.model ?? '';
     return {
       title: agent.agent_id,
-      parts: [agent.task_ref ?? agent.role, agent.phase, agent.provider ?? '', agent.elapsed ?? ''],
+      parts: agent.role === 'scout' ? [runtime, agent.elapsed ?? ''] : [agent.task_ref ?? '', agent.phase, runtime, agent.elapsed ?? ''],
       badge: agent.attention ? { label: ATTENTION_BADGE[agent.attention], role: attentionRole(agent.attention) } : null,
     };
   }
@@ -743,10 +762,11 @@ export function runApp(options: AppOptions): App {
     // Arrow keys reach the pane in the form its program asked for; checked on every render, so on tab switch and mode change.
     mirrorCursorKeys(screen ? screen.modes().applicationCursorKeys : false);
     paintCanvas(frame, sidebar);
-    if (dialog) {
+    if (modal) {
       dimFrame(frame);
-      drawSettingsDialog(frame, dialogLayout(dialog, layout.cols, layout.rows), dialog, theme,
-        theme.surfaces ? parseThemeColor(theme.surfaces.panel)! : { type: 'default' });
+      const panel = theme.surfaces ? parseThemeColor(theme.surfaces.panel)! : { type: 'default' as const };
+      if (modal.kind === 'settings') drawSettingsDialog(frame, dialogLayout(modal.state, layout.cols, layout.rows), modal.state, theme, panel);
+      else drawConfirmDialog(frame, confirmDialogLayout(modal.state, layout.cols, layout.rows), modal.state, theme, panel);
       cursor = { x: 0, y: 0, visible: false };
     }
     if (prevFrame && prevCursor && framesEqual(prevFrame, frame) && sameCursor(prevCursor, cursor)) return;
@@ -921,17 +941,31 @@ export function runApp(options: AppOptions): App {
     scheduleRender();
   }
 
-  // ── settings dialog ──
-  /** The open settings dialog: it takes every key and click until it closes. */
-  let dialog: SettingsDialogState | null = null;
-  /** Counts dialogs opened and closed, so a save that ends after its dialog closed leaves a newer one alone. */
+  // ── dialogs ──
+  /**
+   * The open dialog, the settings dialog or a confirmation (the kill of an
+   * agent): it takes every key and click until it closes. `projectId` is the
+   * project it acts on; it closes when that project leaves the registry.
+   */
+  let modal: Modal | null = null;
+  /** Counts dialogs opened and closed, so an action that ends after its dialog closed leaves a newer one alone. */
   let dialogGeneration = 0;
 
   function closeDialog(): void {
-    dialog = null;
+    modal = null;
     dialogGeneration++;
     scheduleRender();
   }
+
+  function showDialog(next: Modal): void {
+    modal = next;
+    dialogGeneration++;
+    clearSelection();
+    scheduleRender();
+  }
+
+  /** The first line of what an action threw: what a dialog shows. */
+  const errorLine = (error: unknown): string => (error instanceof Error ? error.message.split('\n')[0] : String(error));
 
   /** Opens the settings dialog of `projectId` with its effective settings. */
   function openSettings(projectId: string): void {
@@ -941,38 +975,82 @@ export function runApp(options: AppOptions): App {
       scheduleRender();
       return;
     }
+    let state: SettingsDialogState;
     try {
-      dialog = openSettingsDialog(projectId, watched.get(projectId)?.project.name ?? projectId, host.read(projectId));
-      dialogGeneration++;
+      state = openSettingsDialog(projectId, watched.get(projectId)?.project.name ?? projectId, host.read(projectId));
     } catch (error) {
       refusal = `The settings could not be read: ${error instanceof Error ? error.message : String(error)}`;
+      clearSelection();
+      scheduleRender();
+      return;
     }
-    clearSelection();
-    scheduleRender();
+    showDialog({ kind: 'settings', projectId, state });
   }
 
-  /** What a dialog key or click asked for: close, or save (and restart the coordinator). */
-  async function runDialogAction(action: DialogAction): Promise<void> {
-    if (!dialog || !action) return;
+  /** What a settings dialog key or click asked for: close, or save (and restart the coordinator). */
+  async function runSettingsAction(action: DialogAction): Promise<void> {
+    if (modal?.kind !== 'settings' || !action) return;
     if (action === 'cancel') { closeDialog(); return; }
     const host = options.settings!;
-    const { projectId } = dialog;
+    const { projectId } = modal;
     const generation = dialogGeneration;
-    try {
-      dialog = { ...dialog, busy: 'Saving…', error: null };
+    /** Updates the dialog's state while it is still this one. */
+    const update = (change: (state: SettingsDialogState) => SettingsDialogState) => {
+      if (modal?.kind === 'settings' && generation === dialogGeneration) modal = { ...modal, state: change(modal.state) };
       scheduleRender();
-      for (const { key, value } of changes(dialog)) host.write(projectId, key, value);
+    };
+    try {
+      update((state) => ({ ...state, busy: 'Saving…', error: null }));
+      for (const { key, value } of changes(modal.state)) host.write(projectId, key, value);
       if (action === 'saveRestart') {
-        dialog = { ...dialog, busy: 'Restarting the coordinator…' };
-        scheduleRender();
+        update((state) => ({ ...state, busy: 'Restarting the coordinator…' }));
         await host.restartCoordinator(projectId);
       }
       if (generation === dialogGeneration) closeDialog();
     } catch (error) {
-      if (dialog && generation === dialogGeneration) {
-        dialog = { ...dialog, busy: null, error: error instanceof Error ? error.message.split('\n')[0] : String(error) };
-      }
+      update((state) => ({ ...state, busy: null, error: errorLine(error) }));
+    }
+  }
+
+  /**
+   * Asks to kill an agent: a worker's task is reset (its run is cancelled and
+   * a new worker takes the task), a scout is removed. Refused without an
+   * agents host, and for a worker without a task (there is nothing to reset).
+   */
+  function confirmKill(command: Extract<SidebarCommand, { type: 'killAgent' }>): void {
+    const { projectId, agentId, kind, taskRef } = command;
+    const refused = !options.agents ? 'This cockpit cannot kill agents.' : kind === 'worker' && !taskRef ? `${agentId} has no task to reset.` : null;
+    if (refused) {
+      refusal = refused;
       scheduleRender();
+      return;
+    }
+    const message = kind === 'worker'
+      ? `Kill ${agentId}? Its run is cancelled and ${taskRef} goes back to the backlog (task reset); a new worker picks it up.`
+      : `Kill ${agentId}? Its session ends and it is removed.`;
+    showDialog({
+      kind: 'confirm', projectId,
+      state: openConfirmDialog({ title: `kill · ${agentId}`, message: [message], confirmLabel: 'KILL' }),
+      run: () => options.agents!.kill(projectId, agentId, kind, taskRef),
+    });
+  }
+
+  /** What a confirmation key or click asked for: close, or run what it confirms (a failure stays in the dialog). */
+  async function runConfirmAction(action: ConfirmAction): Promise<void> {
+    if (modal?.kind !== 'confirm' || !action) return;
+    if (action === 'cancel') { closeDialog(); return; }
+    const { run } = modal;
+    const generation = dialogGeneration;
+    const update = (change: (state: ConfirmDialogState) => ConfirmDialogState) => {
+      if (modal?.kind === 'confirm' && generation === dialogGeneration) modal = { ...modal, state: change(modal.state) };
+      scheduleRender();
+    };
+    update((state) => ({ ...state, busy: 'Killing…', error: null }));
+    try {
+      await run();
+      if (generation === dialogGeneration) closeDialog();
+    } catch (error) {
+      update((state) => ({ ...state, busy: null, error: errorLine(error) }));
     }
   }
 
@@ -981,25 +1059,37 @@ export function runApp(options: AppOptions): App {
     Up: 'up', k: 'up', Down: 'down', j: 'down', Left: 'left', h: 'left', Right: 'right', l: 'right', Space: 'right',
     Enter: 'enter', Escape: 'escape', q: 'escape', Tab: 'next', BTab: 'previous',
   };
+  /** A confirmation's keys: its two buttons sit side by side, so every move key switches between them. */
+  const CONFIRM_KEYS: Readonly<Record<DialogKey, ConfirmKey>> = {
+    up: 'previous', down: 'next', left: 'left', right: 'right', next: 'next', previous: 'previous', enter: 'enter', escape: 'escape',
+  };
 
-  /** A key or mouse token while the dialog is open: the dialog gets it, nothing behind it does. */
+  /** A key or mouse token while a dialog is open: the dialog gets it, nothing behind it does. */
   function onDialogToken(token: Token): void {
-    if (!dialog) return;
+    if (!modal) return;
+    let key: DialogKey | null = null;
+    let at: { x: number; y: number } | null = null;
     if (token.kind === 'mouse') {
       const event = parseSgrMouse(token);
       if (!event || !isClick(event)) return;
-      const step = dialogClick(dialog, dialogLayout(dialog, layout.cols, layout.rows), event.x, event.y);
-      dialog = step.state;
-      scheduleRender();
-      void runDialogAction(step.action);
-      return;
+      at = { x: event.x, y: event.y };
+    } else {
+      const name = matchDialog(token);
+      if (!name) return;
+      key = DIALOG_KEYS[name];
     }
-    const name = matchDialog(token);
-    if (!name) return;
-    const step = dialogKey(dialog, DIALOG_KEYS[name]);
-    dialog = step.state;
-    scheduleRender();
-    void runDialogAction(step.action);
+    if (modal.kind === 'settings') {
+      const step = at ? dialogClick(modal.state, dialogLayout(modal.state, layout.cols, layout.rows), at.x, at.y) : dialogKey(modal.state, key!);
+      modal = { ...modal, state: step.state };
+      scheduleRender();
+      void runSettingsAction(step.action);
+    } else {
+      const step = at ? confirmDialogClick(modal.state, confirmDialogLayout(modal.state, layout.cols, layout.rows), at.x, at.y)
+        : confirmDialogKey(modal.state, CONFIRM_KEYS[key!]);
+      modal = { ...modal, state: step.state };
+      scheduleRender();
+      void runConfirmAction(step.action);
+    }
   }
 
   /** Runs what a sidebar key or click asks for; what it opens is shown and takes the keys, by key as by click. */
@@ -1010,6 +1100,7 @@ export function runApp(options: AppOptions): App {
     if (!command) return;
     if (command.type === 'focusSlot') setFocus('slot');
     else if (command.type === 'openSettings') openSettings(command.projectId);
+    else if (command.type === 'killAgent') confirmKill(command);
     else if (command.type === 'openProject') { if (apply((state) => showProject(state, command.projectId)).ok) setFocus('slot'); }
     else if (apply((state) => openAgent(state, command.projectId, command.agentId)).ok) setFocus('slot');
   }
@@ -1029,8 +1120,8 @@ export function runApp(options: AppOptions): App {
       if (!step) return;
       runSidebar(step);
       // What was clicked is shown and takes the keys, as after a tab click (and a refused open too); the sidebar cursor stays on its row.
-      // A click on a collapse marker only expands or collapses: a focused sidebar's keys follow the cursor to the agents box.
-      if (step.command) setFocus('slot');
+      // A click on a collapse marker only expands or collapses, and one on KILL only asks: a focused sidebar's keys follow the cursor to the agents box.
+      if (step.command && step.command.type !== 'killAgent') setFocus('slot');
       else if (focus !== 'slot') setFocus(step.nav.box);
     },
     tabBar: (event, at) => {
@@ -1138,7 +1229,7 @@ export function runApp(options: AppOptions): App {
 
   function onToken(token: Token): void {
     if (closed) return;
-    if (dialog) { onDialogToken(token); return; }
+    if (modal) { onDialogToken(token); return; }
     const tab = shownTab(tabs);
     if (refusal && token.kind !== 'mouse') {
       refusal = null;

@@ -13,7 +13,7 @@
  *    reaches the pane (typing mode only). Any other key after the prefix is dropped.
  * 4. With the sidebar focused, the rest is sidebar navigation (arrows or
  *    j/k, Tab or Shift-Tab to cycle the cards, Enter, Space to expand or
- *    collapse an agent, Esc);
+ *    collapse an agent, x to kill it (the app asks first), Esc);
  *    no key or paste reaches a pane.
  * 5. On the task explorer tab while its screen is shown (`live`), Ctrl-] closes
  *    it and every other key reaches the explorer, which owns them: arrows or
@@ -68,8 +68,8 @@ export type DispatchAction =
   /** Nothing happens; `reason` for tests and debugging. */
   | { type: 'drop'; reason: 'incomplete' | 'view' | 'prefix' | 'sidebar' };
 
-/** Sidebar navigation: move the cursor, cycle the projects, project and agents boxes (forward, back), open, expand or collapse an agent, back to the pane. */
-export type SidebarKey = 'up' | 'down' | 'switchBox' | 'prevBox' | 'open' | 'toggle' | 'back';
+/** Sidebar navigation: move the cursor, cycle the projects, project and agents boxes (forward, back), open, expand or collapse an agent, kill an agent (asks first), back to the pane. */
+export type SidebarKey = 'up' | 'down' | 'switchBox' | 'prevBox' | 'open' | 'toggle' | 'kill' | 'back';
 
 export interface DispatchContext {
   /** The shown tab's mode; the master tab passes `typing`. */
@@ -88,7 +88,7 @@ export const START_TYPING_KEY = 'i';
 export const STOP_TYPING_KEY = 'C-]';
 /** Sidebar navigation keys by tmux key name. */
 export const SIDEBAR_KEYS: Readonly<Record<string, SidebarKey>> = {
-  Up: 'up', k: 'up', Down: 'down', j: 'down', Tab: 'switchBox', BTab: 'prevBox', Enter: 'open', Space: 'toggle', Escape: 'back',
+  Up: 'up', k: 'up', Down: 'down', j: 'down', Tab: 'switchBox', BTab: 'prevBox', Enter: 'open', Space: 'toggle', x: 'kill', Escape: 'back',
 };
 
 /** The first key name bound to a sidebar key (`Enter` for open), for hints. */

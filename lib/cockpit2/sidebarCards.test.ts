@@ -523,10 +523,10 @@ describe('drawSidebarCards', () => {
 describe('expanded agents', () => {
   const MONO = BUILT_IN_THEMES.mono;
   const at = (agentKey: string, expanded: string[], box: 'agents' | 'projects' = 'agents'): SidebarNav => ({ ...INITIAL_SIDEBAR_NAV, box, agentKey, expanded: new Set(expanded) });
-  /** 3 other projects; 4 agents with a task and provider, a1 asking a question long enough to wrap past two lines. */
+  /** 3 other projects; 4 agents with a task, provider and model, a1 asking a question long enough to wrap past two lines. */
   const details = (others = 3) => model(others, 4, {
     agents: model(others, 4).agents.map((each, index) => ({
-      ...each, task_ref: 'cockpit-style/foo', provider: 'claude',
+      ...each, task_ref: 'cockpit-style/foo', provider: 'claude', model: 'opus',
       ...(index === 0 ? { detail: '? may I run npm test and then a much longer question that wraps over more than two lines' } : {}),
     })),
   });
@@ -589,30 +589,103 @@ describe('expanded agents', () => {
     expect(card(both, 'agents')!.lines.length).toBe(7);
   });
 
-  it('leaves out the activity line when it only repeats the task', () => {
-    const fallback = details(0);
-    fallback.agents = [{ ...fallback.agents[1], detail: 'cockpit-style/foo' }];
-    const layout = sidebarCardsLayout(fallback, 22, at('p1/a2', ['p1/a2']), COLS);
-    expect(blockRows(layout, 0).map((line) => (line.kind === 'block' ? line.part : ''))).toEqual(['top', 'task', 'phase', 'hint', 'bottom']);
+  const parts = (layout: SidebarCardsLayout, index = 0) => blockRows(layout, index).map((line) => (line.kind === 'block' ? line.part : ''));
+
+  it('leaves out the activity line when it only repeats the task, the role or the phase the badge shows', () => {
+    for (const detail of ['cockpit-style/foo', 'worker', 'implement', 'IMPLEMENT', null, '']) {
+      const fallback = details(0);
+      fallback.agents = [{ ...fallback.agents[1], detail }];
+      const layout = sidebarCardsLayout(fallback, 22, at('p1/a2', ['p1/a2']), COLS);
+      expect(parts(layout), String(detail)).toEqual(['top', 'model', 'task', 'buttons', 'bottom']);
+    }
   });
 
-  it('lays out the block: the row, task, phase and provider, at most two activity lines, the open hint', () => {
+  it('lays out a worker\'s block: the row, provider · model, task, at most two lines of its question, the buttons', () => {
     const layout = sidebarCardsLayout(details(0), 22, at('p1/a1', ['p1/a1']), COLS);
-    expect(blockRows(layout, 0).map((line) => (line.kind === 'block' ? line.part : ''))).toEqual(['top', 'task', 'phase', 'detail', 'detail', 'hint', 'bottom']);
+    expect(parts(layout)).toEqual(['top', 'model', 'task', 'detail', 'detail', 'buttons', 'bottom']);
     const { lines } = render(details(0), { nav: at('p1/a1', ['p1/a1']), focus: 'agents' });
     const top = lines.findIndex((line) => line.includes('[-] a1'));
     expect(lines.slice(top, top + 7).map((line) => line.trimEnd())).toEqual([
       '│┌ [-] a1 worker 12m [QUESTION] ┐│',
-      '││ task  cockpit-style/foo      ││',
-      '││ implement · claude           ││',
+      '││ claude · opus                ││',
+      '││ cockpit-style/foo            ││',
       '││ ? may I run npm test and     ││',
       '││ then a much longer question… ││',
-      '││ Enter: open tab              ││',
+      '││ [ OPEN ] [ KILL ]            ││',
       '│└──────────────────────────────┘│',
     ]);
     for (const line of lines) expect(stringWidth(line)).toBe(COLS);
     // The other agents stay collapsed rows.
     expect(lines.some((line) => line.includes('[+] a2'))).toBe(true);
+  });
+
+  it('shows a worker\'s activity when it says something, and no phase or provider row repeating the badge', () => {
+    const { lines } = render(details(0), { nav: at('p1/a2', ['p1/a2']) });
+    const top = lines.findIndex((line) => line.includes('[-] a2'));
+    expect(lines.slice(top + 1, top + 5).map((line) => line.trimEnd())).toEqual([
+      '││ claude · opus                ││',
+      '││ cockpit-style/foo            ││',
+      '││ working on a2                ││',
+      '││ [ OPEN ] [ KILL ]            ││',
+    ]);
+    expect(lines.some((line) => line.includes('implement ·'))).toBe(false);
+  });
+
+  it('gives a scout no task row and no `scout` or state row; an unknown provider or model is `-`', () => {
+    const sidebar = details(0);
+    sidebar.agents = [agent('s1', { role: 'scout', phase: 'running', detail: 'scout', task_ref: null, provider: 'codex', model: null })];
+    const layout = sidebarCardsLayout(sidebar, 22, at('p1/s1', ['p1/s1']), COLS);
+    expect(parts(layout)).toEqual(['top', 'model', 'buttons', 'bottom']);
+    const { lines } = render(sidebar, { nav: at('p1/s1', ['p1/s1']) });
+    const top = lines.findIndex((line) => line.includes('[-] s1'));
+    expect(lines.slice(top, top + 4).map((line) => line.trimEnd())).toEqual([
+      '│┌ [-] s1 scout   12m [RUNNING] ┐│',
+      '││ codex · -                    ││',
+      '││ [ OPEN ] [ KILL ]            ││',
+      '│└──────────────────────────────┘│',
+    ]);
+    const unknown = details(0);
+    unknown.agents = [{ ...unknown.agents[1], provider: null, model: null }];
+    expect(render(unknown, { nav: at('p1/a2', ['p1/a2']) }).lines.some((line) => line.includes('││ - · -   '))).toBe(true);
+  });
+
+  it('draws OPEN in tab.active and KILL in button.danger, filled, one column apart', () => {
+    for (const theme of [AMBER, BUILT_IN_THEMES.orc, CLASSIC]) {
+      const { frame, lines } = render(details(0), { nav: at('p1/a2', ['p1/a2']), theme });
+      const y = lines.findIndex((line) => line.includes('[ OPEN ]'));
+      expect(lines[y].indexOf('[ OPEN ] [ KILL ]')).toBe(3);
+      for (let x = 3; x < 11; x += 1) expect(frame.cells[y * COLS + x].style).toEqual(styleOf(theme, 'tab.active'));
+      expect(frame.cells[y * COLS + 11].style).not.toEqual(styleOf(theme, 'button.danger'));
+      for (let x = 12; x < 20; x += 1) expect(frame.cells[y * COLS + x].style).toEqual(styleOf(theme, 'button.danger'));
+    }
+  });
+
+  it('hits the buttons on their columns: OPEN opens the agent, KILL asks to kill it (a worker with its task, a scout without)', () => {
+    const sidebar = details(0);
+    sidebar.agents = [...sidebar.agents.slice(0, 2), agent('s1', { role: 'scout', phase: 'running', detail: 'scout', task_ref: null, provider: 'codex', model: null })];
+    const nav = at('p1/a1', ['p1/a2', 'p1/s1']);
+    const { layout, lines } = render(sidebar, { nav, rows: 30 });
+    const y = lines.findIndex((line) => line.includes('[ OPEN ]'));
+    expect([2, 3, 10, 11, 12, 19, 20].map((x) => sidebarCardTarget(layout, x, y)?.button)).toEqual([undefined, 'open', 'open', undefined, 'kill', 'kill', undefined]);
+    expect(sidebarCardClick(layout, nav, 5, y)).toEqual({ nav: { ...nav, agentKey: 'p1/a2' }, command: { type: 'openAgent', projectId: 'p1', agentId: 'a2' } });
+    expect(sidebarCardClick(layout, nav, 14, y)).toEqual({
+      nav: { ...nav, agentKey: 'p1/a2' }, command: { type: 'killAgent', projectId: 'p1', agentId: 'a2', kind: 'worker', taskRef: 'cockpit-style/foo' },
+    });
+    // Off the buttons the row opens the agent, as the rest of the block does.
+    expect(sidebarCardClick(layout, nav, 25, y)?.command).toEqual({ type: 'openAgent', projectId: 'p1', agentId: 'a2' });
+    const scoutRow = lines.findIndex((line, index) => index > y && line.includes('[ KILL ]'));
+    expect(sidebarCardClick(layout, nav, 14, scoutRow)?.command).toEqual({ type: 'killAgent', projectId: 'p1', agentId: 's1', kind: 'scout', taskRef: null });
+  });
+
+  it('asks to kill the cursor agent with the kill key, only in the agents box', () => {
+    const sidebar = details(0);
+    const nav = at('p1/a2', []);
+    expect(navigateSidebar(sidebarCursor(sidebar, nav), nav, 'kill')).toEqual({
+      nav, command: { type: 'killAgent', projectId: 'p1', agentId: 'a2', kind: 'worker', taskRef: 'cockpit-style/foo' },
+    });
+    const projects = at('p1/a2', [], 'projects');
+    expect(navigateSidebar(sidebarCursor(sidebar, projects), projects, 'kill')).toEqual({ nav: projects, command: null });
+    expect(navigateSidebar(sidebarCursor(model(1, 0), INITIAL_SIDEBAR_NAV), INITIAL_SIDEBAR_NAV, 'kill').command).toBeNull();
   });
 
   for (const rows of [22, 12, 8]) {

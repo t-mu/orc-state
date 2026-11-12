@@ -18,15 +18,16 @@
  *   │ [+] grommash worker [PERMI…] │   needing attention keeps its question or
  *   │     ? may I run npm test     │   reason on a second row. An expanded agent
  *   │┌ [-] boin worker 3m [IMPL…] ┐│   (Plan 7 Step 9: Space or a click on its
- *   ││ task  cockpit-style/foo    ││   marker) is a box in its status role: the
- *   ││ implement · claude         ││   row, its task, phase and provider, its
- *   ││ editing app.ts             ││   activity or question (at most two lines)
- *   ││ Enter: open tab            ││   and the open key
- *   │└────────────────────────────┘│
+ *   ││ claude · opus              ││   marker) is a box in its status role: the
+ *   ││ cockpit-style/foo          ││   row, its provider and model, its task (a
+ *   ││ editing app.ts             ││   scout has none), its question, or its
+ *   ││ [ OPEN ] [ KILL ]          ││   activity when it says more than the row
+ *   │└────────────────────────────┘│   (at most two lines), and two buttons
  *   └──────────────────────────────┘
  *
  * The keys move in three boxes, one per card, Tab and Shift-Tab cycling them:
- * projects (by project), project (its settings button) and agents (by agent).
+ * projects (by project), project (its settings button) and agents (by agent;
+ * Enter opens the agent's tab, `x` asks to kill it, as its buttons do).
  * The layout (`sidebarCardsLayout`) is pure: it sizes the cards to the rows
  * (Projects shrinks to a `+N more` window before Agents loses rows), keeps
  * the cursor's row (an expanded agent's whole block) in view and lists every
@@ -37,7 +38,7 @@ import { stringWidth } from '../cellWidth.ts';
 import { ATTENTION_BADGE, fitRow, fitText, type SidebarAgent, type SidebarModel } from '../tui/sidebar.ts';
 import { windowStart, wrapText } from '../tui/taskList.ts';
 import { collapseMarker, drawBadge, drawBox } from './chrome.ts';
-import { sidebarKeyName, type SidebarKey } from './dispatch.ts';
+import type { SidebarKey } from './dispatch.ts';
 import { drawText, fillRect, type Frame, type Region } from './frame.ts';
 import type { CellStyle } from './screen.ts';
 import { attentionRole, badgeRole, phaseRole, projectStateRole, styleOf, type StatusRole, type Theme } from './theme.ts';
@@ -74,6 +75,8 @@ export type SidebarCommand =
   | { type: 'openAgent'; projectId: string; agentId: string }
   /** The Project card's `[ SETTINGS ]` button: the active project's settings. */
   | { type: 'openSettings'; projectId: string }
+  /** An expanded agent's `[ KILL ]` button or the kill key: the app asks first, then resets a worker's task or removes a scout. */
+  | { type: 'killAgent'; projectId: string; agentId: string; kind: 'worker' | 'scout'; taskRef: string | null }
   | { type: 'focusSlot' };
 
 export interface SidebarStep { nav: SidebarNav; command: SidebarCommand | null }
@@ -97,8 +100,8 @@ export function sidebarCursor(model: SidebarModel, nav: SidebarNav): SidebarCurs
  * at either end; the project box holds only its settings button), switchBox
  * and prevBox cycle the projects, project and agents boxes, open opens the
  * project, the settings or the agent under the cursor, toggle expands or
- * collapses the agent under the cursor (nothing in the other boxes), back
- * returns to the pane.
+ * collapses the agent under the cursor and kill asks to kill it (both nothing
+ * in the other boxes), back returns to the pane.
  */
 export function navigateSidebar(view: SidebarCursor, nav: SidebarNav, key: SidebarKey): SidebarStep {
   const { model } = view;
@@ -126,6 +129,10 @@ export function navigateSidebar(view: SidebarCursor, nav: SidebarNav, key: Sideb
     case 'toggle': {
       if (nav.box !== 'agents' || length === 0) return { nav, command: null };
       return { nav: toggleAgent(nav, model.agents[current].key), command: null };
+    }
+    case 'kill': {
+      if (nav.box !== 'agents' || length === 0) return { nav, command: null };
+      return killAgentStep(nav, model, current);
     }
   }
 }
@@ -167,13 +174,27 @@ function openAgentStep(nav: SidebarNav, model: SidebarModel, index: number): Sid
   return { nav: next, command: model.activeProjectId ? { type: 'openAgent', projectId: model.activeProjectId, agentId: agent.agent_id } : null };
 }
 
+/** Asks to kill the agent at `index`: a scout is removed, a worker's task reset (the cursor goes to it). */
+function killAgentStep(nav: SidebarNav, model: SidebarModel, index: number): SidebarStep {
+  const agent = model.agents[index];
+  const next: SidebarNav = { ...nav, box: 'agents', agentKey: agent.key };
+  if (!model.activeProjectId) return { nav: next, command: null };
+  return {
+    nav: next,
+    command: {
+      type: 'killAgent', projectId: model.activeProjectId, agentId: agent.agent_id,
+      kind: agent.role === 'scout' ? 'scout' : 'worker', taskRef: agent.task_ref ?? null,
+    },
+  };
+}
+
 // ── layout ───────────────────────────────────────────────────────────────────
 
 /** The cards, top to bottom: Projects, Project and Agents; each is the box of the same name. */
 export type SidebarCard = SidebarBox;
 
-/** The rows of an expanded agent's block, top to bottom (`detail` up to twice). */
-export type BlockPart = 'top' | 'task' | 'phase' | 'detail' | 'hint' | 'bottom';
+/** The rows of an expanded agent's block, top to bottom (`task` only with a task, `detail` up to twice). */
+export type BlockPart = 'top' | 'model' | 'task' | 'detail' | 'buttons' | 'bottom';
 
 /** A card's body row: what is drawn there and what a click on it hits. */
 export type CardLine =
@@ -221,6 +242,20 @@ function blockDetail(text: string | null, width: number): string[] {
 }
 
 /**
+ * What an expanded block says below the task: the question or reason of an
+ * agent needing a human, else the activity only when it says something the
+ * block does not (never the task it falls back to, the bare role a scout
+ * shows, or the phase or state the badge already shows).
+ */
+function blockDetailText(agent: SidebarAgent): string | null {
+  if (agent.attention) return agent.detail;
+  const text = agent.detail?.trim();
+  if (!text) return null;
+  const repeats = [agent.task_ref, agent.role, agent.phase].some((other) => other != null && other.toLowerCase() === text.toLowerCase());
+  return repeats ? null : text;
+}
+
+/**
  * Each agent's rows in a card `cols` wide: collapsed, its row and (when it
  * needs attention) its question or reason; expanded, its block.
  */
@@ -229,10 +264,9 @@ function agentBlocks(agents: SidebarAgent[], expanded: ReadonlySet<string>, cols
     if (!expanded.has(agent.key)) return agent.attention ? [{ kind: 'agent', index }, { kind: 'detail', index }] : [{ kind: 'agent', index }];
     const part = (name: BlockPart, text?: string): CardLine => (text === undefined ? { kind: 'block', index, part: name } : { kind: 'block', index, part: name, text });
     return [
-      part('top'), part('task'), part('phase'),
-      // The detail falls back to the task (lib/tui/sidebar.ts), which the block already shows on its task line.
-      ...blockDetail(agent.detail === agent.task_ref && !agent.attention ? null : agent.detail, blockTextCols(cols)).map((text) => part('detail', text)),
-      part('hint'), part('bottom'),
+      part('top'), part('model'), ...(agent.task_ref ? [part('task')] : []),
+      ...blockDetail(blockDetailText(agent), blockTextCols(cols)).map((text) => part('detail', text)),
+      part('buttons'), part('bottom'),
     ];
   });
 }
@@ -376,14 +410,21 @@ export function sidebarCardsLayout(model: SidebarModel, rows: number, nav: Sideb
   return { ...cursor, cols, rows, cursorCard: nav.box, cards };
 }
 
+/** An expanded agent's buttons, left to right. */
+export type AgentButton = 'open' | 'kill';
+
 /**
  * What a click hits: a project's or an agent's row, whether it hit the agent
- * row's collapse marker, and (set only then) the Project card's settings button.
+ * row's collapse marker, and (set only then) the Project card's settings
+ * button or an expanded agent's button.
  */
-export interface SidebarCardTarget { card: SidebarCard; index: number; onMarker: boolean; settings?: true }
+export interface SidebarCardTarget { card: SidebarCard; index: number; onMarker: boolean; settings?: true; button?: AgentButton }
 
 /** The Project card's settings button, as drawn. */
 export const SETTINGS_BUTTON = '[ SETTINGS ]';
+/** An expanded agent's buttons as drawn, one column apart. */
+export const AGENT_BUTTONS: ReadonlyArray<{ button: AgentButton; label: string }> = [{ button: 'open', label: '[ OPEN ]' }, { button: 'kill', label: '[ KILL ]' }];
+const AGENT_BUTTON_GAP = 1;
 /** Before the active project's name on its Projects row. */
 const ACTIVE_MARK = '▸ ';
 
@@ -393,6 +434,21 @@ const PAD = 1;
 const MARKER_COLS = stringWidth(collapseMarker(false));
 /** The marker's first column on an expanded block's top row: after the card's border, the block's corner and a space. */
 const BLOCK_MARKER_X = 3;
+/** An expanded block's text, its buttons included, starts in the marker's column. */
+const BLOCK_TEXT_X = BLOCK_MARKER_X;
+
+/** Each agent button's columns on a block's buttons row, as far as `textCols` columns of text hold them (a cut button is drawn cut). */
+function agentButtonSpans(x: number, textCols: number): Array<{ button: AgentButton; label: string; x: number; cols: number }> {
+  const spans = [];
+  let at = x;
+  for (const { button, label } of AGENT_BUTTONS) {
+    const cols = Math.min(stringWidth(label), x + textCols - at);
+    if (cols <= 0) break;
+    spans.push({ button, label, x: at, cols });
+    at += stringWidth(label) + AGENT_BUTTON_GAP;
+  }
+  return spans;
+}
 
 /** The row under (x, y), relative to the sidebar; null on a border, a blank row, a `+N more` or empty-state line. */
 export function sidebarCardTarget(layout: SidebarCardsLayout, x: number, y: number): SidebarCardTarget | null {
@@ -415,7 +471,13 @@ export function sidebarCardTarget(layout: SidebarCardsLayout, x: number, y: numb
     case 'project': return { card: 'projects', index: line.index, onMarker: false };
     case 'agent': return { card: 'agents', index: line.index, onMarker: x >= 1 + PAD && x < 1 + PAD + MARKER_COLS };
     case 'detail': return { card: 'agents', index: line.index, onMarker: false };
-    case 'block': return { card: 'agents', index: line.index, onMarker: line.part === 'top' && x >= BLOCK_MARKER_X && x < BLOCK_MARKER_X + MARKER_COLS };
+    case 'block': {
+      if (line.part === 'buttons') {
+        const hit = agentButtonSpans(BLOCK_TEXT_X, layout.cols - 2 - 4).find((span) => x >= span.x && x < span.x + span.cols);
+        if (hit) return { card: 'agents', index: line.index, onMarker: false, button: hit.button };
+      }
+      return { card: 'agents', index: line.index, onMarker: line.part === 'top' && x >= BLOCK_MARKER_X && x < BLOCK_MARKER_X + MARKER_COLS };
+    }
     default: return null;
   }
 }
@@ -423,13 +485,15 @@ export function sidebarCardTarget(layout: SidebarCardsLayout, x: number, y: numb
 /**
  * A click at (x, y) in the sidebar: the row's box gets the cursor and its
  * project or agent opens, on the settings button the active project's settings
- * open, or, on an agent's collapse marker, the agent expands or collapses (no
- * command). Null off the rows.
+ * open, on an expanded agent's `[ KILL ]` the app is asked to kill it, or, on
+ * an agent's collapse marker, the agent expands or collapses (no command).
+ * Null off the rows.
  */
 export function sidebarCardClick(layout: SidebarCardsLayout, nav: SidebarNav, x: number, y: number): SidebarStep | null {
   const target = sidebarCardTarget(layout, x, y);
   if (!target) return null;
   if (target.settings) return openSettingsStep(nav, layout.model);
+  if (target.button === 'kill') return killAgentStep(nav, layout.model, target.index);
   if (target.onMarker) return { nav: toggleAgent(nav, layout.model.agents[target.index].key), command: null };
   return target.card === 'agents' ? openAgentStep(nav, layout.model, target.index) : openProjectStep(nav, layout.model, target.index);
 }
@@ -634,8 +698,9 @@ export function drawSidebarCards(frame: Frame, region: Region, layout: SidebarCa
   /**
    * One row of an expanded agent's block, `cols` wide: the border in the
    * agent's status role (dim on a stale list), the agent's row in the top
-   * border, then its task, phase and provider, activity or question (in the
-   * attention kind's role) and the open key, each cut by display width.
+   * border, then its provider and model, task, activity or question (in the
+   * attention kind's role) and its buttons (`[ OPEN ]` in `tab.active`,
+   * `[ KILL ]` in `button.danger`), each cut by display width.
    */
   function drawBlockLine(frame: Frame, x: number, y: number, cols: number, line: Extract<CardLine, { kind: 'block' }>, cursor: boolean): void {
     if (cols < 4) return;
@@ -658,14 +723,17 @@ export function drawSidebarCards(frame: Frame, region: Region, layout: SidebarCa
     }
     const muted = styled(role('text.muted'));
     const primary = styled(role('text.primary'));
-    const labelled = (label: string, value: string): Run[] => {
-      const shown = fitText(`${label}${value}`, textCols);
-      return shown.startsWith(label) ? [[label, muted], [shown.slice(label.length), primary]] : [[shown, muted]];
-    };
-    const runs: Run[] = line.part === 'task' ? labelled('task  ', agent.task_ref ?? '-')
-      : line.part === 'phase' ? [[fitText(`${agent.phase} · ${agent.provider ?? '-'}`, textCols), primary]]
-      : line.part === 'detail' ? [[fitText(line.text ?? '', textCols), styled(role(agent.attention ? attentionRole(agent.attention) : 'text.muted'))]]
-      : [[fitText(`${sidebarKeyName('open')}: open tab`, textCols), muted]];
+    if (line.part === 'buttons') {
+      for (const span of agentButtonSpans(x + 2, textCols)) {
+        drawText(frame, span.x, y, span.label, styled(role(span.button === 'kill' ? 'button.danger' : 'tab.active')), span.cols);
+      }
+      return;
+    }
+    const separator = ' · ';
+    const runs: Run[] = line.part === 'model'
+      ? cutRuns([[agent.provider ?? '-', primary], [separator, muted], [agent.model ?? '-', primary]], textCols)
+      : line.part === 'task' ? [[fitText(agent.task_ref ?? '', textCols), primary]]
+      : [[fitText(line.text ?? '', textCols), styled(role(agent.attention ? attentionRole(agent.attention) : 'text.muted'))]];
     drawRuns(frame, x + 2, y, runs, textCols);
   }
 
@@ -683,6 +751,20 @@ export function drawSidebarCards(frame: Frame, region: Region, layout: SidebarCa
     runs.push([rest, role('text.muted')]);
     return runs;
   }
+}
+
+/** `runs` cut to `cols` by display width, the cut run ending in an ellipsis (fitText). */
+function cutRuns(runs: readonly Run[], cols: number): Run[] {
+  const whole = fitText(runsText(runs), cols);
+  const out: Run[] = [];
+  let rest = whole;
+  for (const [text, style] of runs) {
+    if (!rest) break;
+    const take = rest.startsWith(text) ? text : rest;
+    out.push([take, style]);
+    rest = rest.slice(take.length);
+  }
+  return out;
 }
 
 /** An agent's status role: its attention kind's, else its phase's; an expanded block's border and the agent's badge use it. */
