@@ -11,6 +11,8 @@ import type { ColorDepth } from './color.ts';
 import { BUILT_IN_THEMES, resolveTheme, type Theme } from './theme.ts';
 import type { ExplorerHost } from './explorer.ts';
 import type { SettingValue, SettingsHost } from './settingsDialog.ts';
+import type { ProjectHost } from './addProjectDialog.ts';
+import type { AgentDefinition } from './newAgentDialog.ts';
 import type { MouseEvent } from './mouse.ts';
 import { EDGE_COLUMN, EDGE_ROW } from './frame.ts';
 import type { PaneClient } from './sessions.ts';
@@ -305,9 +307,11 @@ interface StartOptions {
   agents?: AgentActionHost;
   colorDepth?: ColorDepth;
   theme?: Theme;
+  projectHost?: ProjectHost;
+  agentDefinitions?: (repoRoot: string) => AgentDefinition[];
 }
 
-function start({ keys = DEFAULT_COCKPIT_KEYS, projects = [projectState('demo')], store = new MemoryStore(), projectId = 'demo', setup, explorer, settings, agents, colorDepth, theme }: StartOptions = {}) {
+function start({ keys = DEFAULT_COCKPIT_KEYS, projects = [projectState('demo')], store = new MemoryStore(), projectId = 'demo', setup, explorer, settings, agents, colorDepth, theme, projectHost, agentDefinitions }: StartOptions = {}) {
   const terminal = new FakeTerminal();
   const watcher = new FakeWatcher(projects);
   const clients: FakeClient[] = [];
@@ -326,6 +330,8 @@ function start({ keys = DEFAULT_COCKPIT_KEYS, projects = [projectState('demo')],
     agents,
     colorDepth,
     theme,
+    projectHost,
+    agentDefinitions,
   });
   apps.push(app);
   const client = () => clients[0];
@@ -1216,6 +1222,13 @@ class FakeExplorerHost implements ExplorerHost {
     this.shells.push({ session, cwd, size: `${size.cols}x${size.rows}` });
     return this.failWith ? Promise.reject(this.failWith) : Promise.resolve({ socket: 'orc-explorer', session });
   }
+  agents: Array<{ session: string; cwd: string; size: string; command: string }> = [];
+  startAgent(session: string, cwd: string, size: { cols: number; rows: number }, command: string) {
+    this.agents.push({ session, cwd, size: `${size.cols}x${size.rows}`, command });
+    return this.failWith ? Promise.reject(this.failWith) : Promise.resolve({ socket: 'orc-explorer', session });
+  }
+  prompts: Array<{ session: string; text: string }> = [];
+  sendPrompt(target: TmuxTarget, text: string) { this.prompts.push({ session: target.session, text }); return Promise.resolve(); }
   stop(target: TmuxTarget) { this.stopped.push(target); return Promise.resolve(); }
 }
 
@@ -2070,5 +2083,155 @@ describe('runApp agent block buttons and kill (fake tmux clients, fake agents ho
     terminal.type(click(KILL_X, await expand(terminal, 'w1')));
     await waitForTabBar(terminal, 1, 'This cockpit cannot kill agents.');
     expect(await screenHas(terminal, 'KILL · W1')).toBe(false);
+  });
+});
+
+// ── add-project and new-agent dialogs ────────────────────────────────────────
+
+class FakeProjectHost implements ProjectHost {
+  added: Array<[string, string | null, string]> = [];
+  failWith: Error | null = null;
+  constructor(public projectId = 'fresh') {}
+  add(path: string, name: string | null, provider: string) {
+    this.added.push([path, name, provider]);
+    return this.failWith ? Promise.reject(this.failWith) : Promise.resolve({ projectId: this.projectId });
+  }
+}
+
+describe('runApp add-project and new-agent dialogs (fake hosts)', () => {
+  const screenText = async (terminal: FakeTerminal) => {
+    const screen = await shown(terminal);
+    return Array.from({ length: screen.rows }, (_, y) => text(screen, y)).join('\n');
+  };
+  const waitForScreen = (terminal: FakeTerminal, part: string) => waitFor(async () => (await screenText(terminal)).includes(part));
+  const waitForGone = (terminal: FakeTerminal, part: string) => waitFor(async () => !(await screenText(terminal)).includes(part));
+  const critic: AgentDefinition = { name: 'critic', description: 'Reviews changes', prompt: 'You are the critic.\nReview the diff.' };
+
+  it('adds a project: typing and a paste into the path, validation in the dialog, ADD calls the host, then shows the project once known', async () => {
+    const projectHost = new FakeProjectHost('fresh');
+    const { terminal, client, app, watcher } = start({ projectHost });
+    await attached(terminal);
+    app.openAddProject();
+    await waitForScreen(terminal, '[ ADD PROJECT ]');
+    // Enter with no path: refused in the dialog.
+    terminal.type('\r');
+    await waitForScreen(terminal, 'Path is required');
+    // j, k, q and a space are typed, not keys; a paste goes in on one line.
+    terminal.type('/w jq');
+    terminal.type(`${ESC}[200~/pasted\n${ESC}[201~`);
+    await waitForScreen(terminal, '/w jq/pasted');
+    terminal.type('\x7f\x7f\x15/work/app');
+    await waitForScreen(terminal, '/work/app');
+    // Tab to the name, type it; Tab to the provider, → to codex; Enter adds.
+    terminal.type('\tMy App\t');
+    terminal.type(`${ESC}[C`);
+    await waitForScreen(terminal, '‹ codex ›');
+    terminal.type('\r');
+    await waitFor(() => projectHost.added.length === 1);
+    expect(projectHost.added).toEqual([['/work/app', 'My App', 'codex']]);
+    await waitForGone(terminal, '[ ADD PROJECT ]');
+    expect(client().sent).toEqual([]);
+    expect(app.tabs().activeProject).toBe('demo');
+    // The watcher reports the project: it is shown.
+    watcher.emit({ type: 'added', project_id: 'fresh', state: projectState('fresh') });
+    await waitFor(() => app.tabs().activeProject === 'fresh');
+  });
+
+  it('keeps a failed add open with its first line, and Esc closes it', async () => {
+    const projectHost = new FakeProjectHost();
+    projectHost.failWith = new Error('Not a git repository: /nope\nmore detail');
+    const { terminal } = start({ projectHost });
+    await attached(terminal);
+    const app = apps.at(-1)!;
+    app.openAddProject();
+    await waitForScreen(terminal, '[ ADD PROJECT ]');
+    terminal.type('/nope\r');
+    await waitForScreen(terminal, 'Not a git repository: /nope');
+    expect(await screenText(terminal)).not.toContain('more detail');
+    terminal.type(ESC);
+    await waitForGone(terminal, '[ ADD PROJECT ]');
+  });
+
+  it('refuses the add-project dialog without a project host', async () => {
+    const { terminal, app } = start();
+    await attached(terminal);
+    app.openAddProject();
+    await waitForTabBar(terminal, 1, 'cannot add projects');
+  });
+
+  it('starts a fresh session on the project\'s provider in an agent:1 tab that types at once; × kills it', async () => {
+    const host = new FakeExplorerHost();
+    const settings = new FakeSettingsHost({ 'worker_pool.provider': 'codex' });
+    const { terminal, clients, app, store } = start({ explorer: host, settings, agentDefinitions: () => [critic], projects: [projectState('demo', { name: 'demo' })] });
+    await attached(terminal);
+    app.openNewAgent('demo');
+    await waitForScreen(terminal, 'NEW AGENT · DEMO');
+    await waitForScreen(terminal, '‹ codex ›');
+    expect(await screenText(terminal)).not.toContain('Agent');
+    terminal.type('\r');
+    await attached(terminal, 'agent-demo-1');
+    expect(host.agents).toEqual([{ session: 'agent-demo-1', cwd: '/repo/demo', size: '43x16', command: 'codex' }]);
+    expect(host.prompts).toEqual([]);
+    expect(app.tabs().projects[0].active).toBe('agent:1');
+    await waitForTabBar(terminal, 1, 'codex 1 ×');
+    expect(text(await shown(terminal), 5, 35)).toContain('[ CODEX 1 ]');
+    expect(text(await shown(terminal), 5, 35)).toContain('fresh session');
+    await waitFor(() => JSON.stringify(store.state.agentTabs) === JSON.stringify({ demo: { 'agent:1': { provider: 'codex', agent: null } } }));
+    // It types at once.
+    const fake = clients.find((candidate) => candidate.target.session === 'agent-demo-1')!;
+    terminal.type('hi');
+    await waitFor(() => fake.sent.length === 2);
+    // × closes the tab and kills the session.
+    const row = text(await shown(terminal), 2);
+    terminal.type(click(row.indexOf('×', row.indexOf('codex 1')), 2));
+    await waitFor(() => !app.tabs().projects[0].tabs.includes('agent:1'));
+    expect(host.stopped).toContainEqual({ socket: 'orc-explorer', session: 'agent-demo-1' });
+    await waitFor(() => store.state.agentTabs === undefined);
+  });
+
+  it('starts a custom agent with its prompt as the first message; its session ending closes the tab', async () => {
+    const host = new FakeExplorerHost();
+    const { terminal, clients, app } = start({ explorer: host, agentDefinitions: (root) => (root === '/repo/demo' ? [critic] : []) });
+    await attached(terminal);
+    app.openNewAgent('demo');
+    await waitForScreen(terminal, 'NEW AGENT');
+    // Down to the variant, → to custom agent: the Agent row appears.
+    terminal.type(`j${ESC}[C`);
+    await waitForScreen(terminal, 'Agent       critic');
+    terminal.type('\r');
+    await attached(terminal, 'agent-demo-1');
+    expect(host.agents[0].command).toBe('claude');
+    await waitFor(() => host.prompts.length === 1);
+    expect(host.prompts).toEqual([{ session: 'agent-demo-1', text: critic.prompt }]);
+    await waitForTabBar(terminal, 1, 'critic · claude ×');
+    expect(text(await shown(terminal), 5, 35)).toContain('[ CRITIC ]');
+    clients.find((candidate) => candidate.target.session === 'agent-demo-1')!.emit('exit', 'session closed');
+    await waitFor(() => !app.tabs().projects[0].tabs.includes('agent:1'));
+  });
+
+  it('refuses a custom agent when the checkout has none, and keeps a failed start in the dialog', async () => {
+    const host = new FakeExplorerHost();
+    const { terminal, app } = start({ explorer: host });
+    await attached(terminal);
+    app.openNewAgent('demo');
+    await waitForScreen(terminal, 'NEW AGENT');
+    terminal.type(`j${ESC}[C`);
+    await waitForScreen(terminal, 'no custom agents in .claude/agents');
+    terminal.type('\r');
+    await waitForScreen(terminal, 'No custom agents in .claude/agents to start.');
+    expect(host.agents).toEqual([]);
+    // Back to a fresh session; the start fails.
+    terminal.type(`${ESC}[D`);
+    host.failWith = new Error('no tmux');
+    terminal.type('\r');
+    await waitForScreen(terminal, 'no tmux');
+    expect(app.tabs().projects[0].tabs).toEqual([]);
+  });
+
+  it('refuses the new-agent dialog without an explorer host', async () => {
+    const { terminal, app } = start();
+    await attached(terminal);
+    app.openNewAgent('demo');
+    await waitForTabBar(terminal, 1, 'cannot start agent sessions');
   });
 });

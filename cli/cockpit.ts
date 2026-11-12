@@ -27,7 +27,7 @@
  * in a session on its private tmux server (lib/cockpit2/explorer.ts).
  */
 import { execFile, spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { shellQuote, tmuxBinary, tmuxSocketPath } from '../adapters/tmux.ts';
@@ -37,6 +37,8 @@ import { projectDataHome } from '../lib/dataHome.ts';
 import { ACTIVE_PROJECT } from '../lib/paths.ts';
 import { ProjectRegistry } from '../lib/projectRegistry.ts';
 import type { SettingsHost } from '../lib/cockpit2/settingsDialog.ts';
+import type { ProjectHost } from '../lib/cockpit2/addProjectDialog.ts';
+import type { AgentDefinition } from '../lib/cockpit2/newAgentDialog.ts';
 import { isSameProcess, readProcessStart } from '../lib/processIdentity.ts';
 import { quitHint, runApp, type AgentActionHost, type AppExit } from '../lib/cockpit2/app.ts';
 import { submitOperatorMutation } from '../lib/operatorDispatch.ts';
@@ -163,6 +165,85 @@ export function agentActionHost(orc: string[], registry: ProjectRegistry = new P
       });
     },
   };
+}
+
+/** The command line that registers a git checkout: `orc project add <path> [--name=<name>]` (it prints the project as JSON). */
+export function projectAddCommand(orc: string[], path: string, name: string | null): { file: string; args: string[] } {
+  return { file: orc[0], args: [...orc.slice(1), 'project', 'add', path, ...(name ? [`--name=${name}`] : [])] };
+}
+
+/** The command line that configures a registered project for one provider: `orc --project=<id> init --provider=<provider>` (text output only). */
+export function projectInitCommand(orc: string[], projectId: string, provider: string): { file: string; args: string[] } {
+  return { file: orc[0], args: [...orc.slice(1), `--project=${projectId}`, 'init', `--provider=${provider}`] };
+}
+
+/** Runs `command` without this process's project environment; resolves with its stdout, rejects with why it failed (`commandFailure`). */
+function runOrc(run: RunCommand, command: { file: string; args: string[] }): Promise<string> {
+  return new Promise((resolve, reject) => {
+    run(command.file, command.args, { env: commandEnv(), encoding: 'utf8' }, (error, stdout, stderr) => {
+      if (error) reject(new Error(commandFailure(error, String(stdout ?? ''), String(stderr ?? ''))));
+      else resolve(String(stdout ?? ''));
+    });
+  });
+}
+
+/**
+ * The add-project dialog's host: `orc project add <path> [--name]` registers
+ * the checkout (and completes its state directory), then `orc --project=<id>
+ * init --provider=<provider>` records the provider; neither starts a
+ * coordinator (`orc start-session` in the project does).
+ */
+export function projectAddHost(orc: string[], run: RunCommand = execFile as unknown as RunCommand): ProjectHost {
+  return {
+    add: async (path, name, provider) => {
+      const stdout = await runOrc(run, projectAddCommand(orc, path, name));
+      let projectId: unknown;
+      try { projectId = (JSON.parse(stdout) as { id?: unknown }).id; } catch { /* below */ }
+      if (typeof projectId !== 'string' || !projectId) throw new Error(`orc project add printed no project: ${stdout.trim().split('\n')[0] ?? ''}`);
+      try {
+        await runOrc(run, projectInitCommand(orc, projectId, provider));
+      } catch (error) {
+        throw new Error(`The project was added but not configured (orc init): ${(error as Error).message}`);
+      }
+      return { projectId };
+    },
+  };
+}
+
+/** The `key: value` lines of a Markdown file's frontmatter (quotes taken off), and its body; no frontmatter gives none. */
+function splitFrontmatter(text: string): { fields: Record<string, string>; body: string } {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text);
+  if (!match) return { fields: {}, body: text };
+  const fields: Record<string, string> = {};
+  for (const line of match[1].split(/\r?\n/)) {
+    const field = /^([A-Za-z_][\w-]*):\s*(.*)$/.exec(line);
+    if (field) fields[field[1]] = field[2].trim().replace(/^(["'])(.*)\1$/, '$2');
+  }
+  return { fields, body: text.slice(match[0].length) };
+}
+
+/**
+ * The custom agents of the checkout at `repoRoot`: each `.claude/agents/*.md`
+ * (by file name), named by its frontmatter `name` (else the file name), with
+ * its `description` and its body as the prompt. Files that cannot be read or
+ * have no body are left out; no directory gives none.
+ */
+export function readAgentDefinitions(repoRoot: string): AgentDefinition[] {
+  const dir = join(repoRoot, '.claude', 'agents');
+  let files: string[];
+  try {
+    files = readdirSync(dir).filter((file) => file.endsWith('.md')).sort();
+  } catch {
+    return [];
+  }
+  return files.flatMap((file) => {
+    const text = readTextOrNull(join(dir, file));
+    if (text === null) return [];
+    const { fields, body } = splitFrontmatter(text);
+    const prompt = body.trim();
+    if (!prompt) return [];
+    return [{ name: fields.name || file.slice(0, -'.md'.length), description: fields.description ?? '', prompt }];
+  });
 }
 
 /** The command that runs this orc (from source or compiled). */
@@ -317,6 +398,8 @@ export async function runCockpit(options: CockpitOptions): Promise<CockpitResult
       explorer: tmuxExplorerHost({ tmuxBinary: tmuxBinary(), command: (projectId) => explorerCommand(thisOrc(), projectId) }),
       settings: registrySettingsHost(thisOrc(), registry),
       agents: agentActionHost(thisOrc(), registry),
+      projectHost: projectAddHost(thisOrc()),
+      agentDefinitions: readAgentDefinitions,
     });
     if (wokenEarly) wake();
     const ended = await app.done;

@@ -18,7 +18,7 @@
 import { stringWidth } from '../cellWidth.ts';
 import { fitText } from '../tui/sidebar.ts';
 import { CLOSE_MARKER, TAB_GAP, layoutTabBar, type TabBarLayout, type TabBarModel } from '../tui/tabBarModel.ts';
-import { SHELL_TAB_PREFIX, isShellTab } from './explorer.ts';
+import { AGENT_TAB_PREFIX, SHELL_TAB_PREFIX, isAgentSessionTab, isShellTab } from './explorer.ts';
 import { DEFAULT_STYLE, drawText, fillRect, type Frame, type Region } from './frame.ts';
 import type { CellStyle } from './screen.ts';
 import { attentionRole, badgeRole, styleOf, type Theme, type ThemeRole } from './theme.ts';
@@ -111,14 +111,21 @@ const PLUS_COLS = PLUS_LABEL.length;
 export const EXPLORER_TAB = '\u0000tasks';
 export const EXPLORER_LABEL = 'tasks';
 
-/** Agent tabs labelled with their mode's mark (`○` view, `✎` typing); the master tab, always typing, has none. */
-export function withModeMarks(model: TabBarModel, typing: (agentId: string) => boolean): TabBarModel {
+/**
+ * Agent tabs labelled with their mode's mark (`○` view, `✎` typing); the master tab, always typing, has none.
+ * An agent session tab (`agent:N`) is labelled by `agentLabel` (`claude 1`, `critic · claude`), else `agent N`.
+ */
+export function withModeMarks(model: TabBarModel, typing: (agentId: string) => boolean, agentLabel?: (tabId: string) => string | null): TabBarModel {
   return {
     ...model,
-    // The master and shell tabs always type: no mark; a shell tab is labelled `shell N`.
-    tabs: model.tabs.map((tab) => (tab.agentId === null ? tab
-      : isShellTab(tab.agentId) ? { ...tab, label: `shell ${tab.agentId.slice(SHELL_TAB_PREFIX.length)}` }
-      : { ...tab, label: `${typing(tab.agentId) ? TYPING_MARK : VIEW_MARK} ${tab.label}` })),
+    // The master, shell and agent session tabs always type: no mark; a shell tab is labelled `shell N`.
+    tabs: model.tabs.map((tab) => {
+      const id = tab.agentId;
+      if (id === null) return tab;
+      if (isShellTab(id)) return { ...tab, label: `shell ${id.slice(SHELL_TAB_PREFIX.length)}` };
+      if (isAgentSessionTab(id)) return { ...tab, label: agentLabel?.(id) ?? `agent ${id.slice(AGENT_TAB_PREFIX.length)}` };
+      return { ...tab, label: `${typing(id) ? TYPING_MARK : VIEW_MARK} ${tab.label}` };
+    }),
   };
 }
 

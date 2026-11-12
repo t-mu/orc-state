@@ -7,7 +7,7 @@ import { DEFAULT_COCKPIT_KEYS } from '../lib/cockpitKeys.ts';
 import { readProcessStart } from '../lib/processIdentity.ts';
 import {
   addToCockpit, cockpitLaunch, cockpitTheme, cockpitOpeningHint, cockpitPaths, commandFailure, coordinatorRestartCommand, explorerCommand, insideOrcTmux, launchCockpit,
-  oldCockpitLockPath, readTextOrNull, registrySettingsHost, retireOldCockpit, agentActionHost, taskResetCommand, type RemoveScout, type RunCommand,
+  oldCockpitLockPath, projectAddHost, readAgentDefinitions, readTextOrNull, registrySettingsHost, retireOldCockpit, agentActionHost, taskResetCommand, type RemoveScout, type RunCommand,
 } from './cockpit.ts';
 import { ProjectRegistry } from '../lib/projectRegistry.ts';
 import { BUILT_IN_THEMES } from '../lib/cockpit2/theme.ts';
@@ -334,5 +334,60 @@ describe('coordinatorRestartCommand and commandFailure', () => {
     expect(commandFailure(error, '{"error":{"message":"nope"}}', 'Error: other')).toBe('nope');
     expect(commandFailure(error, 'not json', 'a\nError: other\n')).toBe('Error: other');
     expect(commandFailure(error, '{"ok":true}', '')).toBe('Command failed: orc');
+  });
+});
+
+describe('projectAddHost', () => {
+  const orc = ['/bin/node', '/orc/cli/orc.ts'];
+
+  it('runs orc project add <path> [--name] then orc --project=<id> init --provider, without the project environment', async () => {
+    const calls: Array<{ file: string; args: string[]; env: NodeJS.ProcessEnv }> = [];
+    const run: RunCommand = (file, args, options, callback) => {
+      calls.push({ file, args, env: options.env });
+      callback(null, args.includes('add') ? '{"id":"p-1","name":"app","canonicalGitRoot":"/work/app"}\n' : 'Project app (p-1) configured\n', '');
+    };
+    const saved = process.env.ORC_PROJECT_ID;
+    process.env.ORC_PROJECT_ID = 'elsewhere';
+    try {
+      expect(await projectAddHost(orc, run).add('/work/app', 'My App', 'codex')).toEqual({ projectId: 'p-1' });
+      expect(await projectAddHost(orc, run).add('/work/app', null, 'claude')).toEqual({ projectId: 'p-1' });
+    } finally { if (saved === undefined) delete process.env.ORC_PROJECT_ID; else process.env.ORC_PROJECT_ID = saved; }
+    expect(calls.map((call) => [call.file, ...call.args])).toEqual([
+      ['/bin/node', '/orc/cli/orc.ts', 'project', 'add', '/work/app', '--name=My App'],
+      ['/bin/node', '/orc/cli/orc.ts', '--project=p-1', 'init', '--provider=codex'],
+      ['/bin/node', '/orc/cli/orc.ts', 'project', 'add', '/work/app'],
+      ['/bin/node', '/orc/cli/orc.ts', '--project=p-1', 'init', '--provider=claude'],
+    ]);
+    expect(calls.every((call) => call.env.ORC_PROJECT_ID === undefined)).toBe(true);
+  });
+
+  it('rejects with the failing command\'s stderr, and says when the project was added but init failed', async () => {
+    const addFails: RunCommand = (_file, _args, _options, callback) => { callback(new Error('Command failed'), '', 'Not a git repository: /nope\n'); };
+    await expect(projectAddHost(orc, addFails).add('/nope', null, 'claude')).rejects.toThrow(/^Not a git repository: \/nope$/);
+    const initFails: RunCommand = (_file, args, _options, callback) => {
+      if (args.includes('add')) callback(null, '{"id":"p-1"}', '');
+      else callback(new Error('Command failed'), '', 'Error: bad provider\n');
+    };
+    await expect(projectAddHost(orc, initFails).add('/work/app', null, 'claude')).rejects.toThrow('The project was added but not configured (orc init): Error: bad provider');
+  });
+});
+
+describe('readAgentDefinitions', () => {
+  let temp: string;
+  afterEach(() => { if (temp) rmSync(temp, { recursive: true, force: true }); });
+
+  it('reads .claude/agents/*.md: frontmatter name (else the file name) and description, the body as the prompt', () => {
+    temp = mkdtempSync(join(tmpdir(), 'orc-cockpit-agents-'));
+    expect(readAgentDefinitions(temp)).toEqual([]);
+    const dir = join(temp, '.claude', 'agents');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'critic.md'), '---\nname: critic\ndescription: "Reviews: bugs and regressions"\ntools: Read, Grep\n---\n\nYou are the critic.\nReview it.\n');
+    writeFileSync(join(dir, 'plain.md'), 'Just a prompt.\n');
+    writeFileSync(join(dir, 'empty.md'), '---\nname: empty\n---\n\n');
+    writeFileSync(join(dir, 'notes.txt'), 'ignored');
+    expect(readAgentDefinitions(temp)).toEqual([
+      { name: 'critic', description: 'Reviews: bugs and regressions', prompt: 'You are the critic.\nReview it.' },
+      { name: 'plain', description: '', prompt: 'Just a prompt.' },
+    ]);
   });
 });

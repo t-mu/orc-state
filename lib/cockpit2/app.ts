@@ -86,7 +86,15 @@ import { buildTabBarModel, tabAttention, tabBarClickTarget } from '../tui/tabBar
 import { blitScreen, createFrame, drawText, slotCursor, type Frame, type Region } from './frame.ts';
 import { createDispatcher, cursorKeyMirror, modeNotice, type DispatchContext } from './dispatch.ts';
 import type { ColorDepth } from './color.ts';
-import { EXPLORER_SOCKET, attentionQueue, isShellTab, nextShellTab, shellSessionName, type ExplorerHost } from './explorer.ts';
+import {
+  AGENT_TAB_PREFIX, EXPLORER_SOCKET, agentSessionName, attentionQueue, isAgentSessionTab, isOwnedSessionTab, isShellTab, nextAgentTab, nextShellTab,
+  shellSessionName, type ExplorerHost,
+} from './explorer.ts';
+import { formClick, formKey, formLayout, formType, drawForm, typingInForm, type FormKey, type FormState, type FormStep } from './formDialog.ts';
+import { addProjectRequest, openAddProjectDialog, type ProjectHost } from './addProjectDialog.ts';
+import {
+  agentCommand, newAgentRequest, newAgentStep, openNewAgentDialog, type AgentDefinition, type NewAgentDialogState,
+} from './newAgentDialog.ts';
 import { createTokenizer, keyMatcher, type Token } from './input.ts';
 import { createMotionCoalescer, encodeMouse, parseSgrMouse, routeSlotMouse, type MouseEvent } from './mouse.ts';
 import { renderDiff, sameStyle } from './render.ts';
@@ -105,7 +113,9 @@ import { highlightSelection, osc52, selectionText, type CellPoint, type Selectio
 import { Sessions, type ConnectPane, type PaneSession } from './sessions.ts';
 import type { TerminalSession } from './terminal.ts';
 import { TmuxControlClient } from './tmuxControl.ts';
-import { MAX_SIDEBAR_COLS, MIN_SIDEBAR_COLS, mergeProjects, type TmuxTarget, type ViewState, type ViewStateStore } from './viewState.ts';
+import {
+  MAX_SIDEBAR_COLS, MIN_SIDEBAR_COLS, mergeProjects, type AgentTabInfo, type AgentTabs, type TmuxTarget, type ViewState, type ViewStateStore,
+} from './viewState.ts';
 import {
   EXPLORER_LABEL, EXPLORER_TAB, drawFooter, drawHeader, drawTabBar, headerButtonAt, headerView, onPlusTab, tabBarView,
   withExplorerTab, withModeMarks, type FooterHint, type HeaderButton,
@@ -315,6 +325,10 @@ export interface AppOptions {
   theme?: Theme | undefined;
   /** The pause after each key sent to the task explorer before the next one (default 4 ms). */
   explorerKeyGapMs?: number;
+  /** Registers and configures a project for the add-project dialog; without it the dialog cannot open. */
+  projectHost?: ProjectHost | undefined;
+  /** The custom agents (`.claude/agents/*.md`) of a checkout, for the new-agent dialog; without it there are none. */
+  agentDefinitions?: ((repoRoot: string) => AgentDefinition[]) | undefined;
 }
 
 /** What the cockpit asks of the CLI layer to act on an agent. */
@@ -326,7 +340,9 @@ export interface AgentActionHost {
 /** The open dialog: the settings dialog, or a confirmation that runs `run` once confirmed. */
 type Modal =
   | { kind: 'settings'; projectId: string; state: SettingsDialogState }
-  | { kind: 'confirm'; projectId: string; state: ConfirmDialogState; run: () => Promise<void> };
+  | { kind: 'confirm'; projectId: string; state: ConfirmDialogState; run: () => Promise<void> }
+  | { kind: 'addProject'; projectId: null; state: FormState }
+  | { kind: 'newAgent'; projectId: string; state: NewAgentDialogState };
 
 /** Why the app ended: the user quit, or another cockpit took over (instance.ts). */
 export type AppExit = 'quit' | 'takeover';
@@ -348,6 +364,10 @@ export interface App {
   apply(transition: (state: CockpitTabState) => TabTransition): TabTransition;
   /** The current tabs and projects. */
   tabs(): CockpitTabState;
+  /** Opens the add-project dialog (the Projects card's `[+ ADD PROJECT]`); refused in the tab bar without a project host. */
+  openAddProject(): void;
+  /** Opens the new-agent dialog for `projectId` (the `[+ NEW AGENT]` button); refused without an explorer host or a known checkout. */
+  openNewAgent(projectId: string): void;
 }
 
 /** How to quit, as the slot's messages show it. */
@@ -447,6 +467,8 @@ export function runApp(options: AppOptions): App {
   /** Why the last tab transition was refused; shown in the tab bar until the next input. */
   let refusal: string | null = null;
   let registryError: string | null = null;
+  /** A project the add-project dialog added that the watcher does not know yet: shown when it does. */
+  let pendingProject: string | null = null;
 
   let resolveDone!: (exit: AppExit) => void;
   const done = new Promise<AppExit>((resolve) => { resolveDone = resolve; });
@@ -459,6 +481,18 @@ export function runApp(options: AppOptions): App {
   }
   let tabs = showProject(loaded.tabs, options.projectId).state;
   const masterTargets: ViewState['masterTargets'] = { ...loaded.masterTargets };
+  /** What each agent session tab runs, by project then tab id; saved with the tabs, so a restarted cockpit labels them again. */
+  const agentTabs: AgentTabs = Object.fromEntries(Object.entries(loaded.agentTabs ?? {}).map(([projectId, entries]) => [projectId, { ...entries }]));
+  /** The agent session tabs of `state`'s open tabs: ours over the stored ones, entries of closed tabs dropped. */
+  const openAgentTabs = (state: CockpitTabState, stored: AgentTabs | undefined): { agentTabs?: AgentTabs } => {
+    const result: AgentTabs = {};
+    for (const [projectId, entries] of Object.entries({ ...(stored ?? {}), ...agentTabs })) {
+      const open = state.projects.find((project) => project.projectId === projectId)?.tabs ?? [];
+      const kept = Object.entries(entries).filter(([tabId]) => open.includes(tabId));
+      if (kept.length) result[projectId] = Object.fromEntries(kept);
+    }
+    return Object.keys(result).length ? { agentTabs: result } : {};
+  };
   let saving: Promise<void> = Promise.resolve();
   let lastSaveError: string | null = null;
   /** The active project the view-state file held after this cockpit's last read or write: another writer changed it when the file differs. */
@@ -479,7 +513,7 @@ export function runApp(options: AppOptions): App {
           seen = { tabs: stored.tabs, synced: syncedActive };
           syncedActive = next.activeProject;
           const sidebar = sidebarWidth === SIDEBAR_COLS ? {} : { sidebarCols: sidebarWidth };
-          return { tabs: next, masterTargets: { ...stored.masterTargets, ...masterTargets }, ...sidebar };
+          return { tabs: next, masterTargets: { ...stored.masterTargets, ...masterTargets }, ...sidebar, ...openAgentTabs(next, stored.agentTabs) };
         }).then(() => { if (seen) adopt(seen.tabs, seen.synced); });
       })
       .then(() => { if (lastSaveError) { lastSaveError = null; scheduleRender(); } },
@@ -535,6 +569,7 @@ export function runApp(options: AppOptions): App {
   const targetOf = (tab: OpenTab): TmuxTarget | null => tab.agentId === null
     ? masterTarget(projectInfo(tab.projectId), masterTargets[tab.projectId] ?? null)
     : isShellTab(tab.agentId) ? { socket: EXPLORER_SOCKET, session: shellSessionName(tab.projectId, tab.agentId) }
+    : isAgentSessionTab(tab.agentId) ? { socket: EXPLORER_SOCKET, session: agentSessionName(tab.projectId, tab.agentId) }
     : agentTarget(projectInfo(tab.projectId), tab.agentId);
 
   // ── sessions ──
@@ -584,7 +619,14 @@ export function runApp(options: AppOptions): App {
       // Its dialog has nothing left to change.
       if (modal?.projectId === update.project_id) closeDialog();
     }
-    else if (update.type === 'added') watched.set(update.project_id, update.state);
+    else if (update.type === 'added') {
+      watched.set(update.project_id, update.state);
+      // The project the add-project dialog just added: shown once the watcher knows it.
+      if (pendingProject === update.project_id) {
+        pendingProject = null;
+        if (apply((state) => showProject(state, update.project_id)).ok) setFocus('slot');
+      }
+    }
     else {
       const state = watched.get(update.project_id);
       if (!state) return;
@@ -613,7 +655,8 @@ export function runApp(options: AppOptions): App {
   function currentTabBar() {
     const project = tabs.activeProject;
     const model = buildTabBarModel(tabs, tabAttention(buildProjectViews([...watched.values()]), project));
-    const marked = withModeMarks(model, (agentId) => project !== null && typingTabs.has(tabKey({ projectId: project, agentId })));
+    const marked = withModeMarks(model, (agentId) => project !== null && typingTabs.has(tabKey({ projectId: project, agentId })),
+      (tabId) => (project === null ? null : agentTabLabel(project, tabId)));
     return tabBarView(explorer ? withExplorerTab(marked) : marked, layout.tabBar.cols, project !== null && Boolean(options.explorer));
   }
 
@@ -628,6 +671,16 @@ export function runApp(options: AppOptions): App {
     return headerView(layout.header.cols, project === null ? null : projectName(project), buttons);
   }
 
+  /** What an agent session tab runs, when known. */
+  const agentTabInfo = (projectId: string, tabId: string): AgentTabInfo | null => agentTabs[projectId]?.[tabId] ?? null;
+  /** An agent session tab's label: `claude 1` for a fresh session, `critic · claude` for a custom agent, `agent 1` when unknown. */
+  function agentTabLabel(projectId: string, tabId: string): string {
+    const info = agentTabInfo(projectId, tabId);
+    const number = tabId.slice(AGENT_TAB_PREFIX.length);
+    if (!info) return `agent ${number}`;
+    return info.agent ? `${info.agent} · ${info.provider}` : `${info.provider} ${number}`;
+  }
+
   /** The project's name as the watcher has it, else its id. */
   function projectName(projectId: string): string {
     return watched.get(projectId)?.project.name ?? projectId;
@@ -638,7 +691,8 @@ export function runApp(options: AppOptions): App {
     const project = tabs.activeProject;
     if (project === null) return null;
     const active = buildTabBarModel(tabs).tabs.find((tab) => tab.active);
-    return { project: projectName(project), tab: explorer ? EXPLORER_LABEL : active?.label ?? '' };
+    const label = active && isAgentSessionTab(active.agentId) ? agentTabLabel(project, active.agentId) : active?.label ?? '';
+    return { project: projectName(project), tab: explorer ? EXPLORER_LABEL : label };
   }
 
   /** The keys' context: the shown tab's mode, and whether the sidebar has the keys. */
@@ -691,6 +745,14 @@ export function runApp(options: AppOptions): App {
       };
     }
     if (isShellTab(tab.agentId)) return { title: `shell ${tab.agentId.slice('shell:'.length)}`, parts: [view.name, view.target_repo_root], badge: null };
+    if (isAgentSessionTab(tab.agentId)) {
+      // A fresh session: `[ CLAUDE 1 ] <project> · fresh session`; a custom agent: `[ CRITIC ] <project> · claude`.
+      const info = agentTabInfo(tab.projectId, tab.agentId);
+      if (!info) return { title: agentTabLabel(tab.projectId, tab.agentId), parts: [view.name], badge: null };
+      return info.agent
+        ? { title: info.agent, parts: [view.name, info.provider], badge: null }
+        : { title: agentTabLabel(tab.projectId, tab.agentId), parts: [view.name, 'fresh session'], badge: null };
+    }
     const model = buildSidebarModel([view], { stateDir: '', activeProjectId: view.project_id, nowMs: Date.now(), registryError: null, agentDetails: true });
     const agent = model.agents.find((candidate) => candidate.agent_id === tab.agentId);
     if (!agent) return { title: String(tab.agentId), parts: ['not running'], badge: null };
@@ -771,7 +833,10 @@ export function runApp(options: AppOptions): App {
       dimFrame(frame);
       const panel = theme.surfaces ? parseThemeColor(theme.surfaces.panel)! : { type: 'default' as const };
       if (modal.kind === 'settings') drawSettingsDialog(frame, dialogLayout(modal.state, layout.cols, layout.rows), modal.state, theme, panel);
-      else drawConfirmDialog(frame, confirmDialogLayout(modal.state, layout.cols, layout.rows), modal.state, theme, panel);
+      else if (modal.kind === 'addProject' || modal.kind === 'newAgent') {
+        const form = modal.kind === 'addProject' ? modal.state : modal.state.form;
+        drawForm(frame, formLayout(form, layout.cols, layout.rows), form, theme, panel);
+      } else drawConfirmDialog(frame, confirmDialogLayout(modal.state, layout.cols, layout.rows), modal.state, theme, panel);
       cursor = { x: 0, y: 0, visible: false };
     }
     if (prevFrame && prevCursor && framesEqual(prevFrame, frame) && sameCursor(prevCursor, cursor)) return;
@@ -801,8 +866,9 @@ export function runApp(options: AppOptions): App {
     // Closing a tab only detaches its view; the agent keeps running.
     for (const tab of closedTabs(tabs, result.state)) {
       sessions.close(tabKey(tab));
-      // A shell tab's shell is the tab's own: closing the tab ends it.
-      if (isShellTab(tab.agentId) && options.explorer) track(options.explorer.stop({ socket: EXPLORER_SOCKET, session: shellSessionName(tab.projectId, tab.agentId) }));
+      // A shell's or agent session's process is the tab's own: closing the tab ends it.
+      if (isOwnedSessionTab(tab.agentId) && options.explorer) track(options.explorer.stop(targetOf(tab)!));
+      if (isAgentSessionTab(tab.agentId) && agentTabs[tab.projectId]) delete agentTabs[tab.projectId][tab.agentId];
       typingTabs.delete(tabKey(tab)); // a reopened tab starts view-only again
     }
     tabs = result.state;
@@ -880,10 +946,10 @@ export function runApp(options: AppOptions): App {
     showActive();
   }
 
-  /** A shown shell tab whose shell exited (`exit` in it) closes. */
+  /** A shown shell or agent session tab whose process exited (`exit` in it) closes. */
   function closeEndedShell(): void {
     const tab = shownTab(tabs);
-    if (explorer || !tab || !isShellTab(tab.agentId)) return;
+    if (explorer || !tab || !isOwnedSessionTab(tab.agentId)) return;
     if (sessions.get(tabKey(tab))?.state.kind !== 'ended') return;
     const id = tab.agentId;
     queueMicrotask(() => { if (shownTab(tabs)?.agentId === id) apply((state) => closeTab(state, id)); });
@@ -1059,6 +1125,148 @@ export function runApp(options: AppOptions): App {
     }
   }
 
+  /** Opens the add-project dialog: a git checkout's path, an optional name and a provider. */
+  function openAddProject(): void {
+    if (closed) return;
+    if (!options.projectHost) {
+      refusal = 'This cockpit cannot add projects.';
+      scheduleRender();
+      return;
+    }
+    showDialog({ kind: 'addProject', projectId: null, state: openAddProjectDialog() });
+  }
+
+  /**
+   * Opens the new-agent dialog of `projectId`: its provider starting on the
+   * project's default worker provider, its custom agents read from its checkout.
+   */
+  function openNewAgent(projectId: string): void {
+    if (closed) return;
+    const repoRoot = watched.get(projectId)?.project.target_repo_root;
+    const refused = !options.explorer ? 'This cockpit cannot start agent sessions.' : !repoRoot ? `Project ${projectId} is not registered.` : null;
+    if (refused || !repoRoot) {
+      refusal = refused;
+      scheduleRender();
+      return;
+    }
+    let provider: string | null = null;
+    try {
+      const settings = options.settings?.read(projectId) ?? {};
+      const value = settings['worker_pool.provider'] ?? settings.default_provider;
+      provider = typeof value === 'string' ? value : null;
+    } catch { /* claude */ }
+    let definitions: AgentDefinition[] = [];
+    try {
+      definitions = options.agentDefinitions?.(repoRoot) ?? [];
+    } catch { /* none */ }
+    showDialog({ kind: 'newAgent', projectId, state: openNewAgentDialog(projectName(projectId), provider, definitions) });
+  }
+
+  /** Updates the open form dialog's form while it is still the one opened at `generation`. */
+  function updateForm(generation: number, change: (form: FormState) => FormState): void {
+    if (generation !== dialogGeneration) return;
+    if (modal?.kind === 'addProject') modal = { ...modal, state: change(modal.state) };
+    else if (modal?.kind === 'newAgent') modal = { ...modal, state: { ...modal.state, form: change(modal.state.form) } };
+    scheduleRender();
+  }
+
+  /** ADD: registers the project; a failure stays in the dialog, success closes it and shows the project (once the watcher knows it). */
+  async function runAddProject(): Promise<void> {
+    if (modal?.kind !== 'addProject') return;
+    const generation = dialogGeneration;
+    const request = addProjectRequest(modal.state);
+    if ('error' in request) { updateForm(generation, (form) => ({ ...form, error: request.error })); return; }
+    updateForm(generation, (form) => ({ ...form, busy: 'Adding the project…', error: null }));
+    let projectId: string;
+    try {
+      ({ projectId } = await options.projectHost!.add(request.path, request.name, request.provider));
+    } catch (error) {
+      updateForm(generation, (form) => ({ ...form, busy: null, error: errorLine(error) }));
+      return;
+    }
+    if (closed) return;
+    if (generation === dialogGeneration) closeDialog();
+    if (watched.has(projectId)) {
+      if (apply((state) => showProject(state, projectId)).ok) setFocus('slot');
+    } else pendingProject = projectId;
+  }
+
+  /**
+   * START: an agent session in the project's checkout on the cockpit's private
+   * tmux server, outside the coordinator, in a new tab that types at once; a
+   * custom agent's prompt is its first message once the session is ready.
+   */
+  async function runNewAgent(): Promise<void> {
+    if (modal?.kind !== 'newAgent') return;
+    const { projectId } = modal;
+    const generation = dialogGeneration;
+    const request = newAgentRequest(modal.state);
+    if ('error' in request) { updateForm(generation, (form) => ({ ...form, error: request.error })); return; }
+    const host = options.explorer!;
+    const cwd = watched.get(projectId)?.project.target_repo_root;
+    if (!cwd) { updateForm(generation, (form) => ({ ...form, error: `Project ${projectId} is not registered.` })); return; }
+    const id = nextAgentTab(tabs.projects.find((project) => project.projectId === projectId)?.tabs ?? []);
+    updateForm(generation, (form) => ({ ...form, busy: 'Starting the session…', error: null }));
+    let target: TmuxTarget;
+    try {
+      target = await host.startAgent(agentSessionName(projectId, id), cwd, slotSize(), agentCommand(request.provider));
+    } catch (error) {
+      updateForm(generation, (form) => ({ ...form, busy: null, error: errorLine(error) }));
+      return;
+    }
+    if (closed) return;
+    agentTabs[projectId] = { ...agentTabs[projectId], [id]: { provider: request.provider, agent: request.agent?.name ?? null } };
+    if (generation === dialogGeneration) closeDialog();
+    setFocus('slot');
+    apply((state) => openAgent(state, projectId, id));
+    if (request.agent) {
+      const label = agentTabLabel(projectId, id);
+      // Not tracked: quitting does not wait for a session to get ready.
+      host.sendPrompt(target, request.agent.prompt).catch((error: unknown) => {
+        if (closed) return;
+        refusal = `${label}: its prompt was not sent: ${errorLine(error)}`;
+        scheduleRender();
+      });
+    }
+  }
+
+  const matchForm = keyMatcher(['Up', 'Down', 'Left', 'Right', 'Enter', 'Escape', 'Tab', 'BTab', 'Space', 'k', 'j', 'h', 'l', 'q', 'BSpace', 'C-h', 'Delete', 'Home', 'End', 'C-u']);
+  const FORM_KEYS: Readonly<Record<string, FormKey>> = {
+    Up: 'up', k: 'up', Down: 'down', j: 'down', Left: 'left', h: 'left', Right: 'right', l: 'right', Space: 'space',
+    Enter: 'enter', Escape: 'escape', q: 'escape', Tab: 'next', BTab: 'previous',
+    BSpace: 'backspace', 'C-h': 'backspace', Delete: 'delete', Home: 'home', End: 'end', 'C-u': 'clear',
+  };
+
+  /** A token while a form dialog is open: typed text and pastes go into its focused text field, keys and clicks to the form. */
+  function onFormToken(token: Token): void {
+    if (modal?.kind !== 'addProject' && modal?.kind !== 'newAgent') return;
+    const form = modal.kind === 'addProject' ? modal.state : modal.state.form;
+    let step: FormStep;
+    if (token.kind === 'mouse') {
+      const event = parseSgrMouse(token);
+      if (!event || !isClick(event)) return;
+      step = formClick(form, formLayout(form, layout.cols, layout.rows), event.x, event.y);
+    } else if (typingInForm(form) && token.kind === 'char') step = formType(form, token.text);
+    // A paste is UTF-8 text; the field keeps it on one line.
+    else if (typingInForm(form) && token.kind === 'paste') step = formType(form, token.data.toString('utf8'));
+    else {
+      const name = matchForm(token);
+      if (!name) return;
+      step = formKey(form, FORM_KEYS[name]);
+    }
+    let action = step.action;
+    if (modal.kind === 'addProject') modal = { ...modal, state: step.state };
+    else {
+      const next = newAgentStep(modal.state, step);
+      modal = { ...modal, state: next.state };
+      action = next.action;
+    }
+    scheduleRender();
+    if (action === 'cancel') closeDialog();
+    else if (action === 'add') void runAddProject();
+    else if (action === 'start') void runNewAgent();
+  }
+
   const matchDialog = keyMatcher(['Up', 'Down', 'Left', 'Right', 'Enter', 'Escape', 'Tab', 'BTab', 'Space', 'k', 'j', 'h', 'l', 'q']);
   const DIALOG_KEYS: Readonly<Record<string, DialogKey>> = {
     Up: 'up', k: 'up', Down: 'down', j: 'down', Left: 'left', h: 'left', Right: 'right', l: 'right', Space: 'right',
@@ -1072,6 +1280,7 @@ export function runApp(options: AppOptions): App {
   /** A key or mouse token while a dialog is open: the dialog gets it, nothing behind it does. */
   function onDialogToken(token: Token): void {
     if (!modal) return;
+    if (modal.kind === 'addProject' || modal.kind === 'newAgent') { onFormToken(token); return; }
     let key: DialogKey | null = null;
     let at: { x: number; y: number } | null = null;
     if (token.kind === 'mouse') {
@@ -1105,6 +1314,8 @@ export function runApp(options: AppOptions): App {
     if (!command) return;
     if (command.type === 'focusSlot') setFocus('slot');
     else if (command.type === 'openSettings') openSettings(command.projectId);
+    else if (command.type === 'addProject') openAddProject();
+    else if (command.type === 'newAgent') openNewAgent(command.projectId);
     else if (command.type === 'killAgent') confirmKill(command);
     else if (command.type === 'openProject') { if (apply((state) => showProject(state, command.projectId)).ok) setFocus('slot'); }
     else if (apply((state) => openAgent(state, command.projectId, command.agentId)).ok) setFocus('slot');
@@ -1177,7 +1388,7 @@ export function runApp(options: AppOptions): App {
     const route = routeSlotMouse(event, {
       tracking: modes.mouseTracking,
       // The explorer takes keys, not the mouse: the cockpit scrolls and selects there.
-      viewOnly: explorer !== null || (tab !== null && tab.agentId !== null && !isShellTab(tab.agentId) && !typingTabs.has(tabKey(tab))),
+      viewOnly: explorer !== null || (tab !== null && tab.agentId !== null && !isOwnedSessionTab(tab.agentId) && !typingTabs.has(tabKey(tab))),
       selecting: selection?.dragging ?? false,
     });
     // The pane as drawn: a worker's screen smaller than the slot is padded, a larger one cropped.
@@ -1221,7 +1432,7 @@ export function runApp(options: AppOptions): App {
 
   /** The shown tab's input mode: the master always types, an agent tab only after `i`. */
   function inputContext(tab: OpenTab): DispatchContext {
-    if (tab.agentId === null || isShellTab(tab.agentId)) return { mode: 'typing', agentTab: false };
+    if (tab.agentId === null || isOwnedSessionTab(tab.agentId)) return { mode: 'typing', agentTab: false };
     return { mode: typingTabs.has(tabKey(tab)) ? 'typing' : 'view', agentTab: true };
   }
 
@@ -1375,5 +1586,5 @@ export function runApp(options: AppOptions): App {
   rememberMasterTargets();
   save();
   showActive();
-  return { done, quit, apply, reloadViewState, tabs: () => tabs, saveError: () => lastSaveError };
+  return { done, quit, apply, reloadViewState, tabs: () => tabs, saveError: () => lastSaveError, openAddProject, openNewAgent };
 }
