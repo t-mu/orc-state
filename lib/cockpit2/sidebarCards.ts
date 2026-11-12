@@ -54,8 +54,8 @@
  * height; its list scrolls in the rows above it. The cards share the rows
  * equally (the remainder to Agents) until the Agents content needs more.
  * Rows a card's list leaves blank go to air (`padCard`): a blank row between
- * each two items (never between two agent boxes), then one under the top
- * border, then one above the button;
+ * each two items (never between two agent boxes), then the rest below the
+ * list, above the button (never one above the first item);
  * they never count in the card heights.
  * The keys move in three boxes, one per card, Tab and Shift-Tab cycling them:
  * projects (by project, then its add button), project (its settings button)
@@ -556,8 +556,8 @@ const isBox = (group: readonly CardLine[]): boolean => group[0]?.kind === 'block
 /**
  * A card's body (`lines`, as withButton lays it out: the list, blank rows, the button) padded and spaced in the blank
  * rows it has spare, only when its list is `complete` (every item shown, none behind `+N more`): first a blank row
- * between each two items but two agent boxes (all of them or none, so a list never looks half-spaced), then one between the top border
- * and the first row, then one between the last row and the button. The rows stay the card's: padding and spacing only
+ * between each two items but two agent boxes (all of them or none, so a list never looks half-spaced), then the rest between
+ * the last row and the button; never one above the first row (the title border is enough). The rows stay the card's: padding and spacing only
  * take the blank rows a short list leaves, so they never make a card grow or push an item out of view.
  */
 function padCard(lines: CardLine[], complete: boolean): CardLine[] {
@@ -580,10 +580,9 @@ function padCard(lines: CardLine[], complete: boolean): CardLine[] {
   const spacing = groups.filter((_, index) => spacedBefore(index)).length;
   const spaced = spacing > 0 && spare >= spacing;
   if (spaced) spare -= spacing;
-  const top = spare >= 1;
-  if (top) spare -= 1;
+  // No padding above the first item: the card's title border is enough; spare rows go below the list.
   const body = groups.flatMap((group, index) => (spaced && spacedBefore(index) ? [blank(), ...group] : group));
-  return [...(top ? [blank()] : []), ...body, ...Array.from({ length: spare }, blank), ...(button ? [button] : [])];
+  return [...body, ...Array.from({ length: spare }, blank), ...(button ? [button] : [])];
 }
 
 /**

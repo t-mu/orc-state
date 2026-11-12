@@ -328,12 +328,14 @@ describe('sidebarCardsLayout', () => {
               expect([spaced, got.top], where).toEqual([false, 0]);
               continue;
             }
-            // Every item shown: spacing first, then the top padding, then the bottom one, as the spare rows allow.
+            // Every item shown: spacing first, then the rest below the list, as the spare rows allow; never a blank row
+            // above the first item (the body starts with it).
             const spacing = got.pairs;
             expect(spaced, where).toBe(spacing > 0 && got.spare >= spacing);
             const rest = got.spare - (spaced ? spacing : 0);
-            expect(got.top, where).toBe(rest >= 1 ? 1 : 0);
-            expect(got.after, where).toBe(Math.max(0, rest - 1));
+            if (got.items > 0) expect(each.lines[0].kind, where).not.toBe('blank');
+            expect(got.top, where).toBe(0);
+            expect(got.after, where).toBe(rest);
             // Blank rows target nothing.
             each.lines.forEach((line, offset) => {
               if (line.kind === 'blank') expect(sidebarCardTarget(layout, 5, each.y + 1 + offset), where).toBeNull();
@@ -358,37 +360,35 @@ describe('sidebarCardsLayout', () => {
       const empty = (count: number) => Array.from({ length: count }, () => '│                                │');
       expect(lines.slice(0, 13)).toEqual([
         '┌─ [ PROJECTS ] ────────────── 2 ┐',
-        ...empty(1), // the top padding
-        '│ ▸ orc-state          [RUNNING] │',
+        '│ ▸ orc-state          [RUNNING] │', // no blank row above the first item
         ...empty(1), // the spacing
         '│   o1              [STOPPED] !2 │',
-        ...empty(5), // the bottom padding and the rows the list leaves
+        ...empty(6), // the rows the list leaves, below it
         '│ [ + ADD PROJECT ]              │',
         '└────────────────────────────────┘',
         ' '.repeat(COLS),
       ]);
       expect(lines.slice(13, 26)).toEqual([
         '┌─ [ ORC-STATE ] ────────────────┐',
-        ...empty(1),
         '│ coordinator          [RUNNING] │',
         ...empty(1),
         '│ workers 2/4                    │',
         ...empty(1),
         '│ tasks 1 todo                   │',
-        ...empty(3),
+        ...empty(4),
         '│ [ SETTINGS ]                   │',
         '└────────────────────────────────┘',
         ' '.repeat(COLS),
       ]);
       const agents = card(sidebarCardsLayout(few(), 40, INITIAL_SIDEBAR_NAV, COLS), 'agents')!;
-      // Two boxes take no spacing row between them: their borders set them apart; the top padding stays.
+      // Two boxes take no spacing row between them: their borders set them apart; the first box starts the body.
       const box = (index: number, ...parts: string[]) => parts.map((part) => ({ kind: 'block', index, part }));
-      expect(agents.lines.slice(0, 9)).toEqual([
-        { kind: 'blank' }, ...box(0, 'top', 'title', 'question', 'bottom'), ...box(1, 'top', 'title', 'bottom'), { kind: 'blank' },
+      expect(agents.lines.slice(0, 8)).toEqual([
+        ...box(0, 'top', 'title', 'question', 'bottom'), ...box(1, 'top', 'title', 'bottom'), { kind: 'blank' },
       ]);
     });
 
-    it('drops the bottom padding, then the top one, then the spacing, before an item goes behind `+N more`', () => {
+    it('drops the blank rows below the list, then the spacing, before an item goes behind `+N more`', () => {
       // Projects with 3 projects: list 3, button 1; its body rows decide.
       const projectsAt = (body: number) => {
         const sidebar = model(2, 0);
@@ -400,10 +400,10 @@ describe('sidebarCardsLayout', () => {
         }
         throw new Error(`no height gives ${body} body rows`);
       };
-      expect(projectsAt(8)).toEqual(['blank', 'project', 'blank', 'project', 'blank', 'project', 'blank', 'addProject']);
-      expect(projectsAt(7)).toEqual(['blank', 'project', 'blank', 'project', 'blank', 'project', 'addProject']); // no bottom padding
-      expect(projectsAt(6)).toEqual(['project', 'blank', 'project', 'blank', 'project', 'addProject']); // nor the top one
-      expect(projectsAt(5)).toEqual(['blank', 'project', 'project', 'project', 'addProject']); // spacing whole or not at all; the top padding takes the row
+      expect(projectsAt(8)).toEqual(['project', 'blank', 'project', 'blank', 'project', 'blank', 'blank', 'addProject']);
+      expect(projectsAt(7)).toEqual(['project', 'blank', 'project', 'blank', 'project', 'blank', 'addProject']); // one row less below the list
+      expect(projectsAt(6)).toEqual(['project', 'blank', 'project', 'blank', 'project', 'addProject']); // none below it
+      expect(projectsAt(5)).toEqual(['project', 'project', 'project', 'blank', 'addProject']); // spacing whole or not at all; the row goes below the list
       expect(projectsAt(4)).toEqual(['project', 'project', 'project', 'addProject']);
     });
 
@@ -432,13 +432,15 @@ describe('sidebarCardsLayout', () => {
       const top = lines.findIndex((line) => line.kind === 'block' && line.part === 'top');
       const bottom = lines.findIndex((line) => line.kind === 'block' && line.part === 'bottom');
       expect(lines.slice(top, bottom + 1).every((line) => line.kind === 'block')).toBe(true);
-      expect(lines.slice(0, 2)).toEqual([{ kind: 'blank' }, { kind: 'block', index: 0, part: 'top' }]);
+      expect(lines[0]).toEqual({ kind: 'block', index: 0, part: 'top' }); // no blank row above the first box
       const expandedTop = lines.findIndex((line) => line.kind === 'block' && line.index === 1 && line.part === 'top');
       expect(lines[expandedTop - 1]).toEqual({ kind: 'block', index: 0, part: 'bottom' });
-      // A click on the padding row above the boxes hits nothing.
+      // A click on a blank row below the boxes hits nothing.
       const agents = card(layout, 'agents')!;
-      expect(sidebarCardTarget(layout, 5, agents.y + 1)).toBeNull();
-      expect(sidebarCardClick(layout, INITIAL_SIDEBAR_NAV, 5, agents.y + 1)).toBeNull();
+      const blankRow = agents.y + 1 + lines.findIndex((line) => line.kind === 'blank');
+      expect(blankRow).toBeGreaterThan(agents.y + 1);
+      expect(sidebarCardTarget(layout, 5, blankRow)).toBeNull();
+      expect(sidebarCardClick(layout, INITIAL_SIDEBAR_NAV, 5, blankRow)).toBeNull();
     });
   });
 
@@ -729,7 +731,7 @@ describe('drawSidebarCards', () => {
     // No project: Projects still offers its button; the Project card has no settings and the Agents card no new-agent button.
     const none = render(model(1, 2, { status: { coordinator: null, workers: null, attention: 0 }, projects: [], activeProjectId: null, agents: [], notice: 'no registered projects' })).lines;
     expect(none.slice(0, 13)).toEqual([
-      '┌─ [ PROJECTS ] ─────────────────┐', '│                                │', '│ (none)                         │', '│                                │',
+      '┌─ [ PROJECTS ] ─────────────────┐', '│ (none)                         │', '│                                │', '│                                │',
       '│ [ + ADD PROJECT ]              │', '└────────────────────────────────┘', ' '.repeat(COLS),
       '┌─ [ PROJECT ] ──────────────────┐', '│ no registered projects         │', '│                                │', '│                                │',
       '│                                │', '└────────────────────────────────┘',
@@ -1318,7 +1320,7 @@ describe('agent boxes (every agent, collapsed or expanded)', () => {
   });
 
   it('expands inside the box: the title row stays on its screen row and nothing above it moves', () => {
-    // While the Agents card has the rows for the expanded box (it keeps its size and its top padding).
+    // While the Agents card has the rows for the expanded box (it keeps its size).
     for (const [rows, count] of [[40, 1], [40, 2], [30, 1]] as const) {
       const sidebar = model(0, count);
       for (const target of sidebar.agents) {
