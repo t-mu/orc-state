@@ -316,6 +316,12 @@ describe('the + tab and shell tabs', () => {
     const model = withModeMarks(buildTabBarModel({ activeProject: 'p1', projects: [{ projectId: 'p1', tabs: ['w3', 'shell:2'], active: 'shell:2' }] }), () => false);
     expect(model.tabs.map((tab) => tab.label)).toEqual(['master', `${VIEW_MARK} w3`, 'shell 2']);
   });
+
+  it('labels agent session tabs by what they run, else agent N, with no mode mark', () => {
+    const tabs = buildTabBarModel({ activeProject: 'p1', projects: [{ projectId: 'p1', tabs: ['agent:1', 'agent:2', 'agent:3'], active: 'agent:1' }] });
+    const model = withModeMarks(tabs, () => false, (id) => (id === 'agent:1' ? 'claude 1' : id === 'agent:2' ? 'critic · claude' : null));
+    expect(model.tabs.map((tab) => tab.label)).toEqual(['master', 'claude 1', 'critic · claude', 'agent 3']);
+  });
 });
 
 describe('tab bar hit-testing', () => {

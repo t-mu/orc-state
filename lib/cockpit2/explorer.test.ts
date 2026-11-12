@@ -1,8 +1,14 @@
 import { spawnSync } from 'node:child_process';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { ProjectWatchState } from '../../client.ts';
 import { nextAttention, type CockpitTabState } from '../cockpitTabs.ts';
-import { EXPLORER_SOCKET, SHELL_SCRIPT, attentionQueue, explorerScript, explorerSessionName, isShellTab, nextShellTab, shellSessionName } from './explorer.ts';
+import {
+  EXPLORER_SOCKET, SHELL_SCRIPT, agentScreenReady, agentScript, agentSessionName, attentionQueue, explorerScript, explorerSessionName, isAgentSessionTab,
+  isOwnedSessionTab, isShellTab, nextAgentTab, nextShellTab, shellSessionName, tmuxExplorerHost,
+} from './explorer.ts';
 
 type Kind = 'question' | 'permission_prompt' | 'stalled' | 'no_progress';
 
@@ -62,6 +68,88 @@ describe('shell tabs', () => {
     });
     expect(run.stdout).toContain('KEEP=z');
     expect(run.stdout).not.toContain('ORC_');
+  });
+});
+
+describe('agent session tabs', () => {
+  it('tells agent session tab ids from agent ids and shell tabs and gives the first free number', () => {
+    expect(isAgentSessionTab('agent:1')).toBe(true);
+    expect(isAgentSessionTab('shell:1')).toBe(false);
+    expect(isAgentSessionTab('agent-1')).toBe(false);
+    expect(isAgentSessionTab(null)).toBe(false);
+    expect(isOwnedSessionTab('agent:2')).toBe(true);
+    expect(isOwnedSessionTab('shell:2')).toBe(true);
+    expect(isOwnedSessionTab('w1')).toBe(false);
+    expect(nextAgentTab(['shell:1', 'agent:1', 'agent:3'])).toBe('agent:2');
+    expect(nextAgentTab([])).toBe('agent:1');
+    expect(agentSessionName('a.b:c', 'agent:4')).toBe('agent-a_b_c-4');
+  });
+
+  it('runs the provider CLI without ORC_* or a parent provider session\'s variables, and keeps a failure on screen until a key', () => {
+    const run = spawnSync('/bin/sh', ['-c', agentScript('env')], {
+      encoding: 'utf8', timeout: 5_000,
+      env: { PATH: process.env.PATH, ORC_SECRET: 'x', CLAUDECODE: '1', ORC_SESSION_SECRET: 's', KEEP: 'z' },
+    });
+    expect(run.stdout).toContain('KEEP=z');
+    expect(run.stdout).not.toContain('ORC_');
+    expect(run.stdout).not.toContain('CLAUDECODE');
+    const fail = spawnSync('/bin/sh', ['-c', agentScript('no-such-provider-cli')], { encoding: 'utf8', input: 'q', timeout: 5_000 });
+    expect(fail.stdout).toMatch(/\[no-such-provider-cli exited with status 127; any key closes this tab\]/);
+  });
+
+  it('is ready for a prompt once drawn and not asking whether to trust the folder', () => {
+    expect(agentScreenReady('')).toBe(false);
+    expect(agentScreenReady('\n  \n')).toBe(false);
+    expect(agentScreenReady('> \n? for shortcuts')).toBe(true);
+    expect(agentScreenReady('Do you trust the files in this folder?\n❯ 1. Yes, proceed')).toBe(false);
+    expect(agentScreenReady('You are in /work\n1. Yes, continue\nPress enter to continue')).toBe(false);
+  });
+
+  it('starts an agent session with its command on the private server and sends a prompt once the screen settled (fake tmux)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'orc-agent-tmux-'));
+    try {
+      const log = join(dir, 'log');
+      const tmux = join(dir, 'tmux');
+      // Records every call (one line per call, args ended by US) and stdin for load-buffer; capture-pane shows a settled prompt.
+      writeFileSync(tmux, `#!/bin/sh\nfor a; do printf '%s\\037' "$a"; done >> ${log}; echo >> ${log}\ncase "$*" in *load-buffer*) printf 'stdin:%s\\n' "$(cat)" >> ${log};; *capture-pane*) echo '> ready';; esac\n`);
+      chmodSync(tmux, 0o755);
+      const host = tmuxExplorerHost({ tmuxBinary: tmux, socket: 'orc-test', command: () => 'unused', promptPollMs: 5, promptSettleMs: 20, promptEnterDelayMs: 1 });
+      const target = await host.startAgent('agent-demo-1', '/repo/demo', { cols: 43, rows: 16 }, 'claude');
+      expect(target).toEqual({ socket: 'orc-test', session: 'agent-demo-1' });
+      let calls = readFileSync(log, 'utf8').trim().split('\n').map((line) => line.split('\x1f').filter((arg, index, all) => index < all.length - 1 || arg !== ''));
+      expect(calls[0]).toEqual(['-L', 'orc-test', '-f', '/dev/null', 'kill-session', '-t', '=agent-demo-1']);
+      const start = calls[1];
+      expect(start.slice(0, 13)).toEqual(['-L', 'orc-test', '-f', '/dev/null', 'new-session', '-d', '-s', 'agent-demo-1', '-x', '43', '-y', '16', '-c']);
+      expect(start[13]).toBe('/repo/demo');
+      expect(start.slice(-7)).toEqual(['/bin/sh', '-c', agentScript('claude'), ';', 'set-option', 'status', 'off']);
+      expect(start.join(' ')).not.toMatch(/ORC_[A-Z_]*=/);
+      await host.sendPrompt(target, 'You are the critic.\nReview it.');
+      calls = readFileSync(log, 'utf8').trim().split('\n').map((line) => line.split('\x1f').filter((arg, index, all) => index < all.length - 1 || arg !== ''));
+      const after = calls.slice(2).filter((call) => !call.includes('capture-pane'));
+      expect(calls.slice(2).filter((call) => call.includes('capture-pane')).length).toBeGreaterThanOrEqual(2);
+      expect(after.map((call) => call.join(' '))).toEqual([
+        '-L orc-test -f /dev/null load-buffer -b prompt-agent-demo-1 -',
+        'stdin:You are the critic.',
+        'Review it.',
+        '-L orc-test -f /dev/null paste-buffer -d -p -b prompt-agent-demo-1 -t =agent-demo-1:',
+        '-L orc-test -f /dev/null send-keys -t =agent-demo-1: Enter',
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('gives up on a prompt whose session never gets ready', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'orc-agent-tmux-'));
+    try {
+      const tmux = join(dir, 'tmux');
+      writeFileSync(tmux, `#!/bin/sh\ncase "$*" in *capture-pane*) echo 'Do you trust the files in this folder?';; esac\n`);
+      chmodSync(tmux, 0o755);
+      const host = tmuxExplorerHost({ tmuxBinary: tmux, socket: 'orc-test', command: () => 'unused', promptPollMs: 5, promptSettleMs: 10, promptTimeoutMs: 60 });
+      await expect(host.sendPrompt({ socket: 'orc-test', session: 'agent-demo-1' }, 'hi')).rejects.toThrow(/never got ready/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

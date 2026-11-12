@@ -32,7 +32,13 @@ export interface ViewState {
   masterTargets: Record<string, TmuxTarget>;
   /** The sidebar's width as the user dragged it; absent for the default. */
   sidebarCols?: number;
+  /** What each agent session tab (`agent:N`, explorer.ts) runs, by project id then tab id; absent when there are none. */
+  agentTabs?: AgentTabs;
 }
+
+/** An agent session tab's provider and the custom agent it was started as (null for a fresh session). */
+export interface AgentTabInfo { provider: string; agent: string | null }
+export type AgentTabs = Record<string, Record<string, AgentTabInfo>>;
 
 export const DEFAULT_VIEW_STATE: ViewState = { tabs: EMPTY_COCKPIT_STATE, masterTargets: {} };
 
@@ -40,7 +46,9 @@ const VERSION = 1;
 
 export function serializeViewState(state: ViewState): string {
   const sidebar = state.sidebarCols === undefined ? {} : { sidebarCols: state.sidebarCols };
-  return `${JSON.stringify({ v: VERSION, ...state.tabs, masterTargets: state.masterTargets, ...sidebar }, null, 2)}\n`;
+  const agentTabs = Object.fromEntries(Object.entries(state.agentTabs ?? {}).filter(([, tabs]) => Object.keys(tabs).length > 0));
+  const agents = Object.keys(agentTabs).length ? { agentTabs } : {};
+  return `${JSON.stringify({ v: VERSION, ...state.tabs, masterTargets: state.masterTargets, ...sidebar, ...agents }, null, 2)}\n`;
 }
 
 const isTarget = (value: unknown): value is TmuxTarget => {
@@ -52,7 +60,7 @@ const isTarget = (value: unknown): value is TmuxTarget => {
 export function parseViewState(raw: string | null | undefined): ViewState {
   const tabs = parseTabs(raw);
   if (!tabs) return DEFAULT_VIEW_STATE;
-  const parsed = JSON.parse(raw as string) as { masterTargets?: unknown; sidebarCols?: unknown };
+  const parsed = JSON.parse(raw as string) as { masterTargets?: unknown; sidebarCols?: unknown; agentTabs?: unknown };
   const stored = parsed.masterTargets;
   const masterTargets: Record<string, TmuxTarget> = {};
   if (stored && typeof stored === 'object' && !Array.isArray(stored)) {
@@ -62,7 +70,24 @@ export function parseViewState(raw: string | null | undefined): ViewState {
   }
   const width = parsed.sidebarCols;
   const sidebar = typeof width === 'number' && Number.isInteger(width) && width >= MIN_SIDEBAR_COLS && width <= MAX_SIDEBAR_COLS ? { sidebarCols: width } : {};
-  return { tabs, masterTargets, ...sidebar };
+  const agentTabs = parseAgentTabs(parsed.agentTabs);
+  return { tabs, masterTargets, ...sidebar, ...(Object.keys(agentTabs).length ? { agentTabs } : {}) };
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
+
+/** Stored agent session tabs; an entry that is not a provider and an agent name (or null) is dropped. */
+function parseAgentTabs(stored: unknown): AgentTabs {
+  const result: AgentTabs = {};
+  if (!isRecord(stored)) return result;
+  for (const [projectId, tabs] of Object.entries(stored)) {
+    if (!isRecord(tabs)) continue;
+    for (const [tabId, info] of Object.entries(tabs)) {
+      if (!isRecord(info) || typeof info.provider !== 'string' || !(info.agent === null || typeof info.agent === 'string')) continue;
+      (result[projectId] ??= {})[tabId] = { provider: info.provider, agent: info.agent };
+    }
+  }
+  return result;
 }
 
 /** The range a dragged sidebar width is kept in. */
