@@ -119,15 +119,21 @@ describe('dialogKey', () => {
   });
 
   it('a single-choice field does not change', () => {
-    const state = keys(open(), 'down', 'down', 'right', 'down'); // provider claude → codex, on the model
-    expect(valueOf(state, modelKey('codex'))).toBe('gpt-5-codex');
+    const state = keys(open(), 'down', 'down', 'right', 'right', 'down'); // provider claude → codex → gemini, on the model
+    expect(valueOf(state, modelKey('gemini'))).toBe(null);
     expect(keys(state, 'right')).toEqual(state);
+  });
+
+  it('offers the Codex CLI\'s GPT-6 models for codex, a stored other model kept selectable', () => {
+    const state = keys(open(), 'down', 'down', 'right', 'down'); // provider claude → codex, on the model
+    expect(state.fields[4].options).toEqual(['gpt-5-codex', 'gpt-6-sol', 'gpt-6.1-sol', 'gpt-6-astra', 'gpt-6.1-terra', 'gpt-6-luna']);
+    expect(changes(keys(state, 'right'))).toEqual([{ key: 'worker_pool.provider', value: 'codex' }, { key: modelKey('codex'), value: 'gpt-6-sol' }]);
   });
 
   it('switching provider swaps in that provider\'s stored model, unchanged, so only the provider is written', () => {
     const codex = keys(open(), 'down', 'down', 'right');
     expect(valueOf(codex, 'worker_pool.provider')).toBe('codex');
-    expect(codex.fields[4]).toMatchObject({ key: modelKey('codex'), value: 'gpt-5-codex', original: 'gpt-5-codex', options: ['gpt-5-codex'] });
+    expect(codex.fields[4]).toMatchObject({ key: modelKey('codex'), value: 'gpt-5-codex', original: 'gpt-5-codex' });
     expect(changes(codex)).toEqual([{ key: 'worker_pool.provider', value: 'codex' }]);
     const gemini = keys(codex, 'right');
     expect(gemini.fields[4]).toMatchObject({ key: modelKey('gemini'), value: null, options: [null] });
