@@ -18,7 +18,7 @@
 import { stringWidth } from '../cellWidth.ts';
 import { fitText } from '../tui/sidebar.ts';
 import { CLOSE_MARKER, layoutTabBar, type TabBarLayout, type TabBarModel } from '../tui/tabBarModel.ts';
-import { drawText, fillRect, type Frame, type Region } from './frame.ts';
+import { DEFAULT_STYLE, drawText, fillRect, type Frame, type Region } from './frame.ts';
 import type { CellStyle } from './screen.ts';
 import { attentionRole, badgeRole, styleOf, type Theme, type ThemeRole } from './theme.ts';
 
@@ -135,12 +135,13 @@ export interface TabBarDrawOptions {
 }
 
 /**
- * Draws the tab bar into `region`: each tab a solid block as tall as the bar
+ * Draws the tab bar into `region`: each tab a solid block on the label row
+ * capped by half blocks above and below (`▄`, `▀`)
  * (the active one in `tab.active`, the others in `tab.inactive`) with its
- * number, label, badge and close mark on the middle row, one column between
+ * number, label, badge and close mark on the label row, one column between
  * blocks, the overflow markers beside them. Badge and close mark keep their
  * colour on the tab's fill (inverse on the active tab when its role has no
- * fill colour, as in `mono`). The last action's error takes the middle row.
+ * fill colour, as in `mono`). The last action's error takes the label row.
  */
 export function drawTabBar(frame: Frame, region: Region, view: TabBarView, options: TabBarDrawOptions): void {
   if (region.cols <= 0 || region.rows <= 0) return;
@@ -166,7 +167,13 @@ export function drawTabBar(frame: Frame, region: Region, view: TabBarView, optio
     const x = region.x + cell.x;
     const cols = Math.min(cell.width, region.cols - cell.x);
     if (cols <= 0) break;
-    fillRect(frame, { x, y: region.y, cols, rows: region.rows }, fill);
+    fillRect(frame, { x, y: labelY, cols, rows: 1 }, fill);
+    // Above and below the label row a half block in the fill colour: the block looks two rows tall, not three.
+    const cap = hasFill ? { ...DEFAULT_STYLE, fg: fill.bg } : fill.inverse ? DEFAULT_STYLE : null;
+    if (cap) {
+      if (labelY > region.y) fillRect(frame, { x, y: labelY - 1, cols, rows: 1 }, cap, '▄');
+      if (labelY < region.y + region.rows - 1) fillRect(frame, { x, y: labelY + 1, cols, rows: 1 }, cap, '▀');
+    }
     const runs: Run[] = [[cell.text, fill]];
     if (cell.badge) runs.push([cell.badge, onFill(styleOf(theme, badgeRole(tab.attention ? attentionRole(tab.attention) : 'status.attention')))]);
     if (tab.closable) runs.push([' ', fill], [CLOSE_MARKER, onFill(styleOf(theme, 'tab.close'))]);

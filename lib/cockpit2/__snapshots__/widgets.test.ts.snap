@@ -32,9 +32,9 @@ exports[`full-style snapshot at 80x24 > a stale agent list with the cursor on a 
 exports[`full-style snapshot at 80x24 > agents focused: every attention kind, the cursor on an attention agent; a question tab active and focused 1`] = `
 [
   "{bo//}ORC{di//} │ {//}p1                                                               {un/p6/}tasks{//} {boin/p3/}! 4",
-  "{di//}┌─ {bo//}[ P1 ]{di//} ───────────────────────┐{//}    {boin//}                               {//}           ",
+  "{di//}┌─ {bo//}[ P1 ]{di//} ───────────────────────┐{//}    ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄           ",
   "{di//}│{//} coordinator            {boin/p1/}[STALE]{//} {di//}│‹ 2 {boin//}  3 ✎ a-question{boin/p3/} ! QUESTION{boin//} {in/p1/}×{boin//}  {di//} 2 ›{//}       ",
-  "{di//}│{//} workers 4/4                    {di//}│{//}    {boin//}                               {//}           ",
+  "{di//}│{//} workers 4/4                    {di//}│{//}    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀           ",
   "{di//}└────────────────────────────────┘{//}                                              ",
   "{di//}┌─ {bo//}[ PROJECTS ]{di//} ────────────── 1 ┐{//}                                              ",
   "{di//}│{//} p2                {boin/p6/}[CONNECTING]{//} {di//}│{//}                                              ",
@@ -61,9 +61,9 @@ exports[`full-style snapshot at 80x24 > agents focused: every attention kind, th
 exports[`full-style snapshot at 80x24 > no focus, a stopped coordinator with no agents; the explorer tab shown 1`] = `
 [
   "{bo//}ORC{di//} │ {//}p1                                                                     {boin/p3/}! 4",
-  "{di//}┌─ {bo//}[ P1 ]{di//} ───────────────────────┐{//}    {boin//}             {//}                             ",
+  "{di//}┌─ {bo//}[ P1 ]{di//} ───────────────────────┐{//}    ▄▄▄▄▄▄▄▄▄▄▄▄▄                             ",
   "{di//}│{//} coordinator          {boin/p3/}[STOPPED]{//} {di//}│‹ 5 {boin//}  6 tasks {in/p1/}×{boin//}  {//}                             ",
-  "{di//}│{//} workers -                      {di//}│{//}    {boin//}             {//}                             ",
+  "{di//}│{//} workers -                      {di//}│{//}    ▀▀▀▀▀▀▀▀▀▀▀▀▀                             ",
   "{di//}└────────────────────────────────┘{//}                                              ",
   "{di//}┌─ {bo//}[ AGENTS ]{di//} ───────────────────┐{//}                                              ",
   "{di//}│{//} {di//}(coordinator not running){//}      {di//}│{//}                                              ",
@@ -90,9 +90,9 @@ exports[`full-style snapshot at 80x24 > no focus, a stopped coordinator with no 
 exports[`full-style snapshot at 80x24 > projects focused: every project state, the cursor row, a notice; a permission tab active with the slot unfocused 1`] = `
 [
   "{bo//}ORC{di//} │ {//}p1                                                               {un/p6/}tasks{//} {boin/p3/}! 4",
-  "{di//}┌─ {bo//}[ P1 ]{di//} ───────────────────────┐{//}    {boin//}                                      {//}    ",
+  "{di//}┌─ {bo//}[ P1 ]{di//} ───────────────────────┐{//}    ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄    ",
   "{di//}│{//} coordinator       {boin/p6/}[CONNECTING]{//} {di//}│‹ 1 {boin//}  2 ○ a-permission_p…{boin/p3/} ! PERMISSION{boin//} {in/p1/}×{boin//}  {di//} 3 ›",
-  "{di//}│{//} workers -                      {di//}│{//}    {boin//}                                      {//}    ",
+  "{di//}│{//} workers -                      {di//}│{//}    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀    ",
   "{di//}│{//} {/p3/}coordinator restarting{//}         {di//}│{//}                                              ",
   "{di//}└────────────────────────────────┘{//}                                              ",
   "{bo/p6/}┌─ {boin/p6/}[ PROJECTS ]{bo/p6/} ────────────── {di//}4{bo/p6/} ┐{//}                                              ",

@@ -110,7 +110,7 @@ import {
 // ── layout ────────────────────────────────────────────────────────────────────
 
 export const SIDEBAR_COLS = 34;
-export const TAB_BAR_ROWS = 3;
+export const TAB_BAR_ROWS = 4;
 /** The header (top) and footer (bottom) rows, full width; dropped (footer first) before the slot shrinks below its minimum. */
 export const HEADER_ROWS = 1;
 export const FOOTER_ROWS = 1;
@@ -838,6 +838,8 @@ export function runApp(options: AppOptions): App {
     },
     tabBar: (event, at) => {
       if (!isClick(event)) return;
+      // Only the tabs' rows: their label row and its caps, not the gap row above the pane.
+      if (Math.abs(at.y - Math.floor((layout.tabBar.rows - 1) / 2)) > 1) return;
       const view = currentTabBar();
       const click = tabBarClickTarget(view.model, view.layout, at.x);
       if (!click) return;

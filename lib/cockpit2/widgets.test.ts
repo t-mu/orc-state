@@ -80,26 +80,38 @@ describe('drawTabBar', () => {
       expect(columnOf(line, cell.x + cell.width)).toBe(' ');
     }
     expect(bar.layout.cells.map((cell) => cell.width)).toEqual(bar.model.tabs.map((tab) => 2 + stringWidth(` ${tab.number} ${tab.label}`) + (tab.attention ? ' ! PERMISSION'.length : 0) + (tab.closable ? 3 : 1)));
-    expect(layout.tabBar.rows).toBe(3);
+    expect(layout.tabBar.rows).toBe(4);
   });
 
-  it('fills each tab\'s whole block, every bar row, in tab.active or tab.inactive, the gaps unstyled, focused or not', () => {
+  it('fills each tab\'s label row in tab.active or tab.inactive, caps a filled tab with half blocks, the gaps unstyled, focused or not', () => {
     const focused = renderTabBar(200, 60);
     const [master, active] = focused.bar.layout.cells;
-    const { y, rows } = focused.layout.tabBar;
-    const at = (frame: Frame, x: number, row = focused.labelY) => frame.cells[row * 200 + focused.layout.tabBar.x + x].style;
-    const label = at(focused.frame, active.x + 2);
+    const { y } = focused.layout.tabBar;
+    const cell = (frame: Frame, x: number, row = focused.labelY) => frame.cells[row * 200 + focused.layout.tabBar.x + x];
+    const label = cell(focused.frame, active.x + 2).style;
     expect(label).toEqual(styleOf(CLASSIC, 'tab.active')); // classic: inverse
-    expect(at(focused.frame, master.x + 2)).toEqual(styleOf(CLASSIC, 'tab.inactive'));
-    for (let row = y; row < y + rows; row += 1) {
-      expect(at(focused.frame, active.x, row)).toEqual(label);
-      expect(at(focused.frame, active.x + active.width - 1, row)).toEqual(label);
-      expect(at(focused.frame, master.x, row)).toEqual(styleOf(CLASSIC, 'tab.inactive'));
-      expect(at(focused.frame, master.x + master.width, row)).toEqual(DEFAULT_STYLE); // the gap
-    }
-    expect(rowText(focused.frame, y, focused.layout.tabBar.x + active.x, active.width).trim()).toBe(''); // the label only on the middle row
+    expect(cell(focused.frame, master.x + 2).style).toEqual(styleOf(CLASSIC, 'tab.inactive'));
+    expect(cell(focused.frame, active.x).style).toEqual(label);
+    expect(cell(focused.frame, master.x + master.width).style).toEqual(DEFAULT_STYLE); // the gap
+    // The active tab (inverse, no fill colour) is capped above and below; classic's inactive tab has no fill, so no caps.
+    expect(cell(focused.frame, active.x, y).text).toBe('▄');
+    expect(cell(focused.frame, active.x, y + 2).text).toBe('▀');
+    expect(cell(focused.frame, master.x, y).text).toBe(' ');
     const unfocused = renderTabBar(200, 60, TABS, false);
-    expect(at(unfocused.frame, active.x + 2)).toEqual(label);
+    expect(cell(unfocused.frame, active.x + 2).style).toEqual(label);
+  });
+
+  it('caps a tab with a fill colour in that colour (amber)', () => {
+    const AMBER = BUILT_IN_THEMES.amber;
+    const layout = computeLayout(200, 60);
+    const frame = createFrame(200, 60);
+    const bar = tabBarView(buildTabBarModel(TABS), layout.tabBar.cols);
+    drawTabBar(frame, layout.tabBar, bar, { slotFocused: true, error: null, theme: AMBER });
+    const active = bar.layout.cells.find((c) => bar.model.tabs[c.index].active)!;
+    const top = frame.cells[layout.tabBar.y * 200 + layout.tabBar.x + active.x];
+    expect(top.text).toBe('▄');
+    expect(top.style.fg).toEqual(styleOf(AMBER, 'tab.active').bg);
+    expect(top.style.bg).toEqual(DEFAULT_STYLE.bg);
   });
 
   it('fits 80x24 with overflow markers and the active tab always shown, the tabs taking the full width', () => {
@@ -116,7 +128,7 @@ describe('drawTabBar', () => {
     const layout = computeLayout(80, 24);
     const frame = createFrame(80, 24);
     drawTabBar(frame, layout.tabBar, tabBarView(buildTabBarModel(TABS), 46), { slotFocused: true, error: 'The master tab stays open.', theme: CLASSIC });
-    expect(rowText(frame, 2, 34, 46).trimEnd()).toBe('The master tab stays open.'); // the bar's middle row
+    expect(rowText(frame, 2, 34, 46).trimEnd()).toBe('The master tab stays open.'); // the bar's label row
     const empty = createFrame(80, 24);
     drawTabBar(empty, layout.tabBar, tabBarView(buildTabBarModel({ activeProject: null, projects: [] }), 46), { slotFocused: true, error: null, theme: CLASSIC });
     expect(rowText(empty, 2, 34, 46)).toContain('No project is open');
