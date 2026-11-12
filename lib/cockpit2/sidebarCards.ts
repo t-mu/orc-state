@@ -895,18 +895,15 @@ interface CardRow {
 function drawCardRow(frame: Frame, x: number, y: number, cols: number, row: CardRow, theme: Theme): void {
   const after = row.after ?? [];
   const tailOf = (before: readonly Run[]) => (row.badge ? `${runsText(before)}${badgeText(row.badge.label)}${runsText(after)}` : '');
-  let before = row.before ?? [];
-  let fitted = fitRow(row.left, tailOf(before), cols);
-  if (fitted.right !== tailOf(before) && before.length > 0) {
-    before = [];
-    fitted = fitRow(row.left, tailOf(before), cols);
-  }
-  if (row.leftShort !== undefined && fitted.left !== row.left) {
-    const short = fitRow(row.leftShort, tailOf(before), cols);
-    if (short.right === fitted.right) fitted = short;
-  }
+  // Parts drop in priority order: the run time (`before`), then the role (`leftShort`), then the name is cut.
+  const steps: { left: string; before: Run[] }[] = [{ left: row.left, before: row.before ?? [] }, { left: row.left, before: [] }];
+  if (row.leftShort !== undefined) steps.push({ left: row.leftShort, before: [] });
+  const whole = (step: { left: string; before: Run[] }) => stringWidth(step.left) + (row.badge ? 1 + stringWidth(tailOf(step.before)) : 0) <= cols;
+  const step = steps.find(whole) ?? steps[steps.length - 1];
+  const before = step.before;
+  const fitted = fitRow(step.left, tailOf(before), cols);
   const showTail = row.badge !== undefined && fitted.right === tailOf(before);
-  const left = showTail ? fitted.left : fitText(row.leftShort ?? row.left, cols);
+  const left = showTail ? fitted.left : fitText(step.left, cols);
   const gap = showTail ? fitted.gap : ' '.repeat(Math.max(0, cols - stringWidth(left)));
   let runs: Run[] = [...row.leftRuns(left), [gap, styleOf(theme, 'text.primary')], ...(showTail ? before : [])];
   let tail = after;
@@ -1062,6 +1059,7 @@ export function drawSidebarCards(frame: Frame, region: Region, layout: SidebarCa
     const prefix = `${collapseMarker(expanded)} ${LOCAL_MARK} `;
     return {
       left: `${prefix}${session.label}`,
+      ...(session.label.includes(' · ') ? { leftShort: `${prefix}${session.label.slice(0, session.label.indexOf(' · '))}` } : {}),
       leftRuns: (shown) => {
         const head = shown.startsWith(prefix) ? prefix : shown;
         const rest = shown.slice(head.length);
