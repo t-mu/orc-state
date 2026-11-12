@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 import type { Agent } from './types/agents.ts';
 import type { Claim } from './types/claims.ts';
 import type { WorkerPoolConfig, CoordinatorConfig, LeaseConfig, ProviderName } from './lib/providers.ts';
-import { hasSessionStartHook, resolveWorkerProvider, type ExecutionMode } from './lib/providers.ts';
+import { hasSessionStartHook, resolveWorkerModel, resolveWorkerProvider, type ExecutionMode } from './lib/providers.ts';
 import type { ActorType, OrcEvent, OrcEventInput } from './types/events.ts';
 
 // Distributive Omit — preserves discriminated union across all members
@@ -1000,7 +1000,8 @@ async function resumeOrRequeue(
         adapter,
         workingDirectory: worktreePath,
         repoRoot: ORC_PACKAGE_ROOT,
-        taskModel: task?.model ?? null,
+        // The task's model, else the pool's default for the worker's provider (worker_pool.provider_models / model).
+        taskModel: task?.model ?? resolveWorkerModel(workerPoolConfig, agent.provider as ProviderName),
         taskWorkflow: taskWorkflow(task),
         executionMode: workerPoolConfig.execution_mode,
         sandboxNetwork: workerPoolConfig.sandbox_network,
@@ -2088,7 +2089,8 @@ async function executeDispatchPlan(
         repoRoot: ORC_PACKAGE_ROOT,
         runId,
         taskRef,
-        taskModel: task?.model ?? null,
+        // The task's model, else the pool's default for this provider (worker_pool.provider_models / model).
+        taskModel: task?.model ?? resolveWorkerModel(workerPoolConfig, provider),
         taskWorkflow: taskWorkflow(task),
         executionMode: workerPoolConfig.execution_mode,
         sandboxNetwork: workerPoolConfig.sandbox_network,

@@ -1947,13 +1947,13 @@ class FakeAgentHost implements AgentActionHost {
 
 describe('runApp agent block buttons and kill (fake tmux clients, fake agents host)', () => {
   const S1_TARGET = { socket: 'orc-sock', session: 'orc-s1' };
-  /** demo with w1 on task feat/one (claude, opus) and a scout s1 (codex, model unknown). */
+  /** demo with w1 on task feat/one (claude, opus) and a scout s1 (codex, model unknown, a two-line objective). */
   function demo(): ProjectWatchState {
     const state = projectState('demo', { workers: [{ agent_id: 'w1', ...W1_TARGET }] });
     const status = state.status as unknown as { worker_capacity: { slots: Array<Record<string, unknown>> }; scouts: unknown[] };
     Object.assign(status.worker_capacity.slots[0], { active_task_ref: 'feat/one', provider: 'claude', model: 'opus' });
     status.scouts = [{
-      agent_id: 's1', provider: 'codex', model: null, status: 'running', launched_at: null,
+      agent_id: 's1', provider: 'codex', model: null, objective: 'find docs errors\nin docs/', status: 'running', launched_at: null,
       session_handle: `tmux:${S1_TARGET.socket}:${S1_TARGET.session}`, tmux_socket: S1_TARGET.socket, tmux_session: S1_TARGET.session,
     }];
     return state;
@@ -1983,9 +1983,12 @@ describe('runApp agent block buttons and kill (fake tmux clients, fake agents ho
     await waitFor(() => app.tabs().projects[0].active === 'w1');
     await waitFor(async () => text(await shown(terminal), 5, 35).startsWith('┌─ [ W1 ] feat/one · busy · claude · opus '));
     expect(host.kills).toEqual([]);
-    // A scout's header: its provider alone (its model is unknown), no role, task or phase part.
+    // A scout's header: its brief (the objective's first line) and provider · model (`default`: unknown), no role, task or phase part.
     expect(app.apply((state) => openAgent(state, 'demo', 's1')).ok).toBe(true);
-    await waitFor(async () => /^┌─ \[ S1 \] codex ─/.test(text(await shown(terminal), 5, 35)));
+    // Whole parts only: at 80 columns the brief alone fits; wider, provider · model follows.
+    await waitFor(async () => /^┌─ \[ S1 \] find docs errors ─+┐$/.test(text(await shown(terminal), 5, 35)));
+    terminal.resizeTo(120, terminal.rows);
+    await waitFor(async () => text(await shown(terminal), 5).includes('┌─ [ S1 ] find docs errors · codex · default ─'));
   });
 
   it('asks before killing a worker on a click on KILL; KILL in the dialog resets its task through the host and closes it', async () => {

@@ -26,6 +26,8 @@ export interface TuiScout {
   agent_id: string;
   provider: string | null;
   model: string | null;
+  /** Absent from a coordinator that predates it. */
+  objective?: string | null;
   status: string;
   session_handle: string | null;
   launched_at: string | null;

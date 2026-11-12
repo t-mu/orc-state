@@ -344,6 +344,8 @@ export interface ScoutSummary extends TmuxTarget {
   agent_id: string;
   provider: string;
   model: string | null;
+  /** The scout's objective as recorded at request (cut to 200 characters); null for a scout registered before it was recorded. */
+  objective: string | null;
   status: Agent['status'];
   session_handle: string | null;
   launched_at: string | null;
@@ -381,6 +383,7 @@ export function buildScoutList(stateDir: string, scoutAgents: Agent[]): ScoutSum
     agent_id: agent.agent_id,
     provider: agent.provider,
     model: agent.model ?? null,
+    objective: agent.objective ?? null,
     status: agent.status,
     session_handle: agent.session_handle ?? null,
     ...agentTmuxTarget(stateDir, agent),

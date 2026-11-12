@@ -600,15 +600,15 @@ describe('expanded agents', () => {
     }
   });
 
-  it('lays out a worker\'s block: the row, provider · model, task, at most two lines of its question, the buttons', () => {
+  it('lays out a worker\'s block: the row, labelled provider · model and task, at most two unlabelled lines of its question, the buttons', () => {
     const layout = sidebarCardsLayout(details(0), 22, at('p1/a1', ['p1/a1']), COLS);
     expect(parts(layout)).toEqual(['top', 'model', 'task', 'detail', 'detail', 'buttons', 'bottom']);
     const { lines } = render(details(0), { nav: at('p1/a1', ['p1/a1']), focus: 'agents' });
     const top = lines.findIndex((line) => line.includes('[-] a1'));
     expect(lines.slice(top, top + 7).map((line) => line.trimEnd())).toEqual([
       '│┌ [-] a1 worker 12m [QUESTION] ┐│',
-      '││ claude · opus                ││',
-      '││ cockpit-style/foo            ││',
+      '││ model  claude · opus         ││',
+      '││ task   cockpit-style/foo     ││',
       '││ ? may I run npm test and     ││',
       '││ then a much longer question… ││',
       '││ [ OPEN ] [ KILL ]            ││',
@@ -623,30 +623,57 @@ describe('expanded agents', () => {
     const { lines } = render(details(0), { nav: at('p1/a2', ['p1/a2']) });
     const top = lines.findIndex((line) => line.includes('[-] a2'));
     expect(lines.slice(top + 1, top + 5).map((line) => line.trimEnd())).toEqual([
-      '││ claude · opus                ││',
-      '││ cockpit-style/foo            ││',
-      '││ working on a2                ││',
+      '││ model  claude · opus         ││',
+      '││ task   cockpit-style/foo     ││',
+      '││ doing  working on a2         ││',
       '││ [ OPEN ] [ KILL ]            ││',
     ]);
     expect(lines.some((line) => line.includes('implement ·'))).toBe(false);
   });
 
-  it('gives a scout no task row and no `scout` or state row; an unknown provider or model is `-`', () => {
+  it('draws the labels in text.muted and the values in text.primary; a long activity wraps beside its label', () => {
     const sidebar = details(0);
-    sidebar.agents = [agent('s1', { role: 'scout', phase: 'running', detail: 'scout', task_ref: null, provider: 'codex', model: null })];
-    const layout = sidebarCardsLayout(sidebar, 22, at('p1/s1', ['p1/s1']), COLS);
-    expect(parts(layout)).toEqual(['top', 'model', 'buttons', 'bottom']);
+    sidebar.agents = [{ ...sidebar.agents[1], detail: 'editing lib/cockpit2/sidebarCards.ts and its tests for labels' }];
+    const { frame, lines } = render(sidebar, { nav: at('p1/a2', ['p1/a2']), theme: AMBER });
+    const top = lines.findIndex((line) => line.includes('[-] a2'));
+    expect(lines.slice(top + 1, top + 5).map((line) => line.trimEnd())).toEqual([
+      '││ model  claude · opus         ││',
+      '││ task   cockpit-style/foo     ││',
+      '││ doing  editing               ││',
+      '││        lib/cockpit2/sidebar… ││',
+    ]);
+    const style = (x: number, y: number) => frame.cells[y * COLS + x].style;
+    for (const row of [top + 1, top + 2, top + 3]) {
+      expect(style(3, row), `label ${row}`).toEqual(styleOf(AMBER, 'text.muted'));
+      expect(style(10, row), `value ${row}`).toEqual(styleOf(AMBER, 'text.primary'));
+    }
+    expect(style(16, top + 1)).toEqual(styleOf(AMBER, 'text.muted')); // the ` · ` between provider and model
+  });
+
+  it('gives a scout its brief instead of a task row, no `scout` or state row; an unknown provider is `-`, an unknown model `default`', () => {
+    const sidebar = details(0);
+    sidebar.agents = [agent('s1', { role: 'scout', phase: 'running', detail: 'scout', task_ref: null, provider: 'codex', model: null, brief: null })];
+    expect(parts(sidebarCardsLayout(sidebar, 22, at('p1/s1', ['p1/s1']), COLS))).toEqual(['top', 'model', 'buttons', 'bottom']);
+    sidebar.agents = [{ ...sidebar.agents[0], brief: 'find the errors in docs/contracts.md and docs/cli.md' }];
+    expect(parts(sidebarCardsLayout(sidebar, 22, at('p1/s1', ['p1/s1']), COLS))).toEqual(['top', 'model', 'brief', 'buttons', 'bottom']);
     const { lines } = render(sidebar, { nav: at('p1/s1', ['p1/s1']) });
     const top = lines.findIndex((line) => line.includes('[-] s1'));
-    expect(lines.slice(top, top + 4).map((line) => line.trimEnd())).toEqual([
+    expect(lines.slice(top, top + 5).map((line) => line.trimEnd())).toEqual([
       '│┌ [-] s1 scout   12m [RUNNING] ┐│',
-      '││ codex · -                    ││',
+      '││ model  codex · default       ││',
+      '││ brief  find the errors in d… ││',
       '││ [ OPEN ] [ KILL ]            ││',
       '│└──────────────────────────────┘│',
     ]);
     const unknown = details(0);
     unknown.agents = [{ ...unknown.agents[1], provider: null, model: null }];
-    expect(render(unknown, { nav: at('p1/a2', ['p1/a2']) }).lines.some((line) => line.includes('││ - · -   '))).toBe(true);
+    expect(render(unknown, { nav: at('p1/a2', ['p1/a2']) }).lines.some((line) => line.includes('││ model  - · default   '))).toBe(true);
+  });
+
+  it('draws a running scout\'s badge and block in status.active, as a working worker\'s', () => {
+    const scout = agent('s1', { role: 'scout', phase: 'running', detail: 'scout', task_ref: null, provider: 'claude', model: 'sonnet' });
+    expect(agentStatusRole(scout)).toBe('status.active');
+    expect(agentStatusRole({ ...scout, phase: 'idle' })).toBe('status.idle');
   });
 
   it('draws OPEN in tab.active and KILL in button.danger, filled, one column apart', () => {

@@ -84,11 +84,12 @@ const PROJECT_STATE_ROLE: Readonly<Record<SidebarProjectState, StatusRole>> = {
 const ATTENTION_ROLE: Readonly<Record<AttentionKind, StatusRole>> = {
   permission_prompt: 'status.attention', question: 'status.attention', stalled: 'status.error', no_progress: 'status.warn',
 };
-const ACTIVE_PHASES = new Set(['explore', 'implement', 'complete', 'finalize']);
+/** Working run phases, and the working states an agent without a phase shows: a run `in_progress`, a scout `running`. */
+const ACTIVE_PHASES = new Set(['explore', 'implement', 'complete', 'finalize', 'in_progress', 'running']);
 
 export const projectStateRole = (state: SidebarProjectState): StatusRole => PROJECT_STATE_ROLE[state];
 export const attentionRole = (kind: AttentionKind): StatusRole => ATTENTION_ROLE[kind];
-/** A run phase's role: working phases active, review warn, anything else (none, unknown) idle. */
+/** A run phase's (or agent state's) role: working phases and states active, review warn, anything else (none, unknown) idle. */
 export function phaseRole(phase: string | null | undefined): StatusRole {
   if (phase && ACTIVE_PHASES.has(phase)) return 'status.active';
   return phase === 'review' ? 'status.warn' : 'status.idle';

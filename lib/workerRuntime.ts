@@ -445,7 +445,8 @@ export async function spawnEphemeralWorker(
 ): Promise<{ ok: boolean; agent?: Agent; session_handle?: string; provider_ref?: unknown; reason?: string }> {
   let agent: Agent;
   try {
-    agent = registerAgent(stateDir, { agent_id: agentId, provider, role: 'worker', ephemeral: true });
+    // The model it launches with is recorded, so status and the cockpit show it.
+    agent = registerAgent(stateDir, { agent_id: agentId, provider, role: 'worker', ephemeral: true, model: taskModel });
   } catch (error) {
     return { ok: false, reason: `agent registration failed: ${(error as Error).message}` };
   }

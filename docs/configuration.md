@@ -182,8 +182,8 @@ Workers are spawned on demand per task and removed after it; there are no idle w
 |-------|---------|-------------|
 | `max_workers` | `0` | Max concurrent task workers (`orc init` sets `1` when unset) |
 | `provider` | `codex` | Worker provider; a task's `required_provider` wins |
-| `model` | `null` | Worker model |
-| `provider_models` | `{}` | Per-provider model; wins over `model` |
+| `model` | `null` | Worker model; a task's `model` wins, `null` leaves the provider CLI's default |
+| `provider_models` | `{}` | Per-provider model; wins over `model`, a task's `model` wins over it |
 | `execution_mode` | `full-access` | Worker execution mode |
 | `runtime` | `cli` | `cli` or `structured` ([Worker Runtimes](#worker-runtimes)) |
 | `sandbox_network` | `restricted` | Sandboxed control-socket access ([Execution Modes](#execution-modes)) |

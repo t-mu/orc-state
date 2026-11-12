@@ -18,12 +18,13 @@
  *   │ [+] grommash worker [PERMI…] │   needing attention keeps its question or
  *   │     ? may I run npm test     │   reason on a second row. An expanded agent
  *   │┌ [-] boin worker 3m [IMPL…] ┐│   (Plan 7 Step 9: Space or a click on its
- *   ││ claude · opus              ││   marker) is a box in its status role: the
- *   ││ cockpit-style/foo          ││   row, its provider and model, its task (a
- *   ││ editing app.ts             ││   scout has none), its question, or its
- *   ││ [ OPEN ] [ KILL ]          ││   activity when it says more than the row
- *   │└────────────────────────────┘│   (at most two lines), and two buttons
- *   └──────────────────────────────┘
+ *   ││ model  claude · opus       ││   marker) is a box in its status role: the
+ *   ││ task   cockpit-style/foo   ││   row, then labelled rows: its provider and
+ *   ││ doing  editing app.ts      ││   model (`default` when unknown), its task
+ *   ││ [ OPEN ] [ KILL ]          ││   (a scout's brief instead), its activity
+ *   │└────────────────────────────┘│   when it says more than the row (at most
+ *   └──────────────────────────────┘   two lines) or, unlabelled, its question
+ *                                      or reason; and two buttons
  *
  * The keys move in three boxes, one per card, Tab and Shift-Tab cycling them:
  * projects (by project), project (its settings button) and agents (by agent;
@@ -193,16 +194,16 @@ function killAgentStep(nav: SidebarNav, model: SidebarModel, index: number): Sid
 /** The cards, top to bottom: Projects, Project and Agents; each is the box of the same name. */
 export type SidebarCard = SidebarBox;
 
-/** The rows of an expanded agent's block, top to bottom (`task` only with a task, `detail` up to twice). */
-export type BlockPart = 'top' | 'model' | 'task' | 'detail' | 'buttons' | 'bottom';
+/** The rows of an expanded agent's block, top to bottom (`task` only with a task, `brief` only with a scout's brief, `detail` up to twice). */
+export type BlockPart = 'top' | 'model' | 'task' | 'brief' | 'detail' | 'buttons' | 'bottom';
 
 /** A card's body row: what is drawn there and what a click on it hits. */
 export type CardLine =
   | { kind: 'coordinator' } | { kind: 'workers' } | { kind: 'tasks' } | { kind: 'notice' } | { kind: 'settings' } | { kind: 'noProjects' }
   | { kind: 'project'; index: number }
   | { kind: 'agent'; index: number } | { kind: 'detail'; index: number }
-  /** A row of an expanded agent's block; a `detail` part carries its wrapped line. */
-  | { kind: 'block'; index: number; part: BlockPart; text?: string }
+  /** A row of an expanded agent's block; a `detail` part carries its wrapped line and, for an activity, its label (`doing`, then blank). */
+  | { kind: 'block'; index: number; part: BlockPart; text?: string; label?: string }
   | { kind: 'more'; count: number }
   | { kind: 'empty' };
 
@@ -229,6 +230,10 @@ const MIN_CARD_ROWS = BORDERS + 1;
 const blockTextCols = (cols: number): number => Math.max(1, cols - BORDERS - 4);
 /** The most rows an expanded block gives the activity or question. */
 const BLOCK_DETAIL_LINES = 2;
+/** An expanded block's row labels, muted, padded to one width so the values line up. */
+const BLOCK_LABELS = { model: 'model', task: 'task', brief: 'brief', doing: 'doing' } as const;
+const BLOCK_LABEL_COLS = Math.max(...Object.values(BLOCK_LABELS).map((label) => label.length)) + 2;
+const blockLabel = (label: string): string => label.padEnd(BLOCK_LABEL_COLS);
 
 /** `text` wrapped to `width` in at most two lines, the second cut (with an ellipsis) when there is more. */
 function blockDetail(text: string | null, width: number): string[] {
@@ -251,21 +256,27 @@ function blockDetailText(agent: SidebarAgent): string | null {
   if (agent.attention) return agent.detail;
   const text = agent.detail?.trim();
   if (!text) return null;
-  const repeats = [agent.task_ref, agent.role, agent.phase].some((other) => other != null && other.toLowerCase() === text.toLowerCase());
+  const repeats = [agent.task_ref, agent.brief, agent.role, agent.phase].some((other) => other != null && other.toLowerCase() === text.toLowerCase());
   return repeats ? null : text;
 }
 
 /**
  * Each agent's rows in a card `cols` wide: collapsed, its row and (when it
- * needs attention) its question or reason; expanded, its block.
+ * needs attention) its question or reason; expanded, its block. A question or
+ * reason takes the block's full width; an activity wraps beside its label.
  */
 function agentBlocks(agents: SidebarAgent[], expanded: ReadonlySet<string>, cols: number): CardLine[][] {
   return agents.map((agent, index): CardLine[] => {
     if (!expanded.has(agent.key)) return agent.attention ? [{ kind: 'agent', index }, { kind: 'detail', index }] : [{ kind: 'agent', index }];
     const part = (name: BlockPart, text?: string): CardLine => (text === undefined ? { kind: 'block', index, part: name } : { kind: 'block', index, part: name, text });
+    const detail = blockDetailText(agent);
+    const detailLines: CardLine[] = agent.attention
+      ? blockDetail(detail, blockTextCols(cols)).map((text) => part('detail', text))
+      : blockDetail(detail, Math.max(1, blockTextCols(cols) - BLOCK_LABEL_COLS))
+        .map((text, line) => ({ kind: 'block', index, part: 'detail', text, label: line === 0 ? BLOCK_LABELS.doing : '' }));
     return [
-      part('top'), part('model'), ...(agent.task_ref ? [part('task')] : []),
-      ...blockDetail(blockDetailText(agent), blockTextCols(cols)).map((text) => part('detail', text)),
+      part('top'), part('model'), ...(agent.task_ref ? [part('task')] : []), ...(agent.brief ? [part('brief')] : []),
+      ...detailLines,
       part('buttons'), part('bottom'),
     ];
   });
@@ -698,9 +709,11 @@ export function drawSidebarCards(frame: Frame, region: Region, layout: SidebarCa
   /**
    * One row of an expanded agent's block, `cols` wide: the border in the
    * agent's status role (dim on a stale list), the agent's row in the top
-   * border, then its provider and model, task, activity or question (in the
-   * attention kind's role) and its buttons (`[ OPEN ]` in `tab.active`,
-   * `[ KILL ]` in `button.danger`), each cut by display width.
+   * border, then its labelled rows (label in `text.muted`, value in
+   * `text.primary`): provider and model (`default` for an unknown model),
+   * task or brief, activity; or its question (in the attention kind's role);
+   * and its buttons (`[ OPEN ]` in `tab.active`, `[ KILL ]` in
+   * `button.danger`), each cut by display width.
    */
   function drawBlockLine(frame: Frame, x: number, y: number, cols: number, line: Extract<CardLine, { kind: 'block' }>, cursor: boolean): void {
     if (cols < 4) return;
@@ -729,10 +742,12 @@ export function drawSidebarCards(frame: Frame, region: Region, layout: SidebarCa
       }
       return;
     }
-    const separator = ' · ';
+    const labelled = (label: string, value: Run[]): Run[] => cutRuns([[blockLabel(label), muted], ...value], textCols);
     const runs: Run[] = line.part === 'model'
-      ? cutRuns([[agent.provider ?? '-', primary], [separator, muted], [agent.model ?? '-', primary]], textCols)
-      : line.part === 'task' ? [[fitText(agent.task_ref ?? '', textCols), primary]]
+      ? labelled(BLOCK_LABELS.model, [[agent.provider ?? '-', primary], [' · ', muted], [agent.model ?? 'default', primary]])
+      : line.part === 'task' ? labelled(BLOCK_LABELS.task, [[agent.task_ref ?? '', primary]])
+      : line.part === 'brief' ? labelled(BLOCK_LABELS.brief, [[agent.brief ?? '', primary]])
+      : line.label !== undefined ? labelled(line.label, [[line.text ?? '', primary]])
       : [[fitText(line.text ?? '', textCols), styled(role(agent.attention ? attentionRole(agent.attention) : 'text.muted'))]];
     drawRuns(frame, x + 2, y, runs, textCols);
   }

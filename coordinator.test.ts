@@ -1412,6 +1412,61 @@ describe('worker session lifecycle', () => {
     expect(workers[0].ephemeral).toBe(true);
   });
 
+  it('launches a worker for a task without a model with the pool model for its provider, and records it', async () => {
+    seedState(dir, { tasks: [DISPATCHABLE_TASK] }); // no model
+    process.env.ORC_MAX_WORKERS = '1';
+    process.env.ORC_WORKER_PROVIDER = 'claude';
+    process.env.ORC_WORKER_MODEL = 'haiku';
+    useSettings({ worker_pool: { provider_models: { claude: 'sonnet' } } });
+
+    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'tmux:claude-worker', provider_ref: null });
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock());
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    expect(mockStart).toHaveBeenCalledOnce();
+    expect((mockStart.mock.calls[0] as [string, Record<string, unknown>])[1].model).toBe('sonnet');
+    const workers = readAgents(dir).filter((a) => a.role === 'worker');
+    expect(workers).toHaveLength(1);
+    expect(workers[0].model).toBe('sonnet');
+  });
+
+  it('falls back to worker_pool.model when the provider has no provider model', async () => {
+    seedState(dir, { tasks: [DISPATCHABLE_TASK] });
+    process.env.ORC_MAX_WORKERS = '1';
+    process.env.ORC_WORKER_PROVIDER = 'claude';
+    process.env.ORC_WORKER_MODEL = 'haiku';
+
+    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'tmux:claude-worker', provider_ref: null });
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock());
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    expect((mockStart.mock.calls[0] as [string, Record<string, unknown>])[1].model).toBe('haiku');
+    expect(readAgents(dir).find((a) => a.role === 'worker')?.model).toBe('haiku');
+  });
+
+  it("launches a worker with its task's own model over the pool's", async () => {
+    seedState(dir, { tasks: [{ ...DISPATCHABLE_TASK, model: 'opus' }] });
+    process.env.ORC_MAX_WORKERS = '1';
+    process.env.ORC_WORKER_PROVIDER = 'claude';
+    useSettings({ worker_pool: { provider_models: { claude: 'sonnet' } } });
+
+    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'tmux:claude-worker', provider_ref: null });
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock());
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    expect((mockStart.mock.calls[0] as [string, Record<string, unknown>])[1].model).toBe('opus');
+    expect(readAgents(dir).find((a) => a.role === 'worker')?.model).toBe('opus');
+  });
+
   it('runs codex and claude workers in parallel when separate tasks require different providers', async () => {
     seedState(dir, {
       tasks: [
@@ -6202,6 +6257,19 @@ describe('dead worker session resume (v1/run-resume)', () => {
     expect(resumed).toEqual([expect.objectContaining({
       agent_id: 'worker-r', run_id: RUN, payload: expect.objectContaining({ session_id: 'sess-r', generation: 1, provider_conversation_id: 'conv-1' }),
     })]);
+  });
+
+  it("resumes a worker whose task names no model with the pool model for the worker's provider", async () => {
+    await seedCrashedWorker();
+    useSettings({ worker_pool: { provider_models: { claude: 'sonnet' } } });
+    const { start } = crashedAdapter({ code: null, signal: 9 });
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+    await tick();
+
+    expect(start).toHaveBeenCalledOnce();
+    expect((start.mock.calls[0] as [string, Record<string, unknown>])[1].model).toBe('sonnet');
   });
 
   it.each([

@@ -103,7 +103,7 @@ describe('buildStatus', () => {
         { agent_id: 'master', provider: 'claude', role: 'master', status: 'running' } as Agent,
         { agent_id: 'amber-anchor', provider: 'codex', role: 'worker', status: 'idle' } as Agent,
         { agent_id: 'scout-1', provider: 'codex', role: 'scout', status: 'running', session_handle: 'tmux:scout-1' } as Agent,
-        { agent_id: 'scout-2', provider: 'claude', role: 'scout', status: 'idle', registered_at: '2026-01-01T00:00:00Z' } as Agent,
+        { agent_id: 'scout-2', provider: 'claude', model: 'sonnet', objective: 'find doc errors\nin docs/', role: 'scout', status: 'idle', registered_at: '2026-01-01T00:00:00Z' } as Agent,
       ],
     });
     writeConfig({ worker_pool: { max_workers: 1, provider: 'codex' } });
@@ -114,11 +114,11 @@ describe('buildStatus', () => {
     expect(s.scout_capacity).toBeUndefined();
     expect(s.scouts).toEqual([
       {
-        agent_id: 'scout-1', provider: 'codex', model: null, status: 'running', session_handle: 'tmux:scout-1',
+        agent_id: 'scout-1', provider: 'codex', model: null, objective: null, status: 'running', session_handle: 'tmux:scout-1',
         tmux_socket: tmuxSocketName(dir), tmux_session: tmuxSessionName('scout-1'), launched_at: null,
       },
       {
-        agent_id: 'scout-2', provider: 'claude', model: null, status: 'idle', session_handle: null,
+        agent_id: 'scout-2', provider: 'claude', model: 'sonnet', objective: 'find doc errors\nin docs/', status: 'idle', session_handle: null,
         tmux_socket: null, tmux_session: null, launched_at: '2026-01-01T00:00:00Z',
       },
     ]);

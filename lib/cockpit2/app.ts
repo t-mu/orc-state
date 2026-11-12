@@ -80,7 +80,7 @@ import {
   type CockpitTabState, type OpenTab, type TabTransition,
 } from '../cockpitTabs.ts';
 import { keyLabel, type CockpitKeys } from '../cockpitKeys.ts';
-import { ATTENTION_BADGE, buildSidebarModel, projectState } from '../tui/sidebar.ts';
+import { ATTENTION_BADGE, buildSidebarModel, fitText, projectState } from '../tui/sidebar.ts';
 import { buildProjectViews } from '../tui/status.ts';
 import { buildTabBarModel, tabAttention, tabBarClickTarget } from '../tui/tabBarModel.ts';
 import { blitScreen, createFrame, drawText, slotCursor, type Frame, type Region } from './frame.ts';
@@ -131,6 +131,8 @@ export const FOOTER_ROWS = 1;
 /** The slot keeps at least this much; the footer, the header, then the tab bar go first on a tiny terminal. */
 const MIN_SLOT_COLS = 20;
 const MIN_SLOT_ROWS = 3;
+/** A scout's brief in the pane header is cut to this many columns, so its provider, model and time still fit beside it. */
+const PANE_BRIEF_COLS = 40;
 /** Lines one wheel notch scrolls a pane's scrollback. */
 export const WHEEL_LINES = 3;
 
@@ -692,11 +694,14 @@ export function runApp(options: AppOptions): App {
     const model = buildSidebarModel([view], { stateDir: '', activeProjectId: view.project_id, nowMs: Date.now(), registryError: null, agentDetails: true });
     const agent = model.agents.find((candidate) => candidate.agent_id === tab.agentId);
     if (!agent) return { title: String(tab.agentId), parts: ['not running'], badge: null };
-    // The provider and its model as one part (the provider alone when the model is unknown); a scout has no task, so no task, role or phase part.
+    // The provider and its model as one part (the provider alone when the model is unknown); a scout has no task, so its
+    // brief (cut: the header shows whole parts only) and its provider with the model (`default` when unknown) instead.
     const runtime = agent.provider && agent.model ? `${agent.provider} · ${agent.model}` : agent.provider ?? agent.model ?? '';
     return {
       title: agent.agent_id,
-      parts: agent.role === 'scout' ? [runtime, agent.elapsed ?? ''] : [agent.task_ref ?? '', agent.phase, runtime, agent.elapsed ?? ''],
+      parts: agent.role === 'scout'
+        ? [fitText(agent.brief ?? '', PANE_BRIEF_COLS), `${agent.provider ?? '-'} · ${agent.model ?? 'default'}`, agent.elapsed ?? '']
+        : [agent.task_ref ?? '', agent.phase, runtime, agent.elapsed ?? ''],
       badge: agent.attention ? { label: ATTENTION_BADGE[agent.attention], role: attentionRole(agent.attention) } : null,
     };
   }
