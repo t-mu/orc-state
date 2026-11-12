@@ -74,7 +74,10 @@ async function waitFor<T>(probe: () => T | null | undefined | false, label: stri
   }
 }
 
-describe('structured runtime lifecycle e2e (task 203)', () => {
+// The master runs in orc's tmux server, so this needs tmux like the other tmux e2e tests.
+const hasTmux = spawnSync('tmux', ['-V']).status === 0;
+
+describe.skipIf(!hasTmux)('structured runtime lifecycle e2e (task 203)', () => {
   let dir: string;
   let worktree: string;
   let control: ControlServer | null = null;

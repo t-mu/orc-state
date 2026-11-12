@@ -4,11 +4,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SEND_CHUNK_BYTES, TmuxControlClient } from './tmuxControl.ts';
+import { SOCKET_PATH_MAX_BYTES, tmuxSocketPathBytes } from '../../vitest.tmuxTmpdir.mjs';
 
 const hasTmux = spawnSync('tmux', ['-V'], { encoding: 'utf8' }).status === 0;
 
 describe.skipIf(!hasTmux)('TmuxControlClient (private tmux server)', () => {
   const socket = `orc-cockpit-test-${process.pid}-${Date.now()}`;
+  it('keeps its tmux socket paths under the 104-byte limit', () => {
+    for (const name of [socket]) expect(tmuxSocketPathBytes(name), name).toBeLessThanOrEqual(SOCKET_PATH_MAX_BYTES);
+  });
   let dir = '';
   const clients: TmuxControlClient[] = [];
   const tmux = (...args: string[]) => spawnSync('tmux', ['-L', socket, '-f', '/dev/null', ...args], { encoding: 'utf8' });

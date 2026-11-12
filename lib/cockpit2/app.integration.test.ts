@@ -7,6 +7,7 @@ import { runApp } from './app.ts';
 import { tmuxExplorerHost, type ExplorerHost } from './explorer.ts';
 import { EDGE_ROW } from './frame.ts';
 import { FakeTerminal, FakeWatcher, LEADER, MemoryStore, apps, projectState, shown, slotRows, text, waitFor, waitForSlotLine, waitForTabBar } from '../../test-fixtures/cockpitAppFakes.ts';
+import { SOCKET_PATH_MAX_BYTES, tmuxSocketPathBytes } from '../../vitest.tmuxTmpdir.mjs';
 
 // ── the app against a private tmux server ────────────────────────────────────
 
@@ -20,6 +21,9 @@ describe.skipIf(!hasTmux)('runApp (private tmux server)', () => {
   /** The explorer's private server, standing in for `orc-explorer`. */
   const explorerSocket = `${socket}-explorer`;
   const explorerTmux = (...args: string[]) => spawnSync('tmux', ['-L', explorerSocket, ...args], { encoding: 'utf8' });
+  it('keeps its tmux socket paths under the 104-byte limit', () => {
+    for (const name of [socket, explorerSocket]) expect(tmuxSocketPathBytes(name), name).toBeLessThanOrEqual(SOCKET_PATH_MAX_BYTES);
+  });
   afterAll(() => { tmux('kill-server'); explorerTmux('kill-server'); });
   const windowSize = (session: string) => tmux('display-message', '-p', '-t', `=${session}:`, '#{window_width}x#{window_height}').stdout.trim();
 

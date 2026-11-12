@@ -11,7 +11,7 @@
 // to 104 bytes on macOS (108 on Linux), and macOS's tmpdir() is a long
 // /var/folders/... path that pushes `<dir>/tmux-<uid>/<name>` past the limit.
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -20,6 +20,18 @@ export const TMUX_TMPDIR_PREFIX = 'orc-test-tmux-';
 /** A short base for test tmux socket directories, whatever TMPDIR is. */
 export function tmuxTmpBase() {
   return process.platform === 'win32' ? tmpdir() : '/tmp';
+}
+
+/** The longest socket path a Unix socket takes: 104 bytes on macOS (108 on Linux) including the NUL. */
+export const SOCKET_PATH_MAX_BYTES = 103;
+
+/**
+ * The byte length of the socket tmux makes for `-L name` under the current
+ * TMUX_TMPDIR, resolved as tmux resolves it (/tmp is /private/tmp on macOS).
+ */
+export function tmuxSocketPathBytes(name) {
+  const dir = realpathSync(process.env.TMUX_TMPDIR || '/tmp');
+  return Buffer.byteLength(join(dir, `tmux-${process.getuid?.() ?? 0}`, name));
 }
 
 export function setup() {

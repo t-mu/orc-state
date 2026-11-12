@@ -6,6 +6,7 @@ import { closeAllDatabases } from '../lib/eventLog.ts';
 import { startControlServer, type ControlServer } from '../lib/controlServer.ts';
 import type { TerminalBroker } from '../lib/terminalBroker.ts';
 import type { TerminalViewer } from '../lib/terminalHost.ts';
+import { SOCKET_PATH_MAX_BYTES, tmuxSocketPathBytes } from '../vitest.tmuxTmpdir.mjs';
 
 const hasTmux = spawnSync('tmux', ['-V']).status === 0;
 const repoRoot = join(import.meta.dirname, '..');
@@ -169,4 +170,10 @@ describe.skipIf(!hasTmux)('orc terminal --view-first (a cockpit agent tab)', () 
     await waitFor(() => screen().includes('EXIT=10'));
     expect(input).toHaveBeenCalledTimes(1);
   }, 30_000);
+});
+
+describe.skipIf(!hasTmux)('orc terminal test server', () => {
+  it('keeps its tmux socket paths under the 104-byte limit', () => {
+    for (const name of [socket]) expect(tmuxSocketPathBytes(name), name).toBeLessThanOrEqual(SOCKET_PATH_MAX_BYTES);
+  });
 });
