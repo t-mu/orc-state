@@ -102,7 +102,7 @@ export function sidebarKeyName(key: SidebarKey): string {
  * footer's first segment, kept short (the footer cuts it last).
  */
 export function modeNotice(context: DispatchContext): string {
-  if (context.sidebar) return 'Tab: card · Enter: open · Space: +/- · Esc: pane';
+  if (context.sidebar) return 'Tab: card · Enter: open/expand · Esc: pane';
   if (context.explorer) return context.explorer === 'live' ? '[tasks] Ctrl-] or ×: close' : '[tasks] q/Esc: close';
   if (!context.agentTab) return '[master] keys go to the master';
   return context.mode === 'view'

@@ -1376,7 +1376,8 @@ export function runApp(options: AppOptions): App {
       if (!step) return;
       runSidebar(step);
       // What was clicked is shown and takes the keys, as after a tab click (and a refused open too); the sidebar cursor stays on its row.
-      // A click on a collapse marker only expands or collapses, and one on KILL only asks: a focused sidebar's keys follow the cursor to the agents box.
+      // A click on an agent's row only expands or collapses it (only OPEN opens its tab), and one on KILL only asks: a focused sidebar's keys
+      // follow the cursor to the agents box.
       if (step.command && step.command.type !== 'killAgent') setFocus('slot');
       else if (focus !== 'slot') setFocus(step.nav.box);
     },

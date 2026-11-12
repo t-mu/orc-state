@@ -358,9 +358,14 @@ describe('sidebar navigation (keys move in the projects, project and agents boxe
     expect(navigateSidebar(none, nav, 'open').command).toBeNull();
   });
 
-  it('opens an agent with Enter and returns to the pane with Esc', () => {
+  it('expands and collapses an agent with Enter, never opening its tab, and returns to the pane with Esc', () => {
     const nav = navigateSidebar(view(INITIAL_SIDEBAR_NAV), INITIAL_SIDEBAR_NAV, 'down').nav;
-    expect(navigateSidebar(view(nav), nav, 'open').command).toEqual({ type: 'openAgent', projectId: 'p1', agentId: 'a2' });
+    const expanded = navigateSidebar(view(nav), nav, 'open');
+    expect(expanded.command).toBeNull();
+    expect([...expanded.nav.expanded]).toEqual(['p1/a2']);
+    const collapsed = navigateSidebar(view(expanded.nav), expanded.nav, 'open');
+    expect(collapsed.command).toBeNull();
+    expect(collapsed.nav.expanded.size).toBe(0);
     expect(navigateSidebar(view(nav), nav, 'back')).toEqual({ nav, command: { type: 'focusSlot' } });
   });
 
@@ -400,7 +405,8 @@ describe('sidebar navigation (keys move in the projects, project and agents boxe
     expect(navigateSidebar(view(nav), nav, 'kill')).toEqual({ nav, command: null });
     expect(navigateSidebar(view(nav), nav, 'switchBox').nav.onButton).toBeUndefined();
     const up = navigateSidebar(view(nav), nav, 'up').nav;
-    expect(navigateSidebar(view(up), up, 'open').command).toEqual({ type: 'openAgent', projectId: 'p1', agentId: 'a3' });
+    expect(up).toMatchObject({ agentKey: 'p1/a3' });
+    expect(up.onButton).toBeUndefined();
   });
 
   it('draws the cursor bar on the button the cursor is on, not on the item before it', () => {
@@ -487,13 +493,14 @@ describe('sidebarCardTarget and sidebarCardClick', () => {
     expect(sidebarCardTarget(cut, 5, rowOfLine(cut, 'projects', (line) => line.kind === 'more'))).toBeNull();
   });
 
-  it('opens what a click hits; the cursor box follows', () => {
+  it('opens the project a click hits and expands the agent; the cursor box follows', () => {
     expect(sidebarCardClick(layout, INITIAL_SIDEBAR_NAV, 5, rowOf('coordinator'))).toEqual({
       nav: { ...INITIAL_SIDEBAR_NAV, box: 'projects', projectKey: 'p1', agentKey: null }, command: { type: 'openProject', projectId: 'p1' },
     });
     expect(sidebarCardClick(layout, INITIAL_SIDEBAR_NAV, 5, rowOf('o2 '))?.command).toEqual({ type: 'openProject', projectId: 'o2' });
+    // A click on an agent's row expands it (only its OPEN opens its tab).
     expect(sidebarCardClick(layout, INITIAL_SIDEBAR_NAV, 8, rowOf('a2 '))).toEqual({
-      nav: { ...INITIAL_SIDEBAR_NAV, box: 'agents', projectKey: null, agentKey: 'p1/a2' }, command: { type: 'openAgent', projectId: 'p1', agentId: 'a2' },
+      nav: { ...INITIAL_SIDEBAR_NAV, box: 'agents', projectKey: null, agentKey: 'p1/a2', expanded: new Set(['p1/a2']) }, command: null,
     });
     expect(sidebarCardClick(layout, INITIAL_SIDEBAR_NAV, 5, 0)).toBeNull();
   });
@@ -687,6 +694,8 @@ describe('expanded agents', () => {
     let nav = at('p1/a2', []);
     nav = navigateSidebar(view(nav), nav, 'toggle').nav;
     expect([...nav.expanded]).toEqual(['p1/a2']);
+    // Down from an expanded agent goes to its buttons first, then to the next agent.
+    nav = navigateSidebar(view(nav), nav, 'down').nav;
     nav = navigateSidebar(view(nav), nav, 'down').nav;
     nav = navigateSidebar(view(nav), nav, 'toggle').nav;
     expect([...nav.expanded].sort()).toEqual(['p1/a2', 'p1/a3']);
@@ -843,12 +852,13 @@ describe('expanded agents', () => {
     const { layout, lines } = render(sidebar, { nav, rows: 30 });
     const y = lines.findIndex((line) => line.includes('[ OPEN ]'));
     expect([2, 3, 10, 11, 12, 19, 20].map((x) => sidebarCardTarget(layout, x, y)?.button)).toEqual([undefined, 'open', 'open', undefined, 'kill', 'kill', undefined]);
-    expect(sidebarCardClick(layout, nav, 5, y)).toEqual({ nav: { ...nav, agentKey: 'p1/a2' }, command: { type: 'openAgent', projectId: 'p1', agentId: 'a2' } });
+    // The cursor goes to the button pressed.
+    expect(sidebarCardClick(layout, nav, 5, y)).toEqual({ nav: { ...nav, agentKey: 'p1/a2', agentButton: 'open' }, command: { type: 'openAgent', projectId: 'p1', agentId: 'a2' } });
     expect(sidebarCardClick(layout, nav, 14, y)).toEqual({
-      nav: { ...nav, agentKey: 'p1/a2' }, command: { type: 'killAgent', projectId: 'p1', agentId: 'a2', kind: 'worker', taskRef: 'cockpit-style/foo' },
+      nav: { ...nav, agentKey: 'p1/a2', agentButton: 'kill' }, command: { type: 'killAgent', projectId: 'p1', agentId: 'a2', kind: 'worker', taskRef: 'cockpit-style/foo' },
     });
-    // Off the buttons the row opens the agent, as the rest of the block does.
-    expect(sidebarCardClick(layout, nav, 25, y)?.command).toEqual({ type: 'openAgent', projectId: 'p1', agentId: 'a2' });
+    // Off the buttons the row only moves the cursor to the agent, as the rest of the block does.
+    expect(sidebarCardClick(layout, nav, 25, y)).toEqual({ nav: { ...nav, agentKey: 'p1/a2' }, command: null });
     const scoutRow = lines.findIndex((line, index) => index > y && line.includes('[ KILL ]'));
     expect(sidebarCardClick(layout, nav, 14, scoutRow)?.command).toEqual({ type: 'killAgent', projectId: 'p1', agentId: 's1', kind: 'scout', taskRef: null });
   });
@@ -902,7 +912,7 @@ describe('expanded agents', () => {
     expect(rowsOf(sidebarCardsLayout(details(), 12, at('p1/a2', []), COLS))).toEqual([4, 7]);
   });
 
-  it('toggles on a click on the marker, also on a block\'s top row; a click elsewhere opens the agent', () => {
+  it('toggles on a click anywhere on an agent\'s row or a block\'s top row; a click elsewhere in the block only moves the cursor to it', () => {
     const nav = at('p1/a1', ['p1/a3']);
     const { layout, lines } = render(details(0), { nav, rows: 30 });
     const collapsed = lines.findIndex((line) => line.includes('[+] a2'));
@@ -911,8 +921,13 @@ describe('expanded agents', () => {
     expect([2, 3, 4, 5, 6].map((x) => sidebarCardTarget(layout, x, block)?.onMarker)).toEqual([false, true, true, true, false]);
     expect(sidebarCardClick(layout, nav, 3, block)).toEqual({ nav: { ...nav, agentKey: 'p1/a3', expanded: new Set() }, command: null });
     expect(sidebarCardClick(layout, nav, 2, collapsed)).toEqual({ nav: { ...nav, agentKey: 'p1/a2', expanded: new Set(['p1/a3', 'p1/a2']) }, command: null });
-    for (const y of [block, block + 1, block + 3, block + 5]) {
-      expect(sidebarCardClick(layout, nav, 10, y)?.command, `row ${y}`).toEqual({ type: 'openAgent', projectId: 'p1', agentId: 'a3' });
+    expect(sidebarCardClick(layout, nav, 10, block)).toEqual({ nav: { ...nav, agentKey: 'p1/a3', expanded: new Set() }, command: null });
+    expect(sidebarCardClick(layout, nav, 20, collapsed)).toEqual({ nav: { ...nav, agentKey: 'p1/a2', expanded: new Set(['p1/a3', 'p1/a2']) }, command: null });
+    // An attention agent's question row is part of its row.
+    const question = lines.findIndex((line) => line.includes('? may I'));
+    expect(sidebarCardClick(layout, nav, 10, question)).toEqual({ nav: { ...nav, agentKey: 'p1/a1', expanded: new Set(['p1/a3', 'p1/a1']) }, command: null });
+    for (const y of [block + 1, block + 3, block + 5]) {
+      expect(sidebarCardClick(layout, nav, 10, y), `row ${y}`).toEqual({ nav: { ...nav, agentKey: 'p1/a3' }, command: null });
     }
   });
 
@@ -945,6 +960,96 @@ describe('expanded agents', () => {
     const top = lines.findIndex((line) => line.includes('[-] a2'));
     expect(frame.cells[top * COLS + 3].style.bg).toEqual(styleOf(AMBER, 'row.cursor').bg);
     expect(frame.cells[(top + 1) * COLS + 3].style.bg).not.toEqual(styleOf(AMBER, 'row.cursor').bg);
+  });
+
+  describe('the buttons by keyboard', () => {
+    type Key = Parameters<typeof navigateSidebar>[2];
+    const step = (nav: SidebarNav, key: Key) => navigateSidebar(sidebarCursor(details(0), nav), nav, key);
+    const keys = (nav: SidebarNav, ...sequence: Key[]): SidebarNav => sequence.reduce((current, key) => step(current, key).nav, nav);
+
+    it('goes down from an expanded agent\'s row onto OPEN, → and ← between OPEN and KILL, up back to its row, down on to the next agent', () => {
+      const row = at('p1/a2', ['p1/a2']);
+      const open = keys(row, 'down');
+      expect(open).toMatchObject({ agentKey: 'p1/a2', agentButton: 'open' });
+      expect(keys(open, 'expand')).toMatchObject({ agentKey: 'p1/a2', agentButton: 'kill' });
+      expect(keys(open, 'expand', 'expand').agentButton).toBe('kill');
+      expect(keys(open, 'expand', 'collapse').agentButton).toBe('open');
+      // ← on OPEN stays there: on the buttons it never collapses the agent.
+      expect(keys(open, 'collapse')).toMatchObject({ agentButton: 'open', expanded: new Set(['p1/a2']) });
+      expect(keys(open, 'up')).toEqual(row);
+      expect(keys(open, 'down')).toEqual(at('p1/a3', ['p1/a2']));
+      expect(keys(open, 'expand', 'down').agentButton).toBeUndefined();
+      // A collapsed agent's row goes straight to the next agent.
+      expect(keys(at('p1/a1', ['p1/a2']), 'down')).toEqual(at('p1/a2', ['p1/a2']));
+    });
+
+    it('lands on an expanded agent\'s buttons by ↑ from the next agent and from [ + NEW AGENT ]', () => {
+      expect(keys(at('p1/a3', ['p1/a2']), 'up')).toMatchObject({ agentKey: 'p1/a2', agentButton: 'open' });
+      expect(keys(at('p1/a2', ['p1/a1']), 'up')).toMatchObject({ agentKey: 'p1/a1', agentButton: 'open' });
+      expect(keys(at('p1/a3', []), 'up').agentButton).toBeUndefined();
+      const last = keys(at('p1/a4', ['p1/a4']), 'down', 'down');
+      expect(last).toMatchObject({ agentKey: 'p1/a4', onButton: true });
+      expect(last.agentButton).toBeUndefined();
+      expect(keys(last, 'up')).toMatchObject({ agentKey: 'p1/a4', agentButton: 'open' });
+      expect(keys(last, 'up').onButton).toBeUndefined();
+    });
+
+    it('presses the focused button with Enter: OPEN opens the agent\'s tab, KILL asks to kill it; x kills from the buttons too', () => {
+      const open = keys(at('p1/a2', ['p1/a2']), 'down');
+      expect(step(open, 'open')).toEqual({ nav: open, command: { type: 'openAgent', projectId: 'p1', agentId: 'a2' } });
+      const kill = keys(open, 'expand');
+      const killCommand = { type: 'killAgent', projectId: 'p1', agentId: 'a2', kind: 'worker', taskRef: 'cockpit-style/foo' };
+      expect(step(kill, 'open')).toEqual({ nav: kill, command: killCommand });
+      expect(step(open, 'kill')).toEqual({ nav: open, command: killCommand });
+      expect(step(at('p1/a2', ['p1/a2']), 'kill').command).toEqual(killCommand);
+    });
+
+    it('clears the button when the agent collapses (Space, Enter on its row, a click) and ignores a stale one on a collapsed agent', () => {
+      const open = keys(at('p1/a2', ['p1/a2']), 'down');
+      expect(keys(open, 'toggle')).toEqual(at('p1/a2', []));
+      expect(keys(open, 'up', 'open')).toEqual(at('p1/a2', []));
+      expect(keys(open, 'up', 'collapse')).toEqual(at('p1/a2', []));
+      const { layout, lines } = render(details(0), { nav: open, rows: 30 });
+      expect(layout.agentButton).toBe('open');
+      const top = lines.findIndex((line) => line.includes('[-] a2'));
+      expect(sidebarCardClick(layout, open, 3, top)?.nav).toEqual(at('p1/a2', []));
+      // A button left on a collapsed agent is no button: the keys act on its row.
+      const stale: SidebarNav = { ...at('p1/a2', []), agentButton: 'kill' };
+      expect(sidebarCardsLayout(details(0), 30, stale, COLS).agentButton).toBeNull();
+      expect(step(stale, 'open').command).toBeNull();
+      expect(step(stale, 'down').nav).toEqual(at('p1/a3', []));
+    });
+
+    it('marks the focused button with ▸ and bold, the cursor bar off the block\'s top row, only while the sidebar has the keys', () => {
+      for (const theme of [AMBER, MONO]) {
+        const open = keys(at('p1/a2', ['p1/a2']), 'down');
+        const { frame, lines } = render(details(0), { nav: open, focus: 'agents', theme });
+        const y = lines.findIndex((line) => line.includes('[ OPEN ]'));
+        expect(lines[y].slice(2, 20)).toBe('▸[ OPEN ] [ KILL ]');
+        expect(frame.cells[y * COLS + 2].style).toEqual(styleOf(theme, 'text.accent'));
+        expect(frame.cells[y * COLS + 3].style).toEqual({ ...styleOf(theme, 'tab.active'), bold: true });
+        expect(frame.cells[y * COLS + 12].style).toEqual(styleOf(theme, 'button.danger'));
+        const top = lines.findIndex((line) => line.includes('[-] a2'));
+        const unfocused = render(details(0), { nav: open, theme });
+        // Inside the card's borders (the focused card's own are in chrome.borderFocus).
+        expect(frame.cells.slice(top * COLS + 1, (top + 1) * COLS - 1).map((cell) => cell.style))
+          .toEqual(unfocused.frame.cells.slice(top * COLS + 1, (top + 1) * COLS - 1).map((cell) => cell.style));
+        const kill = render(details(0), { nav: keys(open, 'expand'), focus: 'agents', theme });
+        expect(kill.lines[y].slice(2, 21)).toBe(' [ OPEN ]▸[ KILL ] ');
+        expect(kill.frame.cells[y * COLS + 12].style).toEqual({ ...styleOf(theme, 'button.danger'), bold: true });
+        // Without the keys no marker, as no cursor bar.
+        expect(unfocused.lines[y].slice(2, 20)).toBe(' [ OPEN ] [ KILL ]');
+      }
+    });
+
+    it('keeps the buttons row in view when the block is taller than the Agents window', () => {
+      const nav = keys(at('p1/a1', ['p1/a1']), 'down');
+      for (const rows of [8, 9, 10]) {
+        const layout = sidebarCardsLayout(details(), rows, nav, COLS);
+        const shown = card(layout, 'agents')!.lines.slice(0, card(layout, 'agents')!.rows - 2);
+        expect(shown.some((line) => line.kind === 'block' && line.index === 0 && line.part === 'buttons'), `${rows}`).toBe(true);
+      }
+    });
   });
 });
 
@@ -1001,18 +1106,20 @@ describe('local agent sessions (the cockpit\'s own, not the coordinator\'s)', ()
     }
   });
 
-  it('moves the cursor into the sessions; Enter opens a session\'s tab, Space expands it, the kill key asks to close it', () => {
+  it('moves the cursor into the sessions; Enter or Space expands a session, its OPEN opens its tab, the kill key asks to close it', () => {
     const sidebar = model(0, 1);
     const step = (nav: SidebarNav, key: Parameters<typeof navigateSidebar>[2]) => navigateSidebar(sidebarCursor(sidebar, nav, LOCALS), nav, key);
     expect(step(navAt('p1/a1'), 'down').nav.agentKey).toBe(K1);
     expect(step(navAt(K1), 'down').nav.agentKey).toBe(K2);
     expect(step(navAt(K2), 'down').nav.onButton).toBe(true);
-    expect(step(navAt(K2), 'open').command).toEqual({ type: 'openAgent', projectId: 'p1', agentId: 'agent:2' });
+    expect(step(navAt(K2), 'open').command).toBeNull();
+    expect([...step(navAt(K2), 'open').nav.expanded]).toEqual([K2]);
+    expect(step({ ...navAt(K2, [K2]), agentButton: 'open' }, 'open').command).toEqual({ type: 'openAgent', projectId: 'p1', agentId: 'agent:2' });
     expect([...step(navAt(K1), 'toggle').nav.expanded]).toEqual([K1]);
     expect(step(navAt(K1), 'kill').command).toEqual({ type: 'killAgent', projectId: 'p1', agentId: 'agent:1', kind: 'local', taskRef: null });
     // With no coordinator agents the cursor starts on the first session, not the button.
     const none = navigateSidebar(sidebarCursor(model(0, 0), INITIAL_SIDEBAR_NAV, [fresh]), INITIAL_SIDEBAR_NAV, 'open');
-    expect(none.command).toEqual({ type: 'openAgent', projectId: 'p1', agentId: 'agent:1' });
+    expect(none).toEqual({ nav: { ...INITIAL_SIDEBAR_NAV, agentKey: K1, expanded: new Set([K1]) }, command: null });
   });
 
   it('expands into its block: provider · default, type or agent, the note (wrapped), the buttons, framed in status.local', () => {
@@ -1046,12 +1153,12 @@ describe('local agent sessions (the cockpit\'s own, not the coordinator\'s)', ()
     expect(ended.frame.cells[endedTop * COLS + 1].style).toEqual(styleOf(AMBER, 'status.idle'));
   });
 
-  it('hits a session\'s rows: the marker toggles it, the row opens its tab, OPEN opens it, KILL asks to close it', () => {
+  it('hits a session\'s rows: the marker and the row toggle it, OPEN opens its tab, KILL asks to close it', () => {
     const nav = navAt('p1/a1', [K2]);
     const { layout, lines } = render(model(0, 1), { locals: LOCALS, nav, rows: 40 });
     const row = lines.findIndex((line) => line.includes('[+] ◇ claude 1'));
     expect(sidebarCardClick(layout, nav, 3, row)).toEqual({ nav: { ...nav, agentKey: K1, expanded: new Set([K2, K1]) }, command: null });
-    expect(sidebarCardClick(layout, nav, 12, row)).toEqual({ nav: { ...nav, agentKey: K1 }, command: { type: 'openAgent', projectId: 'p1', agentId: 'agent:1' } });
+    expect(sidebarCardClick(layout, nav, 12, row)).toEqual({ nav: { ...nav, agentKey: K1, expanded: new Set([K2, K1]) }, command: null });
     const top = lines.findIndex((line) => line.includes('[-] ◇ critic'));
     expect(sidebarCardClick(layout, nav, 3, top)?.nav.expanded).toEqual(new Set());
     const buttons = lines.findIndex((line, index) => index > top && line.includes('[ OPEN ]'));

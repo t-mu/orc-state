@@ -986,17 +986,26 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     expect(text(screen, 23)).toContain('[master] keys go to the master');
   });
 
-  it('opens an agent on a click on its row, shows a tab on a click and closes it on its close marker, the worker untouched', async () => {
+  it('expands an agent on a click on its row and opens it on its [ OPEN ], shows a tab on a click and closes it on its close marker, the worker untouched', async () => {
     const { terminal, clients, app } = withWorkers();
     terminal.resizeTo(120, 30); // room for all three tabs
     await waitForSlotText(terminal, '$ hello from orc-master');
+    // A click on the row expands the agent, opening nothing and leaving the keys where they were.
     terminal.type(click(8, await sidebarRow(terminal, 'w1 ')));
+    await waitForSidebar(terminal, '[-] w1 ');
+    expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: [], active: null });
+    await waitForFooter(terminal, '[master]');
+    // Only its [ OPEN ] opens it.
+    terminal.type(click(5, await sidebarRow(terminal, '[ OPEN ]')));
     expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: ['w1'], active: 'w1' });
     // The opened tab takes the keys, as after a tab click: its view mode's keys work at once.
     await waitForFooter(terminal, '[view] i: type');
     await waitForSlotText(terminal, '$ hello from orc-w1');
-    // The second row of an agent opens it too; a wide name's tab lays out by display width.
+    // The second row of an agent (its question) expands it too; its [ OPEN ] (above w1's) opens it; a wide name's tab lays out by display width.
     terminal.type(click(3, (await sidebarRow(terminal, WIDE_AGENT)) + 1));
+    await waitForSidebar(terminal, `[-] ${WIDE_AGENT}`);
+    expect(app.tabs().projects[0].tabs).toEqual(['w1']);
+    terminal.type(click(5, await sidebarRow(terminal, '[ OPEN ]')));
     expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: ['w1', WIDE_AGENT], active: WIDE_AGENT });
     await waitForSlotText(terminal, '$ hello from orc-wide');
     await waitForTabBar(terminal, 1, `○ ${WIDE_AGENT} ! QUESTION ×`);
@@ -1040,14 +1049,20 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     expect(other.sent).toEqual([`${other.paneId} z`]);
   });
 
-  it('navigates the sidebar by keyboard: F10 focuses it, arrows move, Enter opens and gives the opened tab the keys, Tab switches box, Esc returns to the pane', async () => {
+  it('navigates the sidebar by keyboard: F10 focuses it, arrows move, Enter expands an agent, ↓ and Enter press its OPEN and give the opened tab the keys, Tab switches box, Esc returns to the pane', async () => {
     const { terminal, clients, app } = withWorkers();
     await attached(terminal);
     const master = clients[0];
     terminal.type(F10);
-    await waitForFooter(terminal, 'Tab: card · Enter: open · Space: +/- · Esc: pane');
-    // The cursor starts on the first agent (the one needing attention); down moves to w1, Enter opens it.
+    await waitForFooter(terminal, 'Tab: card · Enter: open/expand · Esc: pane');
+    // The cursor starts on the first agent (the one needing attention); down moves to w1, Enter expands it and opens nothing.
     terminal.type(`${ESC}[B\r`);
+    await waitForSidebar(terminal, '[-] w1 ');
+    expect(app.tabs().projects[0].tabs).toEqual([]);
+    // Down goes onto its [ OPEN ], marked; Enter presses it.
+    terminal.type(`${ESC}[B`);
+    await waitForSidebar(terminal, '▸[ OPEN ] [ KILL ]');
+    terminal.type('\r');
     expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: ['w1'], active: 'w1' });
     // The opened tab has the keys, as after a click: view mode, so i then a key reach the worker, and nothing the master.
     await waitForFooter(terminal, '[view] i: type · q/Esc: close');
@@ -1063,10 +1078,15 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     terminal.type(F10);
     await waitForFooter(terminal, '[typing] Ctrl-]: stop typing');
 
-    // Back in the sidebar (its cursor kept on w1): k moves up, Enter opens the wide-named agent.
+    // Back in the sidebar (its cursor kept on w1's OPEN): k returns to w1's row, k again to the wide-named agent; Enter expands it,
+    // j goes to its OPEN, l and h move to KILL and back, Enter opens it.
     terminal.type(F10);
     await waitForFooter(terminal, 'Enter: open');
-    terminal.type('k\r');
+    terminal.type('kk\rj');
+    await waitForSidebar(terminal, '▸[ OPEN ] [ KILL ]');
+    terminal.type('l');
+    await waitForSidebar(terminal, ' [ OPEN ]▸[ KILL ]');
+    terminal.type('h\r');
     expect(app.tabs().projects[0].active).toBe(WIDE_AGENT);
     await waitForFooter(terminal, '[view] i: type');
 
@@ -1118,7 +1138,7 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
 
     // Sidebar focused: Space expands the cursor's agent (the one needing attention sorts first) without opening it, and collapses it again.
     terminal.type(F10);
-    await waitForFooter(terminal, 'Space: +/-');
+    await waitForFooter(terminal, 'Enter: open/expand');
     terminal.type(' ');
     await waitForSidebar(terminal, `[-] ${WIDE_AGENT}`);
     await waitForSidebar(terminal, '[ OPEN ] [ KILL ]');
@@ -1129,16 +1149,20 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     terminal.type(ESC);
     await waitForFooter(terminal, '[master]');
 
-    // A click on w1's marker expands it, opens nothing and leaves the keys where they were; a click elsewhere on its top row opens it.
+    // A click on w1's marker expands it, opens nothing and leaves the keys where they were; one on its [ OPEN ] opens it.
     terminal.type(click(3, await sidebarRow(terminal, '[+] w1 ')));
     await waitForSidebar(terminal, '[-] w1 ');
     expect(app.tabs().projects[0].tabs).toEqual([]);
     await waitForFooter(terminal, '[master]');
     const top = await sidebarRow(terminal, '[-] w1 ');
-    terminal.type(click(10, top));
+    terminal.type(click(5, await sidebarRow(terminal, '[ OPEN ]')));
     expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: ['w1'], active: 'w1' });
-    // The marker of an expanded block sits one column further in, after the block's corner.
-    terminal.type(click(3, top));
+    // A click elsewhere on the block's top row collapses it, as one on its marker (one column further in, after the block's corner) does.
+    terminal.type(click(10, top));
+    await waitForSidebar(terminal, '[+] w1 ');
+    terminal.type(click(2, await sidebarRow(terminal, '[+] w1 ')));
+    await waitForSidebar(terminal, '[-] w1 ');
+    terminal.type(click(3, await sidebarRow(terminal, '[-] w1 ')));
     await waitForSidebar(terminal, '[+] w1 ');
     expect(app.tabs().projects[0].active).toBe('w1');
   });

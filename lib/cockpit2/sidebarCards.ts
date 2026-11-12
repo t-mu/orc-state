@@ -50,8 +50,10 @@
  * equally (the remainder to Agents) until the Agents content needs more.
  * The keys move in three boxes, one per card, Tab and Shift-Tab cycling them:
  * projects (by project, then its add button), project (its settings button)
- * and agents (by agent, then its new-agent button; Enter opens the agent's
- * tab, `x` asks to kill it, as its buttons do). The layout
+ * and agents (by agent, then its new-agent button; Enter or a click on an
+ * agent's row expands or collapses it, `↓` from an expanded agent's row goes
+ * to its buttons, `→`/`←` move between them and Enter presses one: only
+ * `[ OPEN ]` opens the agent's tab; `x` asks to kill it). The layout
  * (`sidebarCardsLayout`) is pure: it sizes the cards to the rows, keeps the
  * cursor's row (an expanded agent's whole block, or a button) in view and
  * lists every body row, which drawing (`drawSidebarCards`) and clicks
@@ -83,7 +85,15 @@ export interface SidebarNav {
   expanded: ReadonlySet<string>;
   /** The cursor is on the box's action button after its list (projects: add project, agents: new agent); left out on an item. */
   onButton?: true;
+  /**
+   * The cursor is on one of the cursor agent's buttons (its expanded block's `[ OPEN ]` or `[ KILL ]`) rather than its
+   * row; left out on the row, and of no effect unless the cursor agent is expanded.
+   */
+  agentButton?: AgentButton;
 }
+
+/** An expanded agent's buttons, left to right. */
+export type AgentButton = 'open' | 'kill';
 
 export const INITIAL_SIDEBAR_NAV: SidebarNav = Object.freeze({ box: 'agents', projectKey: null, agentKey: null, expanded: new Set<string>() });
 
@@ -180,20 +190,34 @@ function cursorOnButton(model: SidebarModel, nav: SidebarNav, agentCount: number
   return false;
 }
 
-/** `nav` with the cursor on an item rather than its box's action button. */
+/** `nav` with the cursor on an item's row rather than its box's action button or an agent's button. */
 function onItem(nav: SidebarNav): SidebarNav {
-  const { onButton: _onButton, ...rest } = nav;
+  const { onButton: _onButton, agentButton: _agentButton, ...rest } = nav;
   return rest;
+}
+
+/**
+ * The agent button the cursor is on: `nav.agentButton` while the keys' cursor
+ * is on an agent (not the card's button) and that agent is expanded, else null.
+ */
+function cursorAgentButton(nav: SidebarNav, keys: readonly string[], agentIndex: number, onButton: boolean): AgentButton | null {
+  if (nav.box !== 'agents' || onButton || !nav.agentButton) return null;
+  const key = keys[agentIndex];
+  return key !== undefined && nav.expanded.has(key) ? nav.agentButton : null;
 }
 
 /**
  * A navigation key: up and down move the cursor in the focused box, down past
  * the last item onto the box's action button (stopping at either end; the
  * project box holds only its settings button), switchBox and prevBox cycle the
- * projects, project and agents boxes, open opens the project, the settings or
- * the agent under the cursor or presses the button under it, toggle expands or
- * collapses the agent under the cursor and kill asks to kill it (both nothing
- * in the other boxes or on a button), back returns to the pane.
+ * projects, project and agents boxes, open opens the project or the settings
+ * under the cursor, expands or collapses the agent under it, or presses the
+ * button under it, toggle expands or collapses the agent under the cursor and
+ * kill asks to kill it (both nothing in the other boxes or on a button), back
+ * returns to the pane. An expanded agent's buttons are a row of the cursor's
+ * own: down from its row lands on `[ OPEN ]`, expand and collapse move between
+ * `[ OPEN ]` and `[ KILL ]` there, up returns to its row, down goes on to the
+ * next agent (or the card's button), and up from below lands on it.
  */
 export function navigateSidebar(view: SidebarCursor, nav: SidebarNav, key: SidebarKey): SidebarStep {
   const { model } = view;
@@ -203,6 +227,9 @@ export function navigateSidebar(view: SidebarCursor, nav: SidebarNav, key: Sideb
   const current = projects ? view.projectIndex : view.agentIndex;
   const onButton = cursorOnButton(model, nav, keys.length);
   const at = (index: number): SidebarNav => onItem(projects ? { ...nav, projectKey: model.projects[index].project_id } : { ...nav, agentKey: keys[index] });
+  const agentButton = cursorAgentButton(nav, keys, current, onButton);
+  // An agent reached from below lands on its buttons when it is expanded.
+  const fromBelow = (index: number): SidebarNav => (!projects && nav.expanded.has(keys[index]) ? { ...at(index), agentButton: 'open' } : at(index));
   switch (key) {
     case 'back': return { nav, command: { type: 'focusSlot' } };
     case 'switchBox':
@@ -213,8 +240,14 @@ export function navigateSidebar(view: SidebarCursor, nav: SidebarNav, key: Sideb
     case 'up':
     case 'down': {
       if (nav.box === 'project' || length === 0) return { nav, command: null };
-      if (key === 'up') return { nav: at(onButton ? length - 1 : Math.max(0, current - 1)), command: null };
+      if (key === 'up') {
+        if (onButton) return { nav: fromBelow(length - 1), command: null };
+        if (agentButton) return { nav: at(current), command: null };
+        return { nav: current > 0 ? fromBelow(current - 1) : at(0), command: null };
+      }
       if (onButton) return { nav, command: null };
+      // An expanded agent's row leads to its buttons, the first one focused.
+      if (!projects && !agentButton && nav.expanded.has(keys[current])) return { nav: { ...at(current), agentButton: 'open' }, command: null };
       if (current < length - 1) return { nav: at(current + 1), command: null };
       // Past the last item the cursor lands on the button (the agents box has one only with an active project).
       return { nav: projects || model.activeProjectId !== null ? { ...at(current), onButton: true } : nav, command: null };
@@ -223,7 +256,11 @@ export function navigateSidebar(view: SidebarCursor, nav: SidebarNav, key: Sideb
       if (nav.box === 'project') return openSettingsStep(nav, model);
       if (onButton) return buttonStep(nav, model, nav.box);
       if (length === 0) return { nav, command: null };
-      return projects ? openProjectStep(nav, model, current) : openAgentStep(nav, view, current);
+      if (projects) return openProjectStep(nav, model, current);
+      if (agentButton === 'open') return openAgentStep(nav, view, current);
+      if (agentButton === 'kill') return killAgentStep(nav, view, current, 'kill');
+      // Enter on an agent's row expands or collapses it; only its `[ OPEN ]` opens its tab.
+      return { nav: toggleAgent(nav, keys[current]), command: null };
     }
     case 'toggle': {
       if (nav.box !== 'agents' || length === 0 || onButton) return { nav, command: null };
@@ -233,13 +270,15 @@ export function navigateSidebar(view: SidebarCursor, nav: SidebarNav, key: Sideb
     case 'collapse': {
       // → expands the cursor agent, ← collapses it; either is a no-op when it already is.
       if (nav.box !== 'agents' || length === 0 || onButton) return { nav, command: null };
+      // On the buttons → and ← move between them.
+      if (agentButton) return { nav: { ...nav, agentButton: key === 'expand' ? 'kill' : 'open' }, command: null };
       const expanded = nav.expanded.has(keys[current]);
       if (expanded === (key === 'expand')) return { nav, command: null };
       return { nav: toggleAgent(nav, keys[current]), command: null };
     }
     case 'kill': {
       if (nav.box !== 'agents' || length === 0 || onButton) return { nav, command: null };
-      return killAgentStep(nav, view, current);
+      return killAgentStep(nav, view, current, agentButton ?? undefined);
     }
   }
 }
@@ -284,20 +323,29 @@ function openSettingsStep(nav: SidebarNav, model: SidebarModel): SidebarStep {
   return { nav: onItem({ ...nav, box: 'project' }), command: model.activeProjectId ? { type: 'openSettings', projectId: model.activeProjectId } : null };
 }
 
-/** Opens the agent at `index`: a coordinator agent's tab, or a local session's own tab (by its tab id). */
+/** `nav` with the cursor on the agent `key`: its row, or its `button` (the agent expanded). */
+function onAgent(nav: SidebarNav, key: string, button?: AgentButton): SidebarNav {
+  const next = onItem({ ...nav, box: 'agents', agentKey: key });
+  return button && nav.expanded.has(key) ? { ...next, agentButton: button } : next;
+}
+
+/** The agent's `[ OPEN ]`: opens the agent at `index`, a coordinator agent's tab or a local session's own (by its tab id); the cursor goes to the button. */
 function openAgentStep(nav: SidebarNav, view: Pick<SidebarCursor, 'model' | 'locals'>, index: number): SidebarStep {
   const { model } = view;
   const entry = agentEntry(view, index);
-  const next: SidebarNav = onItem({ ...nav, box: 'agents', agentKey: agentKeys(model, view.locals)[index] });
+  const next = onAgent(nav, agentKeys(model, view.locals)[index], 'open');
   const agentId = entry.local ? entry.session.tabId : entry.agent.agent_id;
   return { nav: next, command: model.activeProjectId ? { type: 'openAgent', projectId: model.activeProjectId, agentId } : null };
 }
 
-/** Asks to kill the agent at `index`: a scout is removed, a worker's task reset, a local session's tab closed (the cursor goes to it). */
-function killAgentStep(nav: SidebarNav, view: Pick<SidebarCursor, 'model' | 'locals'>, index: number): SidebarStep {
+/**
+ * Asks to kill the agent at `index`: a scout is removed, a worker's task reset, a local session's tab closed (the
+ * cursor goes to it, on `button` when given: the button it was on or pressed).
+ */
+function killAgentStep(nav: SidebarNav, view: Pick<SidebarCursor, 'model' | 'locals'>, index: number, button?: AgentButton): SidebarStep {
   const { model } = view;
   const entry = agentEntry(view, index);
-  const next: SidebarNav = onItem({ ...nav, box: 'agents', agentKey: agentKeys(model, view.locals)[index] });
+  const next = onAgent(nav, agentKeys(model, view.locals)[index], button);
   if (!model.activeProjectId) return { nav: next, command: null };
   if (entry.local) {
     return { nav: next, command: { type: 'killAgent', projectId: model.activeProjectId, agentId: entry.session.tabId, kind: 'local', taskRef: null } };
@@ -347,6 +395,8 @@ export interface SidebarCardsLayout extends SidebarCursor {
   cursorCard: SidebarCard;
   /** Whether the cursor is on its card's action button (the Projects or Agents card's; the Project card's cursor is always its button). */
   onButton: boolean;
+  /** The cursor agent's button the cursor is on (its block's buttons row), or null on its row. */
+  agentButton: AgentButton | null;
   /** Top to bottom; Projects is left out when there is no row for it (and the cursor is not in it). */
   cards: CardLayout[];
 }
@@ -480,9 +530,10 @@ function withButton(list: (rows: number) => CardLine[], button: CardLine | null,
  * The Agents body in `body` rows from each agent's rows (`blocks`): every
  * agent when they fit, else a window that starts as high as the cursor's
  * agent allows (its whole block in view when it fits) and a `+N more` line for
- * the agents left out.
+ * the agents left out. With the cursor on the agent's buttons (`onButtons`) a
+ * block taller than the window shows its rows down to its buttons row.
  */
-function agentLines(blocks: CardLine[][], body: number, cursor: number): CardLine[] {
+function agentLines(blocks: CardLine[][], body: number, cursor: number, onButtons = false): CardLine[] {
   if (body <= 0) return [];
   if (blocks.length === 0) return [{ kind: 'empty' }];
   const height = (index: number): number => blocks[index].length;
@@ -496,7 +547,9 @@ function agentLines(blocks: CardLine[][], body: number, cursor: number): CardLin
   let end = cursor + 1;
   while (end < blocks.length && used + height(end) <= room) used += height(end++);
   while (start > 0 && used + height(start - 1) <= room) used += height(--start);
-  const lines = blocks.slice(start, end).flat().slice(0, room);
+  let lines = blocks.slice(start, end).flat().slice(0, room);
+  const buttons = blocks[cursor].findIndex((line) => line.kind === 'block' && line.part === 'buttons');
+  if (onButtons && buttons >= 0 && !lines.includes(blocks[cursor][buttons])) lines = blocks[cursor].slice(Math.max(0, buttons + 1 - room), buttons + 1);
   const hidden = blocks.length - (end - start);
   if (hidden > 0 && lines.length < body) lines.push({ kind: 'more', count: hidden });
   return lines;
@@ -523,6 +576,7 @@ export function sidebarCardsLayout(model: SidebarModel, rows: number, nav: Sideb
   const cursor = sidebarCursor(model, nav, locals);
   const keys = agentKeys(model, locals);
   const onButton = cursorOnButton(model, nav, keys.length);
+  const agentButton = cursorAgentButton(nav, keys, cursor.agentIndex, onButton);
   const activeIndex = model.projects.findIndex((project) => project.active);
   // The Projects window follows the cursor while the keys are in it, else keeps the active project in view.
   const anchor = nav.box === 'projects' || activeIndex < 0 ? cursor.projectIndex : activeIndex;
@@ -545,7 +599,7 @@ export function sidebarCardsLayout(model: SidebarModel, rows: number, nav: Sideb
     + (keys.length > 1 ? 1 : 0) + buttonRows(newAgent);
 
   const body = (cardRows: number) => Math.max(0, cardRows - BORDERS);
-  const agentsLines = (agents: number) => withButton((room) => agentLines(blocks, room, cursor.agentIndex), newAgent, body(agents), onButton && nav.box === 'agents');
+  const agentsLines = (agents: number) => withButton((room) => agentLines(blocks, room, cursor.agentIndex, agentButton !== null), newAgent, body(agents), onButton && nav.box === 'agents');
   const anyExpanded = keys.some((key) => nav.expanded.has(key));
   /** Each card's rows when the cards share `space` rows. */
   const size = (space: number): { projects: number; project: number; agents: number; projectShort: boolean } => {
@@ -605,11 +659,8 @@ export function sidebarCardsLayout(model: SidebarModel, rows: number, nav: Sideb
   const projectY = projects > 0 ? projects + gap : 0;
   cards.push({ card: 'project', y: projectY, rows: project, lines: withButton((room) => fitProjectLines(infoLines, room), settings, body(project), nav.box === 'project') });
   cards.push({ card: 'agents', y: projectY + project + gap, rows: agents, lines: agentsLines(agents) });
-  return { ...cursor, cols, rows, cursorCard: nav.box, onButton, cards };
+  return { ...cursor, cols, rows, cursorCard: nav.box, onButton, agentButton, cards };
 }
-
-/** An expanded agent's buttons, left to right. */
-export type AgentButton = 'open' | 'kill';
 
 /** A card's action button, on its last body row. */
 export type CardButton = 'addProject' | 'newAgent';
@@ -620,7 +671,11 @@ export type CardButton = 'addProject' | 'newAgent';
  * button, the Projects or Agents card's button (`action`; its index -1) or an
  * expanded agent's button.
  */
-export interface SidebarCardTarget { card: SidebarCard; index: number; onMarker: boolean; settings?: true; action?: CardButton; button?: AgentButton }
+export interface SidebarCardTarget {
+  card: SidebarCard; index: number; onMarker: boolean; settings?: true; action?: CardButton; button?: AgentButton;
+  /** An expanded block's row below its top row (off its buttons): not the agent's own row. */
+  inBlock?: true;
+}
 
 /** The Project card's settings button, as drawn. */
 export const SETTINGS_BUTTON = '[ SETTINGS ]';
@@ -629,6 +684,8 @@ export const CARD_BUTTONS: Readonly<Record<CardButton, string>> = { addProject: 
 /** An expanded agent's buttons as drawn, one column apart. */
 export const AGENT_BUTTONS: ReadonlyArray<{ button: AgentButton; label: string }> = [{ button: 'open', label: '[ OPEN ]' }, { button: 'kill', label: '[ KILL ]' }];
 const AGENT_BUTTON_GAP = 1;
+/** Before the focused agent button, in the column left of it. */
+export const FOCUS_MARK = '▸';
 /** Before the active project's name on its Projects row. */
 const ACTIVE_MARK = '▸ ';
 
@@ -682,7 +739,8 @@ export function sidebarCardTarget(layout: SidebarCardsLayout, x: number, y: numb
         const hit = agentButtonSpans(BLOCK_TEXT_X, layout.cols - 2 - 4).find((span) => x >= span.x && x < span.x + span.cols);
         if (hit) return { card: 'agents', index: line.index, onMarker: false, button: hit.button };
       }
-      return { card: 'agents', index: line.index, onMarker: line.part === 'top' && x >= BLOCK_MARKER_X && x < BLOCK_MARKER_X + MARKER_COLS };
+      if (line.part !== 'top') return { card: 'agents', index: line.index, onMarker: false, inBlock: true };
+      return { card: 'agents', index: line.index, onMarker: x >= BLOCK_MARKER_X && x < BLOCK_MARKER_X + MARKER_COLS };
     }
     default: return null;
   }
@@ -690,10 +748,13 @@ export function sidebarCardTarget(layout: SidebarCardsLayout, x: number, y: numb
 
 /**
  * A click at (x, y) in the sidebar: the row's box gets the cursor and its
- * project or agent opens, on the settings button the active project's settings
- * open, on the add-project or new-agent button the app is asked for it (the
- * cursor goes to the button), on an expanded agent's `[ KILL ]` the app is asked to kill it, or, on
- * an agent's collapse marker, the agent expands or collapses (no command).
+ * project opens, on the settings button the active project's settings open, on
+ * the add-project or new-agent button the app is asked for it (the cursor goes
+ * to the button), on an expanded agent's `[ OPEN ]` its tab opens and on its
+ * `[ KILL ]` the app is asked to kill it (the cursor goes to the button), on an
+ * agent's row (a collapsed agent's rows, its marker included, or an expanded
+ * block's top row) the agent expands or collapses, and on the rest of an
+ * expanded block the cursor goes to the agent (neither with a command).
  * Null off the rows.
  */
 export function sidebarCardClick(layout: SidebarCardsLayout, nav: SidebarNav, x: number, y: number): SidebarStep | null {
@@ -701,9 +762,11 @@ export function sidebarCardClick(layout: SidebarCardsLayout, nav: SidebarNav, x:
   if (!target) return null;
   if (target.settings) return openSettingsStep(nav, layout.model);
   if (target.action) return buttonStep(nav, layout.model, target.action === 'addProject' ? 'projects' : 'agents');
-  if (target.button === 'kill') return killAgentStep(nav, layout, target.index);
-  if (target.onMarker) return { nav: toggleAgent(nav, agentKeys(layout.model, layout.locals)[target.index]), command: null };
-  return target.card === 'agents' ? openAgentStep(nav, layout, target.index) : openProjectStep(nav, layout.model, target.index);
+  if (target.card !== 'agents') return openProjectStep(nav, layout.model, target.index);
+  if (target.button === 'open') return openAgentStep(nav, layout, target.index);
+  if (target.button === 'kill') return killAgentStep(nav, layout, target.index, 'kill');
+  const key = agentKeys(layout.model, layout.locals)[target.index];
+  return { nav: target.inBlock ? onAgent(nav, key) : toggleAgent(nav, key), command: null };
 }
 
 // ── drawing ──────────────────────────────────────────────────────────────────
@@ -821,7 +884,9 @@ export function drawSidebarCards(frame: Frame, region: Region, layout: SidebarCa
       const cursor = focused && isCursorLine(layout, line);
       if (cursor) fillRect(frame, { x: inner.x, y: inner.y + offset, cols: inner.cols, rows: 1 }, { ...role('text.primary'), ...theme.roles['row.cursor'] });
       // An expanded block's border takes the padding columns: it spans the card's inner width.
-      if (line.kind === 'block') drawBlockLine(frame, inner.x, inner.y + offset, inner.cols, line, cursor);
+      // The focused agent button gets a marker (only while the sidebar has the keys, like the cursor bar).
+      const focusButton = focused && line.kind === 'block' && line.part === 'buttons' && line.index === layout.agentIndex ? layout.agentButton : null;
+      if (line.kind === 'block') drawBlockLine(frame, inner.x, inner.y + offset, inner.cols, line, cursor, focusButton);
       else drawLine(frame, inner.x + PAD, inner.y + offset, inner.cols - 2 * PAD, line, cursor);
     });
   }
@@ -938,7 +1003,7 @@ export function drawSidebarCards(frame: Frame, region: Region, layout: SidebarCa
    * default model, `type fresh session` or `agent <name>`, the note (muted)
    * and the buttons.
    */
-  function drawLocalBlockLine(frame: Frame, x: number, y: number, cols: number, line: Extract<CardLine, { kind: 'block' }>, session: LocalAgent, cursor: boolean): void {
+  function drawLocalBlockLine(frame: Frame, x: number, y: number, cols: number, line: Extract<CardLine, { kind: 'block' }>, session: LocalAgent, cursor: boolean, focusButton: AgentButton | null): void {
     const border = role(localStatusRole(session));
     if (line.part === 'bottom') {
       drawText(frame, x, y, `└${'─'.repeat(cols - 2)}┘`, border, cols);
@@ -956,9 +1021,7 @@ export function drawSidebarCards(frame: Frame, region: Region, layout: SidebarCa
     const muted = role('text.muted');
     const primary = role('text.primary');
     if (line.part === 'buttons') {
-      for (const span of agentButtonSpans(x + 2, textCols)) {
-        drawText(frame, span.x, y, span.label, role(span.button === 'kill' ? 'button.danger' : 'tab.active'), span.cols);
-      }
+      drawAgentButtons(frame, x + 2, y, textCols, focusButton, (style) => style);
       return;
     }
     const labelled = (label: string, value: Run[]): Run[] => cutRuns([[blockLabel(label), muted], ...value], textCols);
@@ -979,11 +1042,11 @@ export function drawSidebarCards(frame: Frame, region: Region, layout: SidebarCa
    * and its buttons (`[ OPEN ]` in `tab.active`, `[ KILL ]` in
    * `button.danger`), each cut by display width.
    */
-  function drawBlockLine(frame: Frame, x: number, y: number, cols: number, line: Extract<CardLine, { kind: 'block' }>, cursor: boolean): void {
+  function drawBlockLine(frame: Frame, x: number, y: number, cols: number, line: Extract<CardLine, { kind: 'block' }>, cursor: boolean, focusButton: AgentButton | null): void {
     if (cols < 4) return;
     const entry = agentEntry(layout, line.index);
     if (entry.local) {
-      drawLocalBlockLine(frame, x, y, cols, line, entry.session, cursor);
+      drawLocalBlockLine(frame, x, y, cols, line, entry.session, cursor, focusButton);
       return;
     }
     const { agent } = entry;
@@ -1006,9 +1069,7 @@ export function drawSidebarCards(frame: Frame, region: Region, layout: SidebarCa
     const muted = styled(role('text.muted'));
     const primary = styled(role('text.primary'));
     if (line.part === 'buttons') {
-      for (const span of agentButtonSpans(x + 2, textCols)) {
-        drawText(frame, span.x, y, span.label, styled(role(span.button === 'kill' ? 'button.danger' : 'tab.active')), span.cols);
-      }
+      drawAgentButtons(frame, x + 2, y, textCols, focusButton, styled);
       return;
     }
     const labelled = (label: string, value: Run[]): Run[] => cutRuns([[blockLabel(label), muted], ...value], textCols);
@@ -1019,6 +1080,20 @@ export function drawSidebarCards(frame: Frame, region: Region, layout: SidebarCa
       : line.label !== undefined ? labelled(line.label, [[line.text ?? '', primary]])
       : [[fitText(line.text ?? '', textCols), styled(role(agent.attention ? attentionRole(agent.attention) : 'text.muted'))]];
     drawRuns(frame, x + 2, y, runs, textCols);
+  }
+
+  /**
+   * An expanded block's buttons from `x`, `textCols` columns: `[ OPEN ]` in
+   * `tab.active`, `[ KILL ]` in `button.danger`, each through `styled` (a stale
+   * list's dim); the focused one (`focus`) bold, with a `▸` (`text.accent`) in
+   * the column before it, as the confirm dialog marks its focused button.
+   */
+  function drawAgentButtons(frame: Frame, x: number, y: number, textCols: number, focus: AgentButton | null, styled: (style: CellStyle) => CellStyle): void {
+    for (const span of agentButtonSpans(x, textCols)) {
+      const style = styled(role(span.button === 'kill' ? 'button.danger' : 'tab.active'));
+      if (span.button === focus) drawText(frame, span.x - 1, y, FOCUS_MARK, styled(role('text.accent')), 1);
+      drawText(frame, span.x, y, span.label, span.button === focus ? { ...style, bold: true } : style, span.cols);
+    }
   }
 
   /** An agent row's left part as runs: the marker, the name (`text.accent`), the role and elapsed time (`text.muted`). */
@@ -1061,7 +1136,10 @@ export function localStatusRole(session: LocalAgent): StatusRole {
   return session.alive ? 'status.local' : 'status.idle';
 }
 
-/** Whether `line` is the keys' cursor row (the caller checks its card is the focused one); an expanded agent's is its block's top row. */
+/**
+ * Whether `line` is the keys' cursor row (the caller checks its card is the focused one); an expanded agent's is its
+ * block's top row, none while the cursor is on its buttons (drawn with a marker instead).
+ */
 function isCursorLine(layout: SidebarCardsLayout, line: CardLine): boolean {
   switch (line.kind) {
     case 'settings': return true;
@@ -1069,7 +1147,7 @@ function isCursorLine(layout: SidebarCardsLayout, line: CardLine): boolean {
     case 'newAgent': return layout.onButton;
     case 'project': return !layout.onButton && line.index === layout.projectIndex;
     case 'agent': return !layout.onButton && line.index === layout.agentIndex;
-    case 'block': return !layout.onButton && line.part === 'top' && line.index === layout.agentIndex;
+    case 'block': return !layout.onButton && layout.agentButton === null && line.part === 'top' && line.index === layout.agentIndex;
     default: return false;
   }
 }
