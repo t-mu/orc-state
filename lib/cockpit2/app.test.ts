@@ -345,9 +345,9 @@ describe('runApp (fake tmux client)', () => {
   });
 
   it('draws its chrome in orc by default and in the theme it is given', async () => {
-    // orc and amber share the amber chrome; the focused pane's border tells them apart.
+    // orc and amber share the amber chrome; the focused pane's border tells them apart (orc's: the same amber, bold).
     const AMBER_BORDER = '38;2;255;176;0';
-    const ORC_FOCUS = '38;2;255;201;77';
+    const ORC_FOCUS = '1;38;2;255;176;0;48;2;22;22;22m┌';
     const AMBER_FOCUS = '38;2;255;194;51';
     const VIOLET = '38;2;124;58;237m';
     const orc = start();
@@ -355,6 +355,7 @@ describe('runApp (fake tmux client)', () => {
     expect(orc.terminal.writes.join('')).toContain(AMBER_BORDER);
     expect(orc.terminal.writes.join('')).toContain(ORC_FOCUS);
     expect(orc.terminal.writes.join('')).not.toContain(AMBER_FOCUS);
+    expect(orc.terminal.writes.join('')).not.toContain('38;2;255;201;77');
 
     const amber = start({ theme: BUILT_IN_THEMES.amber });
     await attached(amber.terminal);
@@ -388,6 +389,10 @@ describe('runApp (fake tmux client)', () => {
     for (let y = gutter.y; y < gutter.y + gutter.rows; y += 1) expect(bg(gutter.x, y)).toEqual(CANVAS);
     expect(text(screen, tabBar.y + tabBar.rows - 1, tabBar.x).trim()).toBe('');
     expect(bg(tabBar.x + tabBar.cols - 1, tabBar.y + tabBar.rows - 1)).toEqual(CANVAS);
+    // The tab strip above the gap row: raised, after the tabs.
+    for (let y = tabBar.y; y < tabBar.y + tabBar.rows - 1; y += 1) {
+      for (const x of [tabBar.x + tabBar.cols - 10, tabBar.x + tabBar.cols - 1]) expect(bg(x, y)).toEqual(PANEL);
+    }
     // The sidebar: card rows (a border in the first column) on the panel, border and blank body alike; any row outside the cards on the canvas.
     let cardRows = 0;
     for (let y = sidebar.y; y < sidebar.y + sidebar.rows; y += 1) {
@@ -1182,6 +1187,11 @@ class FakeExplorerHost implements ExplorerHost {
     if (this.failWith) throw this.failWith;
     return { socket: 'orc-explorer', session: `explorer-${projectId}` };
   }
+  shells: Array<{ session: string; cwd: string; size: string }> = [];
+  startShell(session: string, cwd: string, size: { cols: number; rows: number }) {
+    this.shells.push({ session, cwd, size: `${size.cols}x${size.rows}` });
+    return this.failWith ? Promise.reject(this.failWith) : Promise.resolve({ socket: 'orc-explorer', session });
+  }
   stop(target: TmuxTarget) { this.stopped.push(target); return Promise.resolve(); }
 }
 
@@ -1198,6 +1208,58 @@ function holdSends(fake: FakeClient): () => void {
 
 describe('runApp task explorer and attention jump (fake tmux clients)', () => {
   const explorerClient = (clients: FakeClient[]) => clients.find((fake) => fake.target.session.startsWith('explorer-'));
+
+  it('opens a shell tab on a click on the + tab: typing at once, closed by × (its session stopped) or by its shell ending', async () => {
+    const host = new FakeExplorerHost();
+    const { terminal, clients, app } = start({ explorer: host });
+    await attached(terminal);
+    const shellClient = (session: string) => clients.find((fake) => fake.target.session === session);
+    terminal.type(click(await columnOf(terminal, 2, '+', SIDEBAR_COLS), 2));
+    await attached(terminal, 'shell-demo-1');
+    expect(host.shells).toEqual([{ session: 'shell-demo-1', cwd: '/repo/demo', size: '43x16' }]);
+    expect(shellClient('shell-demo-1')!.target.socket).toBe('orc-explorer');
+    expect(app.tabs().projects[0].active).toBe('shell:1');
+    await waitForTabBar(terminal, 1, 'shell 1 ×');
+    expect(text(await shown(terminal), 5, 35)).toContain('[ SHELL 1 ]');
+    // It types at once: keys reach it without i, i among them.
+    const fake = shellClient('shell-demo-1')!;
+    terminal.type('ls\ri');
+    await waitFor(() => fake.sent.length === 4);
+    expect(fake.sent).toEqual([`${fake.paneId} l`, `${fake.paneId} s`, `${fake.paneId} \r`, `${fake.paneId} i`]);
+    // A second + gives shell 2.
+    terminal.type(click(await columnOf(terminal, 2, '+', SIDEBAR_COLS), 2));
+    await attached(terminal, 'shell-demo-2');
+    expect(app.tabs().projects[0].active).toBe('shell:2');
+    // Its shell ending closes its tab.
+    shellClient('shell-demo-2')!.emit('exit', 'session closed');
+    await waitFor(() => !app.tabs().projects[0].tabs.includes('shell:2'));
+    // × on shell 1 closes the tab and stops its session.
+    terminal.type(`${F12}2`);
+    await attached(terminal, 'shell-demo-1');
+    const row = text(await shown(terminal), 2);
+    terminal.type(click(row.indexOf('×', row.indexOf('shell 1')), 2));
+    await waitFor(() => !app.tabs().projects[0].tabs.includes('shell:1'));
+    expect(host.stopped).toContainEqual({ socket: 'orc-explorer', session: 'shell-demo-1' });
+    expect(clients[0].sent).toEqual([]); // nothing reached the master
+  });
+
+  it('refuses a shell that did not start and opens no tab', async () => {
+    const host = new FakeExplorerHost();
+    host.failWith = new Error('no tmux');
+    const { terminal, app } = start({ explorer: host });
+    await attached(terminal);
+    const before = app.tabs();
+    terminal.type(click(await columnOf(terminal, 2, '+', SIDEBAR_COLS), 2));
+    await waitFor(() => host.shells.length === 1);
+    await sleep(30);
+    expect(app.tabs()).toEqual(before);
+  });
+
+  it('has no + tab without an explorer host', async () => {
+    const { terminal } = start();
+    await attached(terminal);
+    expect(text(await shown(terminal), 2, SIDEBAR_COLS)).not.toContain('+');
+  });
 
   it('opens the explorer as a tab on the prefix then t, forwards its keys, and closes it on q back to the active tab', async () => {
     const host = new FakeExplorerHost();

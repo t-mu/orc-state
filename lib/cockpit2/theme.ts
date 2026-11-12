@@ -142,7 +142,6 @@ const ORC_TERMINAL: TerminalColors = {
   ],
 };
 const ORC_AMBER = rgb('#ffb000');
-const ORC_AMBER_FOCUS = rgb('#ffc94d');
 const ORC_STATUS_FG: Record<StatusRole, Color> = {
   'status.active': rgb('#8cc85f'), 'status.attention': rgb('#cf87e8'), 'status.warn': rgb('#c6c684'),
   'status.error': rgb('#ff5454'), 'status.idle': rgb('#949494'),
@@ -160,7 +159,7 @@ const orc: Theme = {
   surfaces: ORC_SURFACES,
   roles: {
     'chrome.border': { fg: ORC_AMBER },
-    'chrome.borderFocus': { fg: ORC_AMBER_FOCUS, bold: true },
+    'chrome.borderFocus': { fg: ORC_AMBER, bold: true },
     'chrome.title': { fg: ORC_AMBER, bold: true },
     'chrome.titleFocus': { fg: ORC_AMBER, bold: true, inverse: true },
     'chrome.meta': { fg: rgb('#949494') },

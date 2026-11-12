@@ -28,6 +28,20 @@ export function explorerSessionName(projectId: string): string {
   return `explorer-${projectId.replace(/[^A-Za-z0-9_-]/g, '_')}`;
 }
 
+/** A shell tab's id in a project's tabs (never an agent id: agent ids have no `:`), and its number back. */
+export const SHELL_TAB_PREFIX = 'shell:';
+export const isShellTab = (id: string | null | undefined): id is string => typeof id === 'string' && id.startsWith(SHELL_TAB_PREFIX);
+/** The next free shell tab id among `tabs`: `shell:1`, `shell:2`, ... */
+export function nextShellTab(tabs: readonly string[]): string {
+  for (let n = 1; ; n += 1) if (!tabs.includes(`${SHELL_TAB_PREFIX}${n}`)) return `${SHELL_TAB_PREFIX}${n}`;
+}
+/** What a shell tab's session runs: the user's login shell, with no ORC_* variable left in its environment. */
+export const SHELL_SCRIPT = 'for v in $(env | sed -n "s/^\\(ORC_[A-Za-z0-9_]*\\)=.*/\\1/p"); do unset "$v"; done; exec "${SHELL:-/bin/sh}" -l';
+/** A shell tab's tmux session on the private server. */
+export function shellSessionName(projectId: string, tabId: string): string {
+  return `shell-${projectId.replace(/[^A-Za-z0-9_-]/g, '_')}-${tabId.slice(SHELL_TAB_PREFIX.length).replace(/[^A-Za-z0-9_-]/g, '_')}`;
+}
+
 /**
  * The shell script the explorer's session runs: `command`, and when it fails
  * a line saying so, kept on screen until a key is pressed (a session that
@@ -42,6 +56,8 @@ export function explorerScript(command: string): string {
 export interface ExplorerHost {
   /** Starts the explorer of `projectId` in a session `cols` by `rows` (replacing a leftover one) and returns its target. */
   start(projectId: string, size: { cols: number; rows: number }): Promise<TmuxTarget>;
+  /** Starts the user's login shell in `cwd` in session `session` (a shell tab, `shellSessionName`); returns its target. */
+  startShell(session: string, cwd: string, size: { cols: number; rows: number }): Promise<TmuxTarget>;
   /** Kills an explorer's session, resolving once tmux has; errors are ignored (it may be gone already). */
   stop(target: TmuxTarget): Promise<void>;
 }
@@ -54,9 +70,9 @@ export interface TmuxExplorerHostOptions {
   command: (projectId: string) => string;
 }
 
-function runTmux(tmuxBinary: string, args: string[]): Promise<void> {
+function runTmux(tmuxBinary: string, args: string[], env?: NodeJS.ProcessEnv): Promise<void> {
   return new Promise((resolve, reject) => {
-    execFile(tmuxBinary, args, { encoding: 'utf8' }, (error, _stdout, stderr) => {
+    execFile(tmuxBinary, args, { encoding: 'utf8', ...(env ? { env } : {}) }, (error, _stdout, stderr) => {
       if (error) reject(new Error(stderr.trim() || error.message));
       else resolve();
     });
@@ -90,6 +106,20 @@ export function tmuxExplorerHost(options: TmuxExplorerHostOptions): ExplorerHost
         await tmux(['kill-session', '-t', `=${session}`]).catch(() => { /* none made */ });
         throw error;
       }
+      return { socket, session };
+    },
+    async startShell(session, cwd, size) {
+      // A shell started from the cockpit never sees orc's secrets or the cockpit's own tmux.
+      const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('ORC_') && key !== 'TMUX' && key !== 'TMUX_PANE'));
+      await runTmux(options.tmuxBinary, ['-L', socket, '-f', '/dev/null', 'kill-session', '-t', `=${session}`], env).catch(() => { /* none left */ });
+      await runTmux(options.tmuxBinary, [
+        '-L', socket, '-f', '/dev/null',
+        'new-session', '-d', '-s', session, '-x', String(Math.max(1, size.cols)), '-y', String(Math.max(1, size.rows)), '-c', cwd,
+        ...Object.entries(env).filter(([key]) => key === 'SHELL' || key === 'HOME' || key === 'PATH' || key === 'LANG' || key === 'TERM').flatMap(([key, value]) => ['-e', `${key}=${value}`]),
+        // The server's global environment (from whichever start launched it) may hold ORC_*: unset them in the shell too.
+        '/bin/sh', '-c', SHELL_SCRIPT,
+        ';', 'set-option', 'status', 'off',
+      ], env);
       return { socket, session };
     },
     stop(target) {

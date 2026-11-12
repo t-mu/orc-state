@@ -2,14 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { stringWidth } from '../cellWidth.ts';
 import type { SidebarAgent, SidebarModel, SidebarProject } from '../tui/sidebar.ts';
 import { fitText } from '../tui/sidebar.ts';
-import { CLOSE_MARKER, buildTabBarModel, layoutTabBar, tabBarClickTarget, type TabBarState } from '../tui/tabBarModel.ts';
+import { CLOSE_MARKER, TAB_GAP, buildTabBarModel, layoutTabBar, tabBarClickTarget, type TabBarState } from '../tui/tabBarModel.ts';
 import { computeLayout } from './app.ts';
 import { DEFAULT_STYLE, createFrame, type Frame } from './frame.ts';
 import { BUILT_IN_THEMES, attentionRole, badgeRole, styleOf } from './theme.ts';
 import { INITIAL_SIDEBAR_NAV, drawSidebarCards, sidebarCardsLayout, type SidebarNav } from './sidebarCards.ts';
 import {
-  EXPLORER_TAB, TYPING_MARK, VIEW_MARK, HEADER_MARK, drawFooter, drawHeader, drawTabBar, headerButtonAt, headerView,
-  tabBarView, withExplorerTab, withModeMarks, type FooterHint, type HeaderButton,
+  EXPLORER_TAB, PLUS_LABEL, TYPING_MARK, VIEW_MARK, HEADER_MARK, drawFooter, drawHeader, drawTabBar, headerButtonAt, headerView,
+  onPlusTab, tabBarView, withExplorerTab, withModeMarks, type FooterHint, type HeaderButton,
 } from './widgets.ts';
 
 /** Today's look: every cell drawn as before the theme roles. */
@@ -268,6 +268,53 @@ describe('the explorer tab', () => {
     expect(tabBarClickTarget(bar.model, bar.layout, cell.closeX!)).toEqual({ kind: 'close', tab: model.tabs.at(-1) });
     const empty = buildTabBarModel({ activeProject: null, projects: [] });
     expect(withExplorerTab(empty)).toBe(empty);
+  });
+});
+
+describe('the + tab and shell tabs', () => {
+  it('sits a gap after the last tab, only when asked for and with room', () => {
+    const model = buildTabBarModel(TABS);
+    const bar = tabBarView(model, 200, true);
+    const last = bar.layout.cells.at(-1)!;
+    expect(bar.layout.rightMarker).toBe('');
+    expect(bar.plus).toEqual({ x: last.x + last.width + TAB_GAP });
+    expect(onPlusTab(bar, bar.plus!.x)).toBe(true);
+    expect(onPlusTab(bar, bar.plus!.x + PLUS_LABEL.length - 1)).toBe(true);
+    expect(onPlusTab(bar, bar.plus!.x - 1)).toBe(false);
+    expect(onPlusTab(bar, bar.plus!.x + PLUS_LABEL.length)).toBe(false);
+    expect(tabBarView(model, 200).plus).toBeNull();
+    expect(tabBarView(model, 200, false).plus).toBeNull();
+    // No project open: the notice, no + tab.
+    expect(tabBarView(buildTabBarModel({ activeProject: null, projects: [] }), 200, true).plus).toBeNull();
+    // Too narrow for it.
+    expect(tabBarView(model, 12, true).plus).toBeNull();
+    expect(onPlusTab(tabBarView(model, 12, true), 0)).toBe(false);
+  });
+
+  it('goes after the overflow marker when the tabs do not all fit', () => {
+    const bar = tabBarView(buildTabBarModel(TABS), 30, true);
+    expect(bar.layout.rightMarker).not.toBe('');
+    const last = bar.layout.cells.at(-1)!;
+    expect(bar.plus).toEqual({ x: last.x + last.width + stringWidth(bar.layout.rightMarker) + TAB_GAP });
+    expect(bar.plus!.x + PLUS_LABEL.length).toBeLessThanOrEqual(30);
+  });
+
+  it('draws the + as an inactive tab block with its caps', () => {
+    const frame = createFrame(80, 4);
+    const bar = tabBarView(buildTabBarModel(TABS), 80, true);
+    drawTabBar(frame, { x: 0, y: 0, cols: 80, rows: 4 }, bar, { slotFocused: true, error: null, theme: BUILT_IN_THEMES.orc });
+    const x = bar.plus!.x;
+    expect(rowText(frame, 1, x, PLUS_LABEL.length)).toBe(PLUS_LABEL);
+    expect(rowText(frame, 0, x, PLUS_LABEL.length)).toBe('▄'.repeat(PLUS_LABEL.length));
+    expect(rowText(frame, 2, x, PLUS_LABEL.length)).toBe('▀'.repeat(PLUS_LABEL.length));
+    const inactive = styleOf(BUILT_IN_THEMES.orc, 'tab.inactive');
+    expect(frame.cells[1 * 80 + x + 1].style).toEqual({ ...inactive, bold: true });
+    expect(frame.cells[x].style.fg).toEqual(inactive.bg);
+  });
+
+  it('labels shell tabs shell N, with no mode mark', () => {
+    const model = withModeMarks(buildTabBarModel({ activeProject: 'p1', projects: [{ projectId: 'p1', tabs: ['w3', 'shell:2'], active: 'shell:2' }] }), () => false);
+    expect(model.tabs.map((tab) => tab.label)).toEqual(['master', `${VIEW_MARK} w3`, 'shell 2']);
   });
 });
 
