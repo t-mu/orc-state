@@ -4,8 +4,8 @@
  *
  *   ┌─ [ PROJECTS ] ─────────── 2 ─┐   Projects: every registered project, one row
  *   │ ▸ orc-state        [RUNNING] │   each, state badge and `!N` when its agents
- *   │   arek-on-trail       [IDLE] │   need a human; `▸` marks the active one;
- *   │                              │   an add-project button on its last row
+ *   │                              │   need a human; `▸` marks the active one;
+ *   │   arek-on-trail       [IDLE] │   an add-project button on its last row
  *   │ [ + ADD PROJECT ]            │
  *   └──────────────────────────────┘
  *                                      a blank row between cards (the canvas)
@@ -48,6 +48,9 @@
  * Each card's action button sits on its last body row whatever the card's
  * height; its list scrolls in the rows above it. The cards share the rows
  * equally (the remainder to Agents) until the Agents content needs more.
+ * Rows a card's list leaves blank go to air (`padCard`): a blank row between
+ * each two items, then one under the top border, then one above the button;
+ * they never count in the card heights.
  * The keys move in three boxes, one per card, Tab and Shift-Tab cycling them:
  * projects (by project, then its add button), project (its settings button)
  * and agents (by agent, then its new-agent button; Enter or a click on an
@@ -383,7 +386,7 @@ export type CardLine =
   | { kind: 'empty' }
   /** The Projects card's add button and the Agents card's new-agent button, each on its card's last body row. */
   | { kind: 'addProject' } | { kind: 'newAgent' }
-  /** A body row left blank between a card's list and its button. */
+  /** A body row left blank: a card's padding, the spacing between its items, or the rows between its list and its button. */
   | { kind: 'blank' };
 
 /** A card as laid out: its first row and rows (borders included) in the sidebar, and its body rows, in order. */
@@ -527,6 +530,46 @@ function withButton(list: (rows: number) => CardLine[], button: CardLine | null,
   return [...lines, ...Array.from({ length: body - 1 - lines.length }, (): CardLine => ({ kind: 'blank' })), button];
 }
 
+/** A card's action buttons, each on its card's last body row. */
+const BUTTON_KINDS: ReadonlySet<CardLine['kind']> = new Set(['addProject', 'newAgent', 'settings']);
+
+/** The item a list row belongs to: an agent's rows (collapsed or expanded) are one item, every other row its own. */
+function itemOf(line: CardLine, row: number): string {
+  return line.kind === 'agent' || line.kind === 'detail' || line.kind === 'block' ? `agent:${line.index}` : `row:${row}`;
+}
+
+/**
+ * A card's body (`lines`, as withButton lays it out: the list, blank rows, the button) padded and spaced in the blank
+ * rows it has spare, only when its list is `complete` (every item shown, none behind `+N more`): first a blank row
+ * between each two items (all of them or none, so a list never looks half-spaced), then one between the top border
+ * and the first row, then one between the last row and the button. The rows stay the card's: padding and spacing only
+ * take the blank rows a short list leaves, so they never make a card grow or push an item out of view.
+ */
+function padCard(lines: CardLine[], complete: boolean): CardLine[] {
+  if (!complete) return lines;
+  const last = lines.at(-1);
+  const button = last !== undefined && BUTTON_KINDS.has(last.kind) ? last : null;
+  const list = lines.filter((line) => line.kind !== 'blank' && line !== button);
+  if (list.length === 0) return lines;
+  const groups: CardLine[][] = [];
+  let key: string | null = null;
+  list.forEach((line, row) => {
+    const item = itemOf(line, row);
+    if (item !== key) groups.push([]);
+    key = item;
+    groups.at(-1)!.push(line);
+  });
+  const blank = (): CardLine => ({ kind: 'blank' });
+  let spare = lines.length - list.length - (button ? 1 : 0);
+  const spacing = groups.length - 1;
+  const spaced = spacing > 0 && spare >= spacing;
+  if (spaced) spare -= spacing;
+  const top = spare >= 1;
+  if (top) spare -= 1;
+  const body = groups.flatMap((group, index) => (spaced && index > 0 ? [blank(), ...group] : group));
+  return [...(top ? [blank()] : []), ...body, ...Array.from({ length: spare }, blank), ...(button ? [button] : [])];
+}
+
 /**
  * The Agents body in `body` rows from each agent's rows (`blocks`): every
  * agent when they fit, else a window that starts as high as the cursor's
@@ -652,14 +695,25 @@ export function sidebarCardsLayout(model: SidebarModel, rows: number, nav: Sideb
   const { projects, project, agents } = keepGaps ? gapped : flush;
   const gap = keepGaps ? CARD_GAP : 0;
 
+  // Padding and spacing only take the blank rows each card's sized body leaves: the sizing above never counts them.
+  const count = (lines: CardLine[], kind: CardLine['kind']): number => lines.filter((line) => line.kind === kind).length;
   const cards: CardLayout[] = [];
   const addProject: CardLine = { kind: 'addProject' };
   if (projects > 0) {
-    cards.push({ card: 'projects', y: 0, rows: projects, lines: withButton((room) => projectsLines(model, room, anchor), addProject, body(projects), onButton && nav.box === 'projects') });
+    const lines = withButton((room) => projectsLines(model, room, anchor), addProject, body(projects), onButton && nav.box === 'projects');
+    const complete = model.projects.length === 0 ? count(lines, 'noProjects') === 1 : count(lines, 'project') === model.projects.length;
+    cards.push({ card: 'projects', y: 0, rows: projects, lines: padCard(lines, complete) });
   }
   const projectY = projects > 0 ? projects + gap : 0;
-  cards.push({ card: 'project', y: projectY, rows: project, lines: withButton((room) => fitProjectLines(infoLines, room), settings, body(project), nav.box === 'project') });
-  cards.push({ card: 'agents', y: projectY + project + gap, rows: agents, lines: agentsLines(agents) });
+  const projectLines = withButton((room) => fitProjectLines(infoLines, room), settings, body(project), nav.box === 'project');
+  const projectComplete = infoLines.length > 0 && projectLines.filter((line) => line.kind !== 'blank' && line.kind !== 'settings').length === infoLines.length;
+  cards.push({ card: 'project', y: projectY, rows: project, lines: padCard(projectLines, projectComplete) });
+  const agentRows = agentsLines(agents);
+  const blockRows = blocks.reduce((sum, block) => sum + block.length, 0);
+  const agentsComplete = count(agentRows, 'more') === 0
+    && agentRows.filter((line) => line.kind !== 'blank' && line.kind !== 'newAgent' && line.kind !== 'empty').length === blockRows
+    && (blocks.length > 0 || count(agentRows, 'empty') === 1);
+  cards.push({ card: 'agents', y: projectY + project + gap, rows: agents, lines: padCard(agentRows, agentsComplete) });
   return { ...cursor, cols, rows, cursorCard: nav.box, onButton, agentButton, cards };
 }
 

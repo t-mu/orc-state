@@ -93,8 +93,8 @@ The sidebar is three cards (`lib/cockpit2/sidebarCards.ts`), top to bottom, with
 ```
 ┌─ [ PROJECTS ] ───────────── 2 ┐   every registered project: state badge, `!N` when
 │ ▸ orc-state         [RUNNING] │   its agents need a human; `▸` and text.accent mark
-│   arek-on-trail        [IDLE] │   the active one; the add-project button
-│                               │
+│                               │   the active one; the add-project button (a spare
+│   arek-on-trail        [IDLE] │   row spaces the projects: Padding and spacing)
 │ [ + ADD PROJECT ]             │
 └───────────────────────────────┘
                                     gap
@@ -118,6 +118,8 @@ The sidebar is three cards (`lib/cockpit2/sidebarCards.ts`), top to bottom, with
 ```
 
 Card buttons: each card's action button sits on its last body row, just above its bottom border, whatever the card's height: `[ + ADD PROJECT ]` (Projects), `[ SETTINGS ]` (Project, only with an active project) and `[ + NEW AGENT ]` (Agents, only with an active project), all in `button`. A card's list takes the rows above its button, blank rows between when it is shorter, and scrolls there (`+N more`, the cursor's row kept in view). A click on a button's columns presses it: `[ SETTINGS ]` opens the active project's settings dialog, `[ + ADD PROJECT ]` and `[ + NEW AGENT ]` open the add-project and new-agent dialogs (Dialog layer, Agent sessions).
+
+Padding and spacing: a terminal has no space between rows, so a card spends the blank rows its list leaves (never more: they are layout only) on air, in this order: one blank row between each two items (the projects, the Project card's info rows, the agents: between whole agents, an agent's question row and an expanded block staying with it), all of them or none so a list never looks half-spaced; then one between the top border and the first row; then one between the last row and the button. Short of rows they go in reverse (the bottom padding, the top padding, then the spacing) before an item goes behind `+N more`, and a list with items behind `+N more` has none. The card heights ignore them: the Agents card's need is its content and its button, so spacing never makes Agents grow at the others' expense, and Projects and the Project card never grow past their shares for it. Padding and spacing rows are blank: a click there does nothing and the cursor bar stays on the item's row. At 80x24 with two projects, three info rows and three agents (one asking a question) Projects spaces its two projects, the Project card has no spare row, and Agents has one, its top padding.
 
 Heights: the cards share the sidebar's rows (less the gaps) equally, the remainder going to Agents; Projects and the Project card never take more than their share. While the Agents content (its rows, expanded blocks and its button) does not fit its share, Agents takes rows from the others: first what their content leaves of their shares (each shrinks to its content), then Projects down to its least (a `+N more` window around its cursor, the active project while the keys are elsewhere, and its button). A card's least is its borders, one item (the cursor's) and its button, plus the `+N more` line when it has more items.
 
