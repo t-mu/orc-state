@@ -23,7 +23,7 @@ export interface NewAgentDialogState { form: FormState; definitions: AgentDefini
 /** The dialog for a project's `definitions`, its provider starting on `provider` (claude when not one of the three). */
 export function openNewAgentDialog(projectName: string, provider: string | null, definitions: AgentDefinition[]): NewAgentDialogState {
   const form: FormState = {
-    title: `new agent · ${projectName}`,
+    title: `spawn grunt · ${projectName}`,
     fields: [
       { kind: 'choice', key: 'provider', label: 'Provider', options: PROVIDERS, value: provider && PROVIDERS.includes(provider) ? provider : 'claude' },
       { kind: 'choice', key: 'variant', label: 'Variant', options: [FRESH_SESSION, CUSTOM_AGENT], value: FRESH_SESSION },

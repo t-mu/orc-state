@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { collapseMarker, drawBadge, drawBox, drawPaneBox, type BoxOptions, type PaneHeader } from './chrome.ts';
+import { badgeText, collapseMarker, drawBadge, drawBox, drawPaneBox, type BoxOptions, type PaneHeader } from './chrome.ts';
 import { cellAt, createFrame, DEFAULT_STYLE, drawText, type Frame, type Region } from './frame.ts';
 import { BUILT_IN_THEMES, STATUS_ROLES, badgeRole, styleOf, type BuiltInThemeName } from './theme.ts';
 
@@ -186,13 +186,13 @@ describe('drawBadge', () => {
 
   it('draws nothing and returns 0 when it does not fit', () => {
     const frame = createFrame(10, 2);
-    expect(drawBadge(frame, 2, 0, 'running', 'status.active', BUILT_IN_THEMES.amber)).toBe(0); // needs 9, has 8
-    expect(drawBadge(frame, 0, 0, 'running', 'status.active', BUILT_IN_THEMES.amber, 8)).toBe(0);
+    expect(drawBadge(frame, 2, 0, 'stopped', 'status.idle', BUILT_IN_THEMES.amber)).toBe(0); // needs 9, has 8
+    expect(drawBadge(frame, 0, 0, 'stopped', 'status.idle', BUILT_IN_THEMES.amber, 8)).toBe(0);
     expect(drawBadge(frame, 0, 2, 'idle', 'status.idle', BUILT_IN_THEMES.amber)).toBe(0);
     expect(drawBadge(frame, -1, 0, 'idle', 'status.idle', BUILT_IN_THEMES.amber)).toBe(0);
     expect(frameText(frame)).toEqual(['          ', '          ']);
-    expect(drawBadge(frame, 1, 1, 'running', 'status.active', BUILT_IN_THEMES.amber, 9)).toBe(9);
-    expect(rowText(frame, 1)).toBe(' [RUNNING]');
+    expect(drawBadge(frame, 1, 1, 'stopped', 'status.idle', BUILT_IN_THEMES.amber, 9)).toBe(9);
+    expect(rowText(frame, 1)).toBe(' [STOPPED]');
   });
 
   it('measures wide labels by display width', () => {
@@ -201,6 +201,15 @@ describe('drawBadge', () => {
     expect(drawBadge(frame, 0, 0, '状態', 'status.warn', BUILT_IN_THEMES.mono, 6)).toBe(6);
     expect(rowText(frame, 0)).toBe('[状態]  ');
     expectValid(frame);
+  });
+});
+
+describe('badgeText', () => {
+  it('upper-cases the label and shows the running state as ACTIVE', () => {
+    expect(badgeText('running')).toBe('[ACTIVE]');
+    expect(badgeText('coordinator running')).toBe('[COORDINATOR ACTIVE]');
+    expect(badgeText('stopped')).toBe('[STOPPED]');
+    expect(badgeText('done')).toBe('[DONE]');
   });
 });
 

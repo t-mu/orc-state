@@ -69,7 +69,7 @@ describe('formDialog (the add-project form)', () => {
     expect(layout.fieldY).toEqual([9, 10, 11]);
     const frame = createFrame(80, 24);
     drawForm(frame, layout, { ...state, error: 'Path is not a git checkout' }, DEFAULT_THEME, { type: 'default' });
-    expect(rowText(frame, 7)).toContain('[ ADD PROJECT ]');
+    expect(rowText(frame, 7)).toContain('[ NEW CAMPAIGN ]');
     expect(rowText(frame, 9)).toContain('Path        /work/app');
     expect(rowText(frame, 10)).toContain('optional: the folder name');
     expect(rowText(frame, 11)).toContain('‹ claude ›');

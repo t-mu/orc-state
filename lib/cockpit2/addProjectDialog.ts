@@ -20,7 +20,7 @@ export const PROVIDERS = ['claude', 'codex', 'gemini'];
 
 export function openAddProjectDialog(): FormState {
   return {
-    title: 'add project',
+    title: 'new campaign',
     fields: [
       { kind: 'text', key: 'path', label: 'Path', text: textField(), placeholder: '/absolute/path/to/checkout' },
       { kind: 'text', key: 'name', label: 'Name', text: textField(), placeholder: 'optional: the folder name' },

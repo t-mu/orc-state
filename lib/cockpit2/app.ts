@@ -368,9 +368,9 @@ export interface App {
   apply(transition: (state: CockpitTabState) => TabTransition): TabTransition;
   /** The current tabs and projects. */
   tabs(): CockpitTabState;
-  /** Opens the add-project dialog (the Projects card's `[+ ADD PROJECT]`); refused in the tab bar without a project host. */
+  /** Opens the add-project dialog (the Projects card's `[ + NEW CAMPAIGN ]`); refused in the tab bar without a project host. */
   openAddProject(): void;
-  /** Opens the new-agent dialog for `projectId` (the `[+ NEW AGENT]` button); refused without an explorer host or a known checkout. */
+  /** Opens the new-agent dialog for `projectId` (the `[ + SPAWN GRUNT ]` button); refused without an explorer host or a known checkout. */
   openNewAgent(projectId: string): void;
 }
 
@@ -428,19 +428,19 @@ export interface SlotContext {
 }
 
 export function slotMessage({ tab, project, target, session, keys }: SlotContext): string[] | null {
-  if (!tab) return ['No project is open.', 'Run orc start-session in a project.', quitHint(keys)];
+  if (!tab) return ['No campaign is open.', 'Run orc start-session in a project.', quitHint(keys)];
   const who = tab.agentId === null ? 'The master' : tab.agentId;
   const startCommand = `Start it with: ${project ? `cd ${project.repoRoot} && ` : ''}orc start-session`;
   if (!target) {
-    if (!project) return [`Project ${tab.projectId} is not registered.`, quitHint(keys)];
-    return [`${who} does not run in tmux, so the cockpit cannot show it.`, quitHint(keys)];
+    if (!project) return [`Campaign ${tab.projectId} is not registered.`, quitHint(keys)];
+    return [`${who} does not run in tmux, so the war room cannot show it.`, quitHint(keys)];
   }
   const state = session?.state ?? { kind: 'attaching' as const };
   if (state.kind === 'ended') {
     if (tab.agentId !== null) return [`${who}'s tmux session is not running.`, `tmux: ${state.reason}`, quitHint(keys)];
-    if (project?.connection === 'stopped') return [`Project ${project.name} is not running.`, startCommand, `tmux: ${state.reason}`, quitHint(keys)];
+    if (project?.connection === 'stopped') return [`Campaign ${project.name} is not running.`, startCommand, `tmux: ${state.reason}`, quitHint(keys)];
     // The coordinator is up (or not known yet): it may be restarting the master, so no start command.
-    const coordinator = project ? `Coordinator: ${project.connection}.` : 'The project is not registered.';
+    const coordinator = project ? `Coordinator: ${project.connection}.` : 'The campaign is not registered.';
     return ['The master\'s tmux session is not running.', `tmux: ${state.reason}`, coordinator, quitHint(keys)];
   }
   if (session?.error) return [`${who} is not shown.`, session.error, quitHint(keys)];
@@ -929,7 +929,7 @@ export function runApp(options: AppOptions): App {
     if (explorer) return;
     const projectId = tabs.activeProject;
     if (!projectId || !options.explorer) {
-      refusal = projectId ? 'This cockpit has no task explorer.' : 'No project is open in the cockpit; run orc start-session in one.';
+      refusal = projectId ? 'This war room has no task explorer.' : 'No campaign is open in the war room; run orc start-session in one.';
       scheduleRender();
       return;
     }
@@ -1070,7 +1070,7 @@ export function runApp(options: AppOptions): App {
     const host = options.explorer;
     const cwd = projectId ? watched.get(projectId)?.project.target_repo_root : undefined;
     if (!projectId || !host || !cwd) {
-      refusal = projectId ? 'This cockpit cannot open a shell here.' : 'No project is open in the cockpit; run orc start-session in one.';
+      refusal = projectId ? 'This war room cannot open a shell here.' : 'No campaign is open in the war room; run orc start-session in one.';
       scheduleRender();
       return;
     }
@@ -1192,7 +1192,7 @@ export function runApp(options: AppOptions): App {
   /** Runs `open` on the active project, or says no project is open. */
   function withActiveProject(open: (projectId: string) => void): void {
     if (tabs.activeProject === null) {
-      refusal = 'No project is open in the cockpit; run orc start-session in one.';
+      refusal = 'No campaign is open in the war room; run orc start-session in one.';
       scheduleRender();
       return;
     }
@@ -1229,7 +1229,7 @@ export function runApp(options: AppOptions): App {
   function openSettings(projectId: string): void {
     const host = options.settings;
     if (!host) {
-      refusal = 'This cockpit cannot change settings.';
+      refusal = 'This war room cannot change settings.';
       scheduleRender();
       return;
     }
@@ -1278,7 +1278,7 @@ export function runApp(options: AppOptions): App {
   function confirmKill(command: Extract<SidebarCommand, { type: 'killAgent' }>): void {
     const { projectId, agentId, kind, taskRef } = command;
     if (kind === 'local') { confirmKillLocal(projectId, agentId); return; }
-    const refused = !options.agents ? 'This cockpit cannot kill agents.' : kind === 'worker' && !taskRef ? `${agentId} has no task to reset.` : null;
+    const refused = !options.agents ? 'This war room cannot kill grunts.' : kind === 'worker' && !taskRef ? `${agentId} has no task to reset.` : null;
     if (refused) {
       refusal = refused;
       scheduleRender();
@@ -1302,7 +1302,7 @@ export function runApp(options: AppOptions): App {
       state: openConfirmDialog({ title: `kill · ${label}`, message: [`Kill ${label}? Its session ends and its tab closes.`], confirmLabel: 'KILL' }),
       run: () => {
         // closeTab closes in the active project: another project shown since refuses rather than closing a tab there.
-        if (tabs.activeProject !== projectId) return Promise.reject(new Error(`${label} is not in the shown project.`));
+        if (tabs.activeProject !== projectId) return Promise.reject(new Error(`${label} is not in the shown campaign.`));
         const result = apply((state) => closeTab(state, tabId));
         return result.ok ? Promise.resolve() : Promise.reject(new Error(result.message));
       },
@@ -1332,7 +1332,7 @@ export function runApp(options: AppOptions): App {
   function openAddProject(): void {
     if (closed) return;
     if (!options.projectHost) {
-      refusal = 'This cockpit cannot add projects.';
+      refusal = 'This war room cannot start new campaigns.';
       scheduleRender();
       return;
     }
@@ -1346,7 +1346,7 @@ export function runApp(options: AppOptions): App {
   function openNewAgent(projectId: string): void {
     if (closed) return;
     const repoRoot = watched.get(projectId)?.project.target_repo_root;
-    const refused = !options.explorer ? 'This cockpit cannot start agent sessions.' : !repoRoot ? `Project ${projectId} is not registered.` : null;
+    const refused = !options.explorer ? 'This war room cannot spawn grunts.' : !repoRoot ? `Campaign ${projectId} is not registered.` : null;
     if (refused || !repoRoot) {
       refusal = refused;
       scheduleRender();
@@ -1379,7 +1379,7 @@ export function runApp(options: AppOptions): App {
     const generation = dialogGeneration;
     const request = addProjectRequest(modal.state);
     if ('error' in request) { updateForm(generation, (form) => ({ ...form, error: request.error })); return; }
-    updateForm(generation, (form) => ({ ...form, busy: 'Adding the project…', error: null }));
+    updateForm(generation, (form) => ({ ...form, busy: 'Adding the campaign…', error: null }));
     let projectId: string;
     try {
       ({ projectId } = await options.projectHost!.add(request.path, request.name, request.provider));
@@ -1407,7 +1407,7 @@ export function runApp(options: AppOptions): App {
     if ('error' in request) { updateForm(generation, (form) => ({ ...form, error: request.error })); return; }
     const host = options.explorer!;
     const cwd = watched.get(projectId)?.project.target_repo_root;
-    if (!cwd) { updateForm(generation, (form) => ({ ...form, error: `Project ${projectId} is not registered.` })); return; }
+    if (!cwd) { updateForm(generation, (form) => ({ ...form, error: `Campaign ${projectId} is not registered.` })); return; }
     const id = nextAgentTab(tabs.projects.find((project) => project.projectId === projectId)?.tabs ?? []);
     updateForm(generation, (form) => ({ ...form, busy: 'Starting the session…', error: null }));
     let launch: AgentLaunchOptions = {};
