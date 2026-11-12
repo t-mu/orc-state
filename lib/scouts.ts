@@ -7,7 +7,7 @@ import { DEFAULT_SCOUT_READY_TIMEOUT_MS } from './constants.ts';
 import { InputError, NotFoundError } from './domainErrors.ts';
 import { appendSequencedEvent } from './eventLog.ts';
 import { TARGET_REPO_ROOT } from './paths.ts';
-import { hasSessionStartHook, isSupportedProvider, loadWorkerPoolConfig } from './providers.ts';
+import { hasSessionStartHook, isSupportedProvider, loadWorkerPoolConfig, resolveWorkerModel, type ProviderName } from './providers.ts';
 import { renderTemplate } from './templateRender.ts';
 import { launchWorkerSession } from './workerRuntime.ts';
 import type { Agent } from '../types/agents.ts';
@@ -47,6 +47,15 @@ export class ScoutLaunchError extends Error {
     this.reason = reason;
     this.hint = hint;
   }
+}
+
+/** The most characters of a scout's objective its agent record keeps (`schemas/agents.schema.json`). */
+export const SCOUT_OBJECTIVE_MAX = 200;
+
+/** `objective` cut to `SCOUT_OBJECTIVE_MAX` characters (code points, as the schema counts). */
+function recordedObjective(objective: string): string {
+  const chars = [...objective];
+  return chars.length > SCOUT_OBJECTIVE_MAX ? chars.slice(0, SCOUT_OBJECTIVE_MAX).join('') : objective;
 }
 
 function readRunWorktreesState(stateDir: string): RunWorktreesState {
@@ -122,15 +131,21 @@ export function prepareScout(stateDir: string, request: ScoutRequest, actorProvi
   // A scout gets the control socket under the same opt-in as workers; a Codex or Gemini
   // scout reports for duty through it (a Claude scout is made ready by its session-start hook).
   // Resolved before registering, so an invalid setting leaves no scout behind.
-  const sandboxNetwork = loadWorkerPoolConfig().sandbox_network;
+  const workerPool = loadWorkerPoolConfig();
+  const sandboxNetwork = workerPool.sandbox_network;
+  const trimmedObjective = objective.trim();
 
+  // A scout runs the worker pool's model for its provider (null: the provider CLI's default);
+  // launchWorkerSession launches with the recorded model.
   const scout = registerAgent(stateDir, {
     agent_id: nextAvailableScoutId(stateDir),
     provider: resolvedProvider,
     role: 'scout',
+    model: resolveWorkerModel(workerPool, resolvedProvider as ProviderName),
+    objective: recordedObjective(trimmedObjective),
   });
   return {
-    scout, objective: objective.trim(), run_id: run_id as string | null, task_ref: task_ref as string | null,
+    scout, objective: trimmedObjective, run_id: run_id as string | null, task_ref: task_ref as string | null,
     use_web, scope_paths: (scope_paths ?? []) as string[], working_directory: linkedWorktree ?? repoRoot,
     repo_root: repoRoot, sandbox_network: sandboxNetwork,
   };

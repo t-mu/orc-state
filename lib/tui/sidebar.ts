@@ -50,6 +50,8 @@ export interface SidebarAgent {
   task_ref?: string | null;
   provider?: string | null;
   model?: string | null;
+  /** A scout's brief: the first line of its objective (null for a worker or an objective not recorded); set only with `details`. */
+  brief?: string | null;
 }
 
 export interface SidebarProject {
@@ -116,6 +118,11 @@ export function attentionDetail(kind: AttentionKind, detail: string | null, acti
   }
 }
 
+/** The first non-blank line of `text`, its whitespace collapsed; null when there is none. */
+function firstLine(text: string | null | undefined): string | null {
+  return oneLine(text?.split(/\r?\n/).find(line => line.trim()));
+}
+
 function elapsedSince(startedAt: string | null, ageSeconds: number | null, nowMs: number): string | null {
   const started = startedAt ? Date.parse(startedAt) : NaN;
   if (Number.isFinite(started)) return formatElapsed((nowMs - started) / 1000);
@@ -145,7 +152,7 @@ export function sidebarAgents(view: TuiProjectView, nowMs: number, options: { de
         elapsed: slot.run_state ? elapsedSince(slot.run_started_at, slot.age_seconds, nowMs) : null,
         detail: attention ? attentionDetail(attention, oneLine(slot.attention?.detail), activity) : activity ?? slot.task_ref,
         attention,
-        ...(options.details ? { task_ref: slot.task_ref, provider: slot.provider, model: slot.model } : {}),
+        ...(options.details ? { task_ref: slot.task_ref, provider: slot.provider, model: slot.model, brief: null } : {}),
       };
     });
   const scouts = (view.status.scouts ?? []).map((scout): SidebarAgent => ({
@@ -156,7 +163,7 @@ export function sidebarAgents(view: TuiProjectView, nowMs: number, options: { de
     elapsed: elapsedSince(scout.launched_at, null, nowMs),
     detail: 'scout',
     attention: null,
-    ...(options.details ? { task_ref: null, provider: scout.provider, model: scout.model ?? null } : {}),
+    ...(options.details ? { task_ref: null, provider: scout.provider, model: scout.model ?? null, brief: firstLine(scout.objective) } : {}),
   }));
   // Array.prototype.sort is stable: equal ranks keep the status order.
   return [...workers, ...scouts].sort((a, b) => attentionRank(a) - attentionRank(b));

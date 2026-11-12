@@ -59,6 +59,9 @@ describe('state to role', () => {
 
   it('maps run phases', () => {
     for (const phase of ['explore', 'implement', 'complete', 'finalize']) expect(phaseRole(phase)).toBe('status.active');
+    // A working agent without a phase: a run in progress, a scout running.
+    for (const state of ['in_progress', 'running']) expect(phaseRole(state)).toBe('status.active');
+    expect(phaseRole('claimed')).toBe('status.idle');
     expect(phaseRole('review')).toBe('status.warn');
     expect(phaseRole('queued')).toBe('status.idle');
     expect(phaseRole(null)).toBe('status.idle');

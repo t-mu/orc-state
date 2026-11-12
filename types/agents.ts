@@ -20,6 +20,8 @@ export interface Agent {
   /** True when this agent was spawned by the coordinator for a specific task run.
    * Informational: every worker is task-scoped and removed on terminal cleanup. */
   ephemeral?: boolean | undefined;
+  /** A scout's objective as requested (capped at `SCOUT_OBJECTIVE_MAX` characters); absent for other roles. */
+  objective?: string | undefined;
 }
 
 export interface AgentsState {

@@ -40,6 +40,10 @@ export interface AgentDefinition {
   /** Mark this agent as coordinator-spawned ephemeral. Ephemeral workers are
    * removed from the registry when their task-scoped session is cleaned up. */
   ephemeral?: boolean;
+  /** The model the session is launched with (null: the provider CLI's default). */
+  model?: string | null;
+  /** A scout's objective, recorded as given (the caller caps it). */
+  objective?: string;
 }
 
 /**
@@ -70,7 +74,7 @@ export function registerAgent(stateDir: string, agentDef: AgentDefinition): Agen
     const entry: Agent = {
       agent_id,
       provider: provider as Provider,
-      model:            null,
+      model:            agentDef.model ?? null,
       role,
       status:           'idle',
       session_handle:   null,
@@ -81,6 +85,7 @@ export function registerAgent(stateDir: string, agentDef: AgentDefinition): Agen
       last_heartbeat_at: null,
       registered_at:    new Date().toISOString(),
       ...(agentDef.ephemeral ? { ephemeral: true } : {}),
+      ...(agentDef.objective !== undefined ? { objective: agentDef.objective } : {}),
     };
 
     file.agents.push(entry);

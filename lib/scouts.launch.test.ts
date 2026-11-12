@@ -101,6 +101,30 @@ describe('launchScout', () => {
     });
   });
 
+  it('records the worker pool\'s model for its provider and the objective on the scout, launching with that model', async () => {
+    const { prepareScout, SCOUT_OBJECTIVE_MAX } = await import('./scouts.ts');
+    const { getAgent } = await import('./agentRegistry.ts');
+    const { validateAgents } = await import('./stateValidation.ts');
+    // No model configured: null, the provider CLI's own default.
+    const plain = prepareScout(dir, { objective: '  find docs errors\nin docs/  ' }, 'codex');
+    expect(getAgent(dir, plain.scout.agent_id)).toMatchObject({ model: null, objective: 'find docs errors\nin docs/' });
+    process.env.ORC_WORKER_MODEL = 'gpt-test';
+    try {
+      const long = 'x'.repeat(SCOUT_OBJECTIVE_MAX + 50);
+      const modelled = prepareScout(dir, { objective: long }, 'codex');
+      const recorded = getAgent(dir, modelled.scout.agent_id)!;
+      expect(recorded.model).toBe('gpt-test');
+      expect(recorded.objective).toBe('x'.repeat(SCOUT_OBJECTIVE_MAX));
+      // The brief keeps the whole objective; only the record is capped.
+      expect(modelled.objective).toBe(long);
+      // launchWorkerSession launches with the agent record's model (taskModel ?? agent.model).
+      expect(modelled.scout.model).toBe('gpt-test');
+    } finally {
+      delete process.env.ORC_WORKER_MODEL;
+    }
+    expect(validateAgents(JSON.parse(readFileSync(join(dir, 'agents.json'), 'utf8')))).toEqual([]);
+  });
+
   it('defaults the working directory to the target repository when no run worktree is linked', async () => {
     launchWorkerSessionMock.mockImplementation((_stateDir, agent) => {
       agent.status = 'running';

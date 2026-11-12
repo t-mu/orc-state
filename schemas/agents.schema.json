@@ -85,6 +85,11 @@
         "ephemeral": {
           "type": "boolean",
           "description": "True for coordinator-spawned task-scoped workers."
+        },
+        "objective": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "A scout's objective as requested, cut to 200 characters. Absent for other roles."
         }
       }
     }
