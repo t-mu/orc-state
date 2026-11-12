@@ -1193,10 +1193,10 @@ describe('cli/start-session.ts', () => {
       expect(warnings.join('\n')).not.toContain('ORC_COCKPIT_THEME');
     });
 
-    it('reports a theme it cannot use as the key problems are, and opens the cockpit in amber', async () => {
+    it('reports a theme it cannot use as the key problems are, and opens the cockpit in the default theme (orc)', async () => {
       const { launch, warnings } = await launchWithTheme('/no/such-theme.json');
-      expect(launch.theme.name).toBe('amber');
-      expect(warnings).toContainEqual(expect.stringMatching(/^Warning: ORC_COCKPIT_THEME: '\/no\/such-theme\.json' is not a built-in theme .*; using amber\.$/));
+      expect(launch.theme.name).toBe('orc');
+      expect(warnings).toContainEqual(expect.stringMatching(/^Warning: ORC_COCKPIT_THEME: '\/no\/such-theme\.json' is not a built-in theme .*; using orc\.$/));
     });
 
     it('says the cockpit moved when another terminal took it over, and leaves the master running', async () => {
@@ -1310,7 +1310,7 @@ describe('cli/start-session.ts', () => {
     it('reports a bad theme on a nested add too, as it reports bad keys', async () => {
       tmuxFake.insideOrcTmux = true;
       const { launch, warnings } = await launchWithTheme('/no/such-theme.json');
-      expect(launch.theme.name).toBe('amber');
+      expect(launch.theme.name).toBe('orc');
       expect(tmuxFake.attaches).toHaveLength(0);
       expect(warnings).toContainEqual(expect.stringMatching(/^Warning: ORC_COCKPIT_THEME: '\/no\/such-theme\.json' is not a built-in theme/));
     });
