@@ -86,7 +86,7 @@ import { buildTabBarModel, tabAttention, tabBarClickTarget } from '../tui/tabBar
 import { blitScreen, createFrame, drawText, slotCursor, type Frame, type Region } from './frame.ts';
 import { createDispatcher, cursorKeyMirror, modeNotice, type DispatchContext } from './dispatch.ts';
 import type { ColorDepth } from './color.ts';
-import { attentionQueue, type ExplorerHost } from './explorer.ts';
+import { EXPLORER_SOCKET, attentionQueue, isShellTab, nextShellTab, shellSessionName, type ExplorerHost } from './explorer.ts';
 import { createTokenizer, type Token } from './input.ts';
 import { createMotionCoalescer, encodeMouse, parseSgrMouse, routeSlotMouse, type MouseEvent } from './mouse.ts';
 import { renderDiff, sameStyle } from './render.ts';
@@ -99,7 +99,7 @@ import type { TerminalSession } from './terminal.ts';
 import { TmuxControlClient } from './tmuxControl.ts';
 import { MAX_SIDEBAR_COLS, MIN_SIDEBAR_COLS, mergeProjects, type TmuxTarget, type ViewState, type ViewStateStore } from './viewState.ts';
 import {
-  EXPLORER_LABEL, EXPLORER_TAB, drawFooter, drawHeader, drawTabBar, headerButtonAt, headerView, tabBarView,
+  EXPLORER_LABEL, EXPLORER_TAB, drawFooter, drawHeader, drawTabBar, headerButtonAt, headerView, onPlusTab, tabBarView,
   withExplorerTab, withModeMarks, type FooterHint, type HeaderButton,
 } from './widgets.ts';
 import {
@@ -509,10 +509,11 @@ export function runApp(options: AppOptions): App {
 
   const targetOf = (tab: OpenTab): TmuxTarget | null => tab.agentId === null
     ? masterTarget(projectInfo(tab.projectId), masterTargets[tab.projectId] ?? null)
+    : isShellTab(tab.agentId) ? { socket: EXPLORER_SOCKET, session: shellSessionName(tab.projectId, tab.agentId) }
     : agentTarget(projectInfo(tab.projectId), tab.agentId);
 
   // ── sessions ──
-  const sessions = new Sessions({ connect, scrollback: options.scrollback, resyncDelayMs: options.resyncDelayMs, onChange: () => { closeEndedExplorer(); scheduleRender(); } });
+  const sessions = new Sessions({ connect, scrollback: options.scrollback, resyncDelayMs: options.resyncDelayMs, onChange: () => { closeEndedExplorer(); closeEndedShell(); scheduleRender(); } });
   const slotSize = () => ({ cols: layout.slot.cols, rows: layout.slot.rows });
 
   /** The session showActive last showed: its key and target. */
@@ -584,7 +585,7 @@ export function runApp(options: AppOptions): App {
     const project = tabs.activeProject;
     const model = buildTabBarModel(tabs, tabAttention(buildProjectViews([...watched.values()]), project));
     const marked = withModeMarks(model, (agentId) => project !== null && typingTabs.has(tabKey({ projectId: project, agentId })));
-    return tabBarView(explorer ? withExplorerTab(marked) : marked, layout.tabBar.cols);
+    return tabBarView(explorer ? withExplorerTab(marked) : marked, layout.tabBar.cols, project !== null && Boolean(options.explorer));
   }
 
   /** The header as drawn now: the active project's name and the explorer entry (neither with no project open) and the count of agents needing attention across projects. */
@@ -660,6 +661,7 @@ export function runApp(options: AppOptions): App {
         badge: { label: `coordinator ${state}`, role: projectStateRole(state) },
       };
     }
+    if (isShellTab(tab.agentId)) return { title: `shell ${tab.agentId.slice('shell:'.length)}`, parts: [view.name, view.target_repo_root], badge: null };
     const model = buildSidebarModel([view], { stateDir: '', activeProjectId: view.project_id, nowMs: Date.now(), registryError: null, agentDetails: true });
     const agent = model.agents.find((candidate) => candidate.agent_id === tab.agentId);
     if (!agent) return { title: String(tab.agentId), parts: ['not running'], badge: null };
@@ -684,6 +686,9 @@ export function runApp(options: AppOptions): App {
     if (!surfaces) return;
     const raised: Region[] = sidebar.cards.map((card) => ({ x: layout.sidebar.x, y: layout.sidebar.y + card.y, cols: layout.sidebar.cols, rows: card.rows }));
     if (layout.paneFrame) raised.push(layout.paneFrame);
+    // The tab strip: its rows above the gap row (the bar's last row while it has its full height).
+    const tabRows = layout.tabBar.rows >= TAB_BAR_ROWS ? layout.tabBar.rows - 1 : layout.tabBar.rows;
+    if (tabRows > 0) raised.push({ ...layout.tabBar, rows: tabRows });
     const { slot } = layout;
     for (let y = 0; y < frame.rows; y += 1) {
       for (let x = 0; x < frame.cols; x += 1) {
@@ -755,6 +760,8 @@ export function runApp(options: AppOptions): App {
     // Closing a tab only detaches its view; the agent keeps running.
     for (const tab of closedTabs(tabs, result.state)) {
       sessions.close(tabKey(tab));
+      // A shell tab's shell is the tab's own: closing the tab ends it.
+      if (isShellTab(tab.agentId) && options.explorer) track(options.explorer.stop({ socket: EXPLORER_SOCKET, session: shellSessionName(tab.projectId, tab.agentId) }));
       typingTabs.delete(tabKey(tab)); // a reopened tab starts view-only again
     }
     tabs = result.state;
@@ -832,6 +839,42 @@ export function runApp(options: AppOptions): App {
     showActive();
   }
 
+  /** A shown shell tab whose shell exited (`exit` in it) closes. */
+  function closeEndedShell(): void {
+    const tab = shownTab(tabs);
+    if (explorer || !tab || !isShellTab(tab.agentId)) return;
+    if (sessions.get(tabKey(tab))?.state.kind !== 'ended') return;
+    const id = tab.agentId;
+    queueMicrotask(() => { if (shownTab(tabs)?.agentId === id) apply((state) => closeTab(state, id)); });
+  }
+
+  /**
+   * Opens a shell tab in the active project: the user's login shell in the
+   * project's checkout, in a session of the cockpit's private tmux server.
+   * It types like the master tab; closing it ends the shell.
+   */
+  async function openShell(): Promise<void> {
+    const projectId = tabs.activeProject;
+    const host = options.explorer;
+    const cwd = projectId ? watched.get(projectId)?.project.target_repo_root : undefined;
+    if (!projectId || !host || !cwd) {
+      refusal = projectId ? 'This cockpit cannot open a shell here.' : 'No project is open in the cockpit; run orc start-session in one.';
+      scheduleRender();
+      return;
+    }
+    const id = nextShellTab(tabs.projects.find((project) => project.projectId === projectId)?.tabs ?? []);
+    try {
+      await host.startShell(shellSessionName(projectId, id), cwd, slotSize());
+    } catch (error) {
+      refusal = `The shell did not start: ${error instanceof Error ? error.message : String(error)}`;
+      scheduleRender();
+      return;
+    }
+    if (closed) return;
+    setFocus('slot');
+    apply((state) => openAgent(state, projectId, id));
+  }
+
   /** An explorer that quit on its own (a failing one keeps its session to show why) closes, showing the active tab again. */
   function closeEndedExplorer(): void {
     if (explorer?.target && sessions.get(EXPLORER_KEY)?.state.kind === 'ended') queueMicrotask(closeExplorer);
@@ -897,6 +940,7 @@ export function runApp(options: AppOptions): App {
       // Only the tabs' rows: their label row and its caps, not the gap row above the pane.
       if (Math.abs(at.y - Math.floor((layout.tabBar.rows - 1) / 2)) > 1) return;
       const view = currentTabBar();
+      if (onPlusTab(view, at.x)) { void openShell(); return; }
       const click = tabBarClickTarget(view.model, view.layout, at.x);
       if (!click) return;
       if (click.tab.agentId === EXPLORER_TAB) {
@@ -939,7 +983,7 @@ export function runApp(options: AppOptions): App {
     const route = routeSlotMouse(event, {
       tracking: modes.mouseTracking,
       // The explorer takes keys, not the mouse: the cockpit scrolls and selects there.
-      viewOnly: explorer !== null || (tab !== null && tab.agentId !== null && !typingTabs.has(tabKey(tab))),
+      viewOnly: explorer !== null || (tab !== null && tab.agentId !== null && !isShellTab(tab.agentId) && !typingTabs.has(tabKey(tab))),
       selecting: selection?.dragging ?? false,
     });
     // The pane as drawn: a worker's screen smaller than the slot is padded, a larger one cropped.
@@ -983,7 +1027,7 @@ export function runApp(options: AppOptions): App {
 
   /** The shown tab's input mode: the master always types, an agent tab only after `i`. */
   function inputContext(tab: OpenTab): DispatchContext {
-    if (tab.agentId === null) return { mode: 'typing', agentTab: false };
+    if (tab.agentId === null || isShellTab(tab.agentId)) return { mode: 'typing', agentTab: false };
     return { mode: typingTabs.has(tabKey(tab)) ? 'typing' : 'view', agentTab: true };
   }
 

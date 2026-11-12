@@ -386,4 +386,28 @@ describe.skipIf(!tmuxOk)('orc cockpit end to end, in a host tmux pane', () => {
     send('\x11');
     await waitFor('the cockpit to exit', () => screen().includes('COCKPIT-EXIT 0'));
   }, 60_000);
+
+  it('opens a shell tab on the + tab, types into it, and closes it when the shell exits', async () => {
+    launchCockpit({ ORC_COCKPIT_THEME: '', SHELL: '/bin/sh' });
+    // The + tab on the tabs' label row, right of the sidebar.
+    let plus = -1;
+    let row = -1;
+    await waitFor('the + tab', () => {
+      // The tabs' label row (the master's tab on it); the + is its last tab.
+      row = lines().findIndex((line, y) => y < 6 && line.slice(34).includes('master'));
+      plus = row < 0 ? -1 : lines()[row].lastIndexOf('+');
+      return plus > 34 && lines()[row].slice(plus + 1).trim() === '';
+    });
+    send(`${ESC}[<0;${plus + 1};${row + 1}M${ESC}[<0;${plus + 1};${row + 1}m`);
+    await waitFor('the shell tab', () => screen().includes('[ SHELL 1 ]'));
+    send('echo hi\r');
+    await waitFor('the shell\'s output', () => lines().some((line) => /│hi\s*│/.test(line)));
+    send('exit\r');
+    await waitFor('the shell tab gone', () => !screen().includes('shell 1') && !screen().includes('[ SHELL 1 ]'));
+    expect(received('master')).toBe('');
+    expect(received('worker')).not.toContain('echo hi');
+
+    send('\x11');
+    await waitFor('the cockpit to exit', () => screen().includes('COCKPIT-EXIT 0'));
+  }, 60_000);
 });

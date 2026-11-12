@@ -17,7 +17,8 @@
  */
 import { stringWidth } from '../cellWidth.ts';
 import { fitText } from '../tui/sidebar.ts';
-import { CLOSE_MARKER, layoutTabBar, type TabBarLayout, type TabBarModel } from '../tui/tabBarModel.ts';
+import { CLOSE_MARKER, TAB_GAP, layoutTabBar, type TabBarLayout, type TabBarModel } from '../tui/tabBarModel.ts';
+import { SHELL_TAB_PREFIX, isShellTab } from './explorer.ts';
 import { DEFAULT_STYLE, drawText, fillRect, type Frame, type Region } from './frame.ts';
 import type { CellStyle } from './screen.ts';
 import { attentionRole, badgeRole, styleOf, type Theme, type ThemeRole } from './theme.ts';
@@ -99,7 +100,12 @@ export function drawHeader(frame: Frame, region: Region, view: HeaderView, theme
 // ── tab bar ──────────────────────────────────────────────────────────────────
 
 /** The tab bar as it is drawn: the model and which tabs fit. */
-export interface TabBarView { model: TabBarModel; layout: TabBarLayout }
+/** The tab bar as drawn: the model, which tabs fit, and where the new-shell tab (`+`) sits (null when it has no room or no project is open). */
+export interface TabBarView { model: TabBarModel; layout: TabBarLayout; plus: { x: number } | null }
+
+/** The new-shell tab's label and width: a small block after the last tab. */
+export const PLUS_LABEL = ' + ';
+const PLUS_COLS = PLUS_LABEL.length;
 
 /** The explorer tab's id in the tab bar model: not an agent id (agent ids hold no control characters). */
 export const EXPLORER_TAB = '\u0000tasks';
@@ -109,7 +115,10 @@ export const EXPLORER_LABEL = 'tasks';
 export function withModeMarks(model: TabBarModel, typing: (agentId: string) => boolean): TabBarModel {
   return {
     ...model,
-    tabs: model.tabs.map((tab) => (tab.agentId === null ? tab : { ...tab, label: `${typing(tab.agentId) ? TYPING_MARK : VIEW_MARK} ${tab.label}` })),
+    // The master and shell tabs always type: no mark; a shell tab is labelled `shell N`.
+    tabs: model.tabs.map((tab) => (tab.agentId === null ? tab
+      : isShellTab(tab.agentId) ? { ...tab, label: `shell ${tab.agentId.slice(SHELL_TAB_PREFIX.length)}` }
+      : { ...tab, label: `${typing(tab.agentId) ? TYPING_MARK : VIEW_MARK} ${tab.label}` })),
   };
 }
 
@@ -121,9 +130,16 @@ export function withExplorerTab(model: TabBarModel): TabBarModel {
 }
 
 /** Lays the tabs out in the bar's full width: tabs that do not fit go behind the overflow markers. */
-export function tabBarView(model: TabBarModel, cols: number): TabBarView {
-  return { model, layout: layoutTabBar(model, cols) };
+export function tabBarView(model: TabBarModel, cols: number, withPlus = false): TabBarView {
+  if (!withPlus || model.notice || cols < PLUS_COLS + TAB_GAP + 10) return { model, layout: layoutTabBar(model, cols), plus: null };
+  const layout = layoutTabBar(model, cols - PLUS_COLS - TAB_GAP);
+  const last = layout.cells.at(-1);
+  const end = (last ? last.x + last.width : stringWidth(layout.leftMarker)) + stringWidth(layout.rightMarker);
+  return { model, layout, plus: { x: end + TAB_GAP } };
 }
+
+/** Whether column `x` of the bar is on the new-shell tab. */
+export const onPlusTab = (view: TabBarView, x: number) => view.plus !== null && x >= view.plus.x && x < view.plus.x + PLUS_COLS;
 
 export interface TabBarDrawOptions {
   /** The slot has the keys: the active tab is the focus marker. */
@@ -132,6 +148,20 @@ export interface TabBarDrawOptions {
   error: string | null;
   /** The styles the tab bar is drawn in. */
   theme: Theme;
+}
+
+/**
+ * A tab's block: its label row in `fill`, and above and below it a half block
+ * in the fill colour, so the block looks two rows tall, not three (inverse
+ * fills, as in `mono`, are capped in the default colours; no fill, no caps).
+ */
+function drawTabBlock(frame: Frame, region: Region, cellX: number, cols: number, labelY: number, fill: CellStyle): void {
+  const x = region.x + cellX;
+  fillRect(frame, { x, y: labelY, cols, rows: 1 }, fill);
+  const cap = fill.bg.type !== 'default' ? { ...DEFAULT_STYLE, fg: fill.bg } : fill.inverse ? DEFAULT_STYLE : null;
+  if (!cap) return;
+  if (labelY > region.y) fillRect(frame, { x, y: labelY - 1, cols, rows: 1 }, cap, '▄');
+  if (labelY < region.y + region.rows - 1) fillRect(frame, { x, y: labelY + 1, cols, rows: 1 }, cap, '▀');
 }
 
 /**
@@ -167,13 +197,7 @@ export function drawTabBar(frame: Frame, region: Region, view: TabBarView, optio
     const x = region.x + cell.x;
     const cols = Math.min(cell.width, region.cols - cell.x);
     if (cols <= 0) break;
-    fillRect(frame, { x, y: labelY, cols, rows: 1 }, fill);
-    // Above and below the label row a half block in the fill colour: the block looks two rows tall, not three.
-    const cap = hasFill ? { ...DEFAULT_STYLE, fg: fill.bg } : fill.inverse ? DEFAULT_STYLE : null;
-    if (cap) {
-      if (labelY > region.y) fillRect(frame, { x, y: labelY - 1, cols, rows: 1 }, cap, '▄');
-      if (labelY < region.y + region.rows - 1) fillRect(frame, { x, y: labelY + 1, cols, rows: 1 }, cap, '▀');
-    }
+    drawTabBlock(frame, region, cell.x, cols, labelY, fill);
     const runs: Run[] = [[cell.text, fill]];
     if (cell.badge) runs.push([cell.badge, onFill(styleOf(theme, badgeRole(tab.attention ? attentionRole(tab.attention) : 'status.attention')))]);
     if (tab.closable) runs.push([' ', fill], [CLOSE_MARKER, onFill(styleOf(theme, 'tab.close'))]);
@@ -181,6 +205,8 @@ export function drawTabBar(frame: Frame, region: Region, view: TabBarView, optio
     end = cell.x + cell.width;
   }
   if (layout.rightMarker) drawText(frame, region.x + end, labelY, layout.rightMarker, muted, region.cols - end);
+  if (view.plus) drawTabBlock(frame, region, view.plus.x, PLUS_COLS, labelY, styleOf(theme, 'tab.inactive'));
+  if (view.plus) drawText(frame, region.x + view.plus.x, labelY, PLUS_LABEL, { ...styleOf(theme, 'tab.inactive'), bold: true }, PLUS_COLS);
 }
 
 // ── footer ───────────────────────────────────────────────────────────────────

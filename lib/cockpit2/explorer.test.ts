@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import type { ProjectWatchState } from '../../client.ts';
 import { nextAttention, type CockpitTabState } from '../cockpitTabs.ts';
-import { EXPLORER_SOCKET, attentionQueue, explorerScript, explorerSessionName } from './explorer.ts';
+import { EXPLORER_SOCKET, SHELL_SCRIPT, attentionQueue, explorerScript, explorerSessionName, isShellTab, nextShellTab, shellSessionName } from './explorer.ts';
 
 type Kind = 'question' | 'permission_prompt' | 'stalled' | 'no_progress';
 
@@ -36,6 +36,32 @@ describe('explorerSessionName and explorerScript', () => {
     const ok = spawnSync('/bin/sh', ['-c', explorerScript('echo fine')], { encoding: 'utf8', timeout: 5_000 });
     expect(ok.status).toBe(0);
     expect(ok.stdout).toBe('fine\n');
+  });
+});
+
+describe('shell tabs', () => {
+  it('tells shell tab ids from agent ids and gives the first free number', () => {
+    expect(isShellTab('shell:1')).toBe(true);
+    expect(isShellTab('shell-1')).toBe(false);
+    expect(isShellTab('w1')).toBe(false);
+    expect(isShellTab(null)).toBe(false);
+    expect(nextShellTab([])).toBe('shell:1');
+    expect(nextShellTab(['w1', 'shell:1', 'shell:3'])).toBe('shell:2');
+    expect(nextShellTab(['shell:1', 'shell:2'])).toBe('shell:3');
+  });
+
+  it('names a shell tab\'s session per project and number, without tmux\'s target characters', () => {
+    expect(shellSessionName('demo', 'shell:1')).toBe('shell-demo-1');
+    expect(shellSessionName('a.b:c', 'shell:12')).toBe('shell-a_b_c-12');
+  });
+
+  it('runs the login shell with no ORC_* variable left', () => {
+    const run = spawnSync('/bin/sh', ['-c', SHELL_SCRIPT], {
+      encoding: 'utf8', timeout: 5_000, input: 'env\n',
+      env: { PATH: process.env.PATH, SHELL: '/bin/sh', ORC_SECRET: 'x', ORC_OTHER_2: 'y', KEEP: 'z' },
+    });
+    expect(run.stdout).toContain('KEEP=z');
+    expect(run.stdout).not.toContain('ORC_');
   });
 });
 
