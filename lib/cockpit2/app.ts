@@ -980,6 +980,7 @@ export function runApp(options: AppOptions): App {
     if (!explorer) return;
     stopExplorer();
     showActive();
+    closeEndedShell();
   }
 
   /**
@@ -988,18 +989,20 @@ export function runApp(options: AppOptions): App {
    * Worker, scout and master tabs only detach a view, so they never close here.
    */
   function closeEndedShell(): void {
+    // Any tab change leaves the task explorer, so a tab that ended meanwhile closes once the explorer does (closeExplorer).
+    if (explorer) return;
     for (const project of tabs.projects) {
       for (const id of project.tabs) {
         if (!isOwnedSessionTab(id) || sessions.get(tabKey({ projectId: project.projectId, agentId: id }))?.state.kind !== 'ended') continue;
         const projectId = project.projectId;
-        const shown = shownTab(tabs);
-        if (explorer && shown?.projectId === projectId && shown.agentId === id) continue;
-        queueMicrotask(() => apply((state) => {
-          if (!state.projects.some((entry) => entry.projectId === projectId && entry.tabs.includes(id))) return { state, ok: true, message: '' };
+        queueMicrotask(() => {
+          if (!tabs.projects.some((entry) => entry.projectId === projectId && entry.tabs.includes(id))) return;
           // closeTab acts on the active project: close in the tab's own project, then put the active one back.
-          const closed = closeTab({ ...state, activeProject: projectId }, id);
-          return { ...closed, state: { ...closed.state, activeProject: state.activeProject } };
-        }));
+          apply((state) => {
+            const closed = closeTab({ ...state, activeProject: projectId }, id);
+            return { ...closed, state: { ...closed.state, activeProject: state.activeProject } };
+          });
+        });
       }
     }
   }
