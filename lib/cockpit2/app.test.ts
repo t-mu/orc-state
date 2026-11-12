@@ -344,13 +344,20 @@ describe('runApp (fake tmux client)', () => {
     expect(out).not.toMatch(/[34]8;2;/);
   });
 
-  it('draws its chrome in amber by default and in the theme it is given', async () => {
+  it('draws its chrome in orc by default and in the theme it is given', async () => {
+    const SAND_BORDER = '38;2;227;199;138m';
     const AMBER_BORDER = '38;2;255;176;0m';
     const VIOLET = '38;2;124;58;237m';
-    const amber = start();
+    const orc = start();
+    await attached(orc.terminal);
+    expect(orc.terminal.writes.join('')).toContain(SAND_BORDER);
+    expect(orc.terminal.writes.join('')).not.toContain(AMBER_BORDER);
+
+    const amber = start({ theme: BUILT_IN_THEMES.amber });
     await attached(amber.terminal);
     expect(amber.terminal.writes.join('')).toContain(AMBER_BORDER);
     expect(amber.terminal.writes.join('')).not.toContain(VIOLET);
+
 
     const violet = resolveTheme(BUILT_IN_THEMES.amber, { 'chrome.border': { fg: '#7c3aed' } }).theme;
     const themed = start({ theme: violet });
@@ -361,6 +368,24 @@ describe('runApp (fake tmux client)', () => {
     await attached(mono.terminal);
     // The pane's own text has no colour either, so nothing the cockpit draws sets an RGB foreground.
     expect(mono.terminal.writes.join('')).not.toMatch(/38;2;/);
+  });
+
+  it('paints the theme background on chrome cells left at the default with orc, never on the slot, and nothing with amber', async () => {
+    const CANVAS = { type: 'rgb', r: 0x08, g: 0x08, b: 0x08 };
+    const orc = start({ theme: BUILT_IN_THEMES.orc });
+    await attached(orc.terminal);
+    const screen = await shown(orc.terminal);
+    const { slot, footer } = computeLayout(orc.terminal.cols, orc.terminal.rows);
+    // A blank sidebar cell near the bottom, and the footer's end: chrome the cockpit leaves at the default background.
+    expect(screen.row(footer.y - 1)[1].style.bg).toEqual(CANVAS);
+    expect(screen.row(0)[orc.terminal.cols - 1].style.bg).toEqual(CANVAS);
+    // The slot keeps the pane's own cells: its text and the blank after it stay on the default background.
+    for (const x of [slot.x, slot.x + slot.cols - 1]) expect(screen.row(slot.y)[x].style.bg).toEqual({ type: 'default' });
+    expect(screen.row(slot.y + slot.rows - 1)[slot.x].style.bg).toEqual({ type: 'default' });
+
+    const amber = start({ theme: BUILT_IN_THEMES.amber });
+    await attached(amber.terminal);
+    expect(amber.terminal.writes.join('')).not.toContain('48;2;8;8;8m');
   });
 
   it('shows the master in the slot next to the sidebar and tab bar, its window sized to the slot', async () => {

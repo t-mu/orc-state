@@ -39,7 +39,7 @@ import { isSameProcess, readProcessStart } from '../lib/processIdentity.ts';
 import { quitHint, runApp, type AppExit } from '../lib/cockpit2/app.ts';
 import { colorDepthFromEnv } from '../lib/cockpit2/color.ts';
 import { tmuxExplorerHost } from '../lib/cockpit2/explorer.ts';
-import { themeFromEnv, type Theme } from '../lib/cockpit2/theme.ts';
+import { DEFAULT_THEME, terminalColorsEnter, terminalColorsLeave, themeFromEnv, type Theme } from '../lib/cockpit2/theme.ts';
 import { claimInstance, exitRequested, liveInstance, type InstanceHolder } from '../lib/cockpit2/instance.ts';
 import { fdWriter, openTerminal } from '../lib/cockpit2/terminal.ts';
 import { addProject, createViewStateStore } from '../lib/cockpit2/viewState.ts';
@@ -201,7 +201,11 @@ export async function runCockpit(options: CockpitOptions): Promise<CockpitResult
   try {
     options.onClaimed?.(claim.replaced);
     watcher.start();
-    terminal = openTerminal({ input: process.stdin, output: process.stdout, write: fdWriter(process.stdout.fd) });
+    const theme = options.theme ?? DEFAULT_THEME;
+    terminal = openTerminal({
+      input: process.stdin, output: process.stdout, write: fdWriter(process.stdout.fd),
+      enter: terminalColorsEnter(theme), leave: terminalColorsLeave(theme),
+    });
     app = runApp({
       terminal,
       tmuxBinary: tmuxBinary(),

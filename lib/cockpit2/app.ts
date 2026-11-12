@@ -91,7 +91,7 @@ import { createTokenizer, type Token } from './input.ts';
 import { createMotionCoalescer, encodeMouse, parseSgrMouse, routeSlotMouse, type MouseEvent } from './mouse.ts';
 import { renderDiff, sameStyle } from './render.ts';
 import type { Cursor, Screen } from './screen.ts';
-import { DEFAULT_THEME, attentionRole, projectStateRole, styleOf, type Theme } from './theme.ts';
+import { DEFAULT_THEME, attentionRole, parseThemeColor, projectStateRole, styleOf, type Theme } from './theme.ts';
 import { drawPaneBox, type PaneHeader } from './chrome.ts';
 import { highlightSelection, osc52, selectionText, type CellPoint, type Selection } from './selection.ts';
 import { Sessions, type ConnectPane, type PaneSession } from './sessions.ts';
@@ -670,6 +670,26 @@ export function runApp(options: AppOptions): App {
     };
   }
 
+  /**
+   * The theme's background on every cell outside the slot that is left at
+   * the terminal's default: where the terminal took the theme's colours (OSC
+   * 11) this changes nothing visible; where it did not, the cockpit's own
+   * areas still show the theme. The slot keeps its program's cells.
+   */
+  const canvas = theme.terminal ? parseThemeColor(theme.terminal.background) : null;
+  function paintCanvas(frame: Frame): void {
+    if (!canvas) return;
+    const { slot } = layout;
+    for (let y = 0; y < frame.rows; y += 1) {
+      const inSlotRow = y >= slot.y && y < slot.y + slot.rows;
+      for (let x = 0; x < frame.cols; x += 1) {
+        if (inSlotRow && x >= slot.x && x < slot.x + slot.cols) continue;
+        const cell = frame.cells[y * frame.cols + x];
+        if (cell.style.bg.type === 'default') cell.style = { ...cell.style, bg: canvas };
+      }
+    }
+  }
+
   // ── rendering ──
   function render(): void {
     renderTimer = null;
@@ -701,6 +721,7 @@ export function runApp(options: AppOptions): App {
     }
     // Arrow keys reach the pane in the form its program asked for; checked on every render, so on tab switch and mode change.
     mirrorCursorKeys(screen ? screen.modes().applicationCursorKeys : false);
+    paintCanvas(frame);
     if (prevFrame && prevCursor && framesEqual(prevFrame, frame) && sameCursor(prevCursor, cursor)) return;
     terminal.write(renderDiff(prevFrame, frame, cursor, options.colorDepth));
     prevFrame = frame;

@@ -57,6 +57,9 @@ export interface TerminalOptions {
   hooks?: ExitHooks;
   /** Where a crash's error goes after the terminal is restored. */
   report?: (text: string) => void;
+  /** Written after the enter sequence, and `leave` before the restore: the theme's terminal colours (theme.ts). */
+  enter?: string;
+  leave?: string;
 }
 
 export interface TerminalSession {
@@ -104,7 +107,7 @@ export function openTerminal(options: TerminalOptions): TerminalSession {
     for (const [event, listener] of exitListeners) hooks.off(event, listener);
     // The terminal may already be gone (SIGHUP): restoring is best effort, exiting must still happen.
     try { input.setRawMode?.(false); } catch { /* not a TTY any more */ }
-    try { write(RESTORE_SEQUENCE); } catch { /* nowhere to write */ }
+    try { write((options.leave ?? '') + RESTORE_SEQUENCE); } catch { /* nowhere to write */ }
     input.pause();
   };
 
@@ -125,7 +128,7 @@ export function openTerminal(options: TerminalOptions): TerminalSession {
   input.on('data', onData);
   input.resume();
   output.on('resize', onResize);
-  write(ENTER_SEQUENCE);
+  write(ENTER_SEQUENCE + (options.enter ?? ''));
 
   return {
     size: () => ({ cols: output.columns, rows: output.rows }),
