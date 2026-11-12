@@ -46,7 +46,7 @@ describe('openSettingsDialog', () => {
     expect(valueOf(defaults, 'worker_pool.provider')).toBe('gemini');
     expect(valueOf(defaults, 'worker_pool.execution_mode')).toBe('sandbox');
     // The model falls back to worker_pool.model, as the coordinator's resolveWorkerModel does.
-    expect(defaults.fields[4]).toMatchObject({ key: modelKey('gemini'), value: 'shared-model', options: ['shared-model'] });
+    expect(defaults.fields[4]).toMatchObject({ key: modelKey('gemini'), value: 'shared-model', options: ['shared-model', 'auto', 'pro', 'flash', 'flash-lite', 'gemini-3.1-pro-preview', 'gemini-3.5-flash', 'gemini-3-flash-preview'] });
     expect(defaults.models).toEqual({ claude: 'shared-model', codex: 'shared-model', gemini: 'shared-model' });
   });
 
@@ -118,10 +118,10 @@ describe('dialogKey', () => {
     expect(keys(state, 'right').error).toBeNull();
   });
 
-  it('a single-choice field does not change', () => {
+  it('offers the Gemini CLI aliases and current models for gemini, a stored other model kept selectable', () => {
     const state = keys(open(), 'down', 'down', 'right', 'right', 'down'); // provider claude → codex → gemini, on the model
     expect(valueOf(state, modelKey('gemini'))).toBe(null);
-    expect(keys(state, 'right')).toEqual(state);
+    expect(state.fields[4].options).toEqual([null, 'auto', 'pro', 'flash', 'flash-lite', 'gemini-3.1-pro-preview', 'gemini-3.5-flash', 'gemini-3-flash-preview']);
   });
 
   it('offers the Codex CLI\'s GPT-6 models for codex, a stored other model kept selectable', () => {
@@ -136,7 +136,7 @@ describe('dialogKey', () => {
     expect(codex.fields[4]).toMatchObject({ key: modelKey('codex'), value: 'gpt-5-codex', original: 'gpt-5-codex' });
     expect(changes(codex)).toEqual([{ key: 'worker_pool.provider', value: 'codex' }]);
     const gemini = keys(codex, 'right');
-    expect(gemini.fields[4]).toMatchObject({ key: modelKey('gemini'), value: null, options: [null] });
+    expect(gemini.fields[4]).toMatchObject({ key: modelKey('gemini'), value: null });
     // Back to claude, then a new model: both written, under claude's key.
     const claude = keys(gemini, 'right', 'down', 'right');
     expect(changes(claude)).toEqual([{ key: modelKey('claude'), value: 'haiku' }]);

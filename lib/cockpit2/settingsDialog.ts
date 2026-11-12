@@ -62,8 +62,15 @@ const PROVIDERS = ['claude', 'codex', 'gemini'];
 const CLAUDE_MODELS = ['sonnet', 'opus', 'haiku'];
 /** The GPT-6 models the Codex CLI lists (its models cache, codex-cli 0.167); any other stored model stays selectable. */
 const CODEX_MODELS = ['gpt-6-sol', 'gpt-6.1-sol', 'gpt-6-astra', 'gpt-6.1-terra', 'gpt-6-luna'];
-/** The models ←/→ cycle through for `provider` (Gemini: its stored model only). */
-const modelOptions = (provider: SettingValue): SettingValue[] => (provider === 'claude' ? CLAUDE_MODELS : provider === 'codex' ? CODEX_MODELS : []);
+/**
+ * Gemini: the CLI's aliases first (it resolves them to the newest model the
+ * account may use), then the current models Google documents (Gemini CLI
+ * `/model` docs, Firebase AI Logic models page, Nov 2026); the CLI itself is
+ * not installed here to list them.
+ */
+const GEMINI_MODELS = ['auto', 'pro', 'flash', 'flash-lite', 'gemini-3.1-pro-preview', 'gemini-3.5-flash', 'gemini-3-flash-preview'];
+/** The models ←/→ cycle through for `provider`. */
+const modelOptions = (provider: SettingValue): SettingValue[] => (provider === 'claude' ? CLAUDE_MODELS : provider === 'codex' ? CODEX_MODELS : provider === 'gemini' ? GEMINI_MODELS : []);
 const MAX_WORKERS_LIMIT = 8;
 
 const asValue = (value: unknown): SettingValue => (typeof value === 'string' || typeof value === 'number' ? value : null);
