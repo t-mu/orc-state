@@ -1,10 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readdirSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { setup, TMUX_TMPDIR_PREFIX } from './vitest.tmuxTmpdir.mjs';
+import { setup, TMUX_TMPDIR_PREFIX, tmuxTmpBase } from './vitest.tmuxTmpdir.mjs';
 
 const REPO_ROOT = import.meta.dirname;
 const CONFIGS = ['vitest.config.mjs', 'vitest.e2e.config.mjs', 'vitest.integration.config.mjs', 'vitest.real-providers.config.mjs'];
@@ -15,8 +14,16 @@ describe('vitest runs tmux in a private TMUX_TMPDIR (tmux-socket-leak)', () => {
   it('this test process inherited a throwaway TMUX_TMPDIR, not the real /tmp/tmux-<uid>', () => {
     const dir = process.env.TMUX_TMPDIR;
     expect(dir).toBeTruthy();
-    expect(dir!.startsWith(join(tmpdir(), TMUX_TMPDIR_PREFIX))).toBe(true);
+    expect(dir!.startsWith(join(tmuxTmpBase(), TMUX_TMPDIR_PREFIX))).toBe(true);
     expect(existsSync(dir!)).toBe(true);
+  });
+
+  it('leaves room under the 104-byte socket path limit whatever TMPDIR is (macOS /var/folders)', () => {
+    // tmux resolves the directory (/tmp is /private/tmp on macOS) before appending tmux-<uid>/<name>.
+    const resolved = join(realpathSync(process.env.TMUX_TMPDIR!), `tmux-${process.getuid?.() ?? 0}`);
+    // The longest test socket name: `orc-cockpit-app-test-<pid>-<ms>-explorer`.
+    const longestName = `orc-cockpit-app-test-${'9'.repeat(7)}-${'9'.repeat(13)}-explorer`;
+    expect(Buffer.byteLength(join(resolved, longestName))).toBeLessThanOrEqual(103);
   });
 
   it.each(CONFIGS)('%s registers the TMUX_TMPDIR global setup', async (config) => {

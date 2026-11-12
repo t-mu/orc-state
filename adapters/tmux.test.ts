@@ -6,6 +6,7 @@ import {
   checkTmux, checkTmuxVersion, createTmuxAdapter, failedInspection, parseDeadPane, parseTmuxVersion, tmuxAttachCommand, tmuxSessionName,
   tmuxSocketName, tmuxSocketPath,
 } from './tmux.ts';
+import { EXPLORER_SOCKET } from '../lib/cockpit2/explorer.ts';
 
 const originalBin = process.env.ORC_TMUX_BIN;
 
@@ -25,6 +26,28 @@ describe('tmuxSocketPath', () => {
     expect(tmuxSocketPath('orc-abc')).toBe(join('/tmp', `tmux-${uid}`, 'orc-abc'));
     process.env.TMUX_TMPDIR = '';
     expect(tmuxSocketPath('orc-abc')).toBe(join('/tmp', `tmux-${uid}`, 'orc-abc'));
+  });
+});
+
+describe('orc tmux socket paths stay under the Unix socket limit', () => {
+  // sun_path holds 104 bytes on macOS (108 on Linux) including the NUL.
+  const LIMIT = 103;
+  const uid = process.getuid?.() ?? 0;
+
+  it('fits for any state dir, in tmux\'s default directory as macOS resolves it', () => {
+    delete process.env.TMUX_TMPDIR;
+    const longStateDir = `/Users/someone/${'very-long-directory-name/'.repeat(10)}.orc-state`;
+    for (const stateDir of ['/s', longStateDir]) {
+      const name = tmuxSocketName(stateDir);
+      expect(Buffer.byteLength(tmuxSocketPath(name))).toBeLessThanOrEqual(LIMIT);
+      // tmux resolves /tmp to /private/tmp on macOS before connecting.
+      expect(Buffer.byteLength(join('/private/tmp', `tmux-${uid}`, name))).toBeLessThanOrEqual(LIMIT);
+    }
+  });
+
+  it('fits for the cockpit\'s explorer server', () => {
+    delete process.env.TMUX_TMPDIR;
+    expect(Buffer.byteLength(join('/private/tmp', `tmux-${uid}`, EXPLORER_SOCKET))).toBeLessThanOrEqual(LIMIT);
   });
 });
 
