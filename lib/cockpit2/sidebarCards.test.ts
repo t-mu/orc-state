@@ -46,6 +46,8 @@ function model(others = 1, agents = 3, overrides: Partial<SidebarModel> = {}): S
 
 const card = (layout: SidebarCardsLayout, name: SidebarCard): CardLayout | undefined => layout.cards.find((each) => each.card === name);
 const rowsOf = (layout: SidebarCardsLayout) => layout.cards.map((each) => each.rows);
+/** The agents whose title row a card shows (in its box or, in a window too short for the box, alone), in order. */
+const titles = (each: CardLayout): number[] => each.lines.flatMap((line) => ((line.kind === 'block' && line.part === 'title') || line.kind === 'agent' ? [line.index] : []));
 
 /** Row `y` of `frame` from column `x`, `cols` wide, as text (a wide grapheme's continuation cell adds nothing). */
 const rowText = (frame: Frame, y: number, x = 0, cols = frame.cols) =>
@@ -75,23 +77,26 @@ const gapRows = (layout: SidebarCardsLayout) =>
 describe('sidebarCardsLayout', () => {
   it('stacks Projects, Project and Agents with a blank row between them, equal in height while the content fits: 6, 6 and 8 rows in the 80x24 sidebar (22 rows)', () => {
     expect(computeLayout(80, 24).sidebar.rows).toBe(22);
-    for (const agents of [0, 1, 3]) {
+    for (const agents of [0, 1]) {
       const layout = sidebarCardsLayout(model(0, agents), 22, INITIAL_SIDEBAR_NAV, COLS);
       expect(layout.cards.map((each) => each.card)).toEqual(['projects', 'project', 'agents']);
       expect(layout.cards.map((each) => [each.y, each.rows])).toEqual([[0, 6], [7, 6], [14, 8]]); // the remainder to Agents
       expect(gapRows(layout)).toEqual([6, 13]);
     }
-    // 8 agents need more room: the others shrink to their content (Projects its row and button, the Project card its three rows).
-    expect(sidebarCardsLayout(model(0, 8), 22, INITIAL_SIDEBAR_NAV, COLS).cards.map((each) => [each.y, each.rows])).toEqual([[0, 4], [5, 5], [11, 11]]);
+    // 3 agents (boxes of 4, 3 and 3 rows) or 8 need more room: the others shrink to their content (Projects its row and
+    // button, the Project card its three rows).
+    for (const agents of [3, 8]) {
+      expect(sidebarCardsLayout(model(0, agents), 22, INITIAL_SIDEBAR_NAV, COLS).cards.map((each) => [each.y, each.rows])).toEqual([[0, 4], [5, 5], [11, 11]]);
+    }
     // The Project card never grows past its share: with a notice and the tasks row it drops the tasks row.
-    const full = sidebarCardsLayout(model(0, 2, { notice: 'coordinator not running', tasks: { todo: 1 } }), 22, INITIAL_SIDEBAR_NAV, COLS);
+    const full = sidebarCardsLayout(model(0, 1, { notice: 'coordinator not running', tasks: { todo: 1 } }), 22, INITIAL_SIDEBAR_NAV, COLS);
     expect(rowsOf(full)).toEqual([6, 6, 8]);
     expect(card(full, 'project')?.lines.map((line) => line.kind)).toEqual(['coordinator', 'workers', 'notice', 'settings']);
   });
 
   it('splits the rows equally at 30 and 40 rows (the remainder to Agents) and pins each card\'s button to its last body row', () => {
     for (const [rows, sizes] of [[22, [6, 6, 8]], [30, [9, 9, 10]], [40, [12, 12, 14]]] as const) {
-      const { layout, lines } = render(model(1, 2), { rows });
+      const { layout, lines } = render(model(1, 1), { rows });
       expect(rowsOf(layout), `${rows}`).toEqual(sizes);
       for (const [name, label] of [['projects', '[ + ADD PROJECT ]'], ['project', '[ SETTINGS ]'], ['agents', '[ + NEW AGENT ]']] as const) {
         const each = card(layout, name)!;
@@ -111,16 +116,18 @@ describe('sidebarCardsLayout', () => {
         expect(lines[each.y + each.rows - 2].slice(2, 2 + label.length), `${rows} ${name}`).toBe(label);
       }
       const agents = card(layout, 'agents')!;
-      expect(agents.lines.at(-2)?.kind, `${rows}`).toBe('more');
+      // A window of whole boxes may leave blank rows between its `+N more` and the button.
+      expect(agents.lines.filter((line) => line.kind !== 'blank').at(-2)?.kind, `${rows}`).toBe('more');
       expect(agents.lines.at(-1), `${rows}`).toEqual({ kind: 'newAgent' });
     }
   });
 
   it('grows Agents when its content needs more room, the others keeping their content, then Projects down to its least', () => {
-    // 40 rows: shares of 12, 12 and 14; 12 agents want 16 rows and a button. Projects gives up its blank rows (3 projects and a button).
-    const grown = sidebarCardsLayout(model(2, 12), 40, INITIAL_SIDEBAR_NAV, COLS);
-    expect(rowsOf(grown)).toEqual([7, 12, 19]);
-    expect(card(grown, 'agents')!.lines.filter((line) => line.kind === 'agent')).toHaveLength(12);
+    // 40 rows: shares of 12, 12 and 14; 4 agents want 14 rows (their boxes) and a button. Projects gives up three of its
+    // blank rows (it holds 3 projects and a button).
+    const grown = sidebarCardsLayout(model(2, 4), 40, INITIAL_SIDEBAR_NAV, COLS);
+    expect(rowsOf(grown)).toEqual([9, 12, 17]);
+    expect(titles(card(grown, 'agents')!)).toEqual([0, 1, 2, 3]);
     // 22 rows: Projects goes down to the active project, `+N more` and its button; the Project card keeps its three rows.
     const short = sidebarCardsLayout(model(5, 12), 22, INITIAL_SIDEBAR_NAV, COLS);
     expect(rowsOf(short)).toEqual([5, 5, 10]);
@@ -169,16 +176,16 @@ describe('sidebarCardsLayout', () => {
   });
 
   it('shrinks Projects to a `+N more` window before Agents loses rows, keeping the active project in view', () => {
-    // 6 projects want 9 rows with their button; 8 agents (3 needing attention) want 11 body rows and a button, 14 in all.
-    const fits = sidebarCardsLayout(model(5, 8), 28, INITIAL_SIDEBAR_NAV, COLS);
-    expect(rowsOf(fits)).toEqual([7, 5, 14]); // every agent; the projects get what is left
+    // 6 projects want 9 rows with their button; 4 agents (2 needing attention) want 14 body rows and a button, 17 in all.
+    const fits = sidebarCardsLayout(model(5, 4), 31, INITIAL_SIDEBAR_NAV, COLS);
+    expect(rowsOf(fits)).toEqual([7, 5, 17]); // every agent; the projects get what is left
     expect(card(fits, 'projects')?.lines).toEqual([...[0, 1, 2].map((index) => ({ kind: 'project', index })), { kind: 'more', count: 3 }, { kind: 'addProject' }]);
-    expect(card(fits, 'agents')?.lines.filter((line) => line.kind === 'agent')).toHaveLength(8);
+    expect(titles(card(fits, 'agents')!)).toEqual([0, 1, 2, 3]);
     const short = sidebarCardsLayout(model(5, 8), 22, INITIAL_SIDEBAR_NAV, COLS);
     expect(rowsOf(short)).toEqual([5, 5, 10]); // the projects down to the active one and `+N more`, then Agents loses rows
     expect(card(short, 'projects')?.lines).toEqual([{ kind: 'project', index: 0 }, { kind: 'more', count: 5 }, { kind: 'addProject' }]);
-    expect(card(short, 'agents')?.lines.slice(-2)).toEqual([{ kind: 'more', count: 4 }, { kind: 'newAgent' }]);
-    expect(card(sidebarCardsLayout(model(5, 8), 33, INITIAL_SIDEBAR_NAV, COLS), 'projects')?.rows).toBe(9);
+    expect(card(short, 'agents')?.lines.filter((line) => line.kind !== 'blank').slice(-2)).toEqual([{ kind: 'more', count: 7 }, { kind: 'newAgent' }]);
+    expect(card(sidebarCardsLayout(model(5, 4), 33, INITIAL_SIDEBAR_NAV, COLS), 'projects')?.rows).toBe(9);
     // The active project stays in view when it is not first; the window follows the cursor while the keys are in it.
     const late = model(0, 8, { projects: model(5, 0).projects.map((each, index) => ({ ...each, active: index === 4 })), activeProjectId: 'o4' });
     expect(card(sidebarCardsLayout(late, 22, INITIAL_SIDEBAR_NAV, COLS), 'projects')?.lines).toEqual([{ kind: 'project', index: 4 }, { kind: 'more', count: 5 }, { kind: 'addProject' }]);
@@ -240,7 +247,7 @@ describe('sidebarCardsLayout', () => {
             const cursorRow = nav.box === 'agents'
               ? layout.onButton
                 ? rowOfLine(layout, 'agents', (line) => line.kind === 'newAgent')
-                : rowOfLine(layout, 'agents', (line) => line.kind === 'agent' && line.index === layout.agentIndex)
+                : rowOfLine(layout, 'agents', (line) => (line.kind === 'agent' || (line.kind === 'block' && line.part === 'title')) && line.index === layout.agentIndex)
               : nav.box === 'project'
                 ? rowOfLine(layout, 'project', (line) => line.kind === 'settings')
                 : layout.onButton
@@ -256,7 +263,7 @@ describe('sidebarCardsLayout', () => {
             }
             // Agents lose rows only once Projects is down to its least.
             const agentsCard = card(layout, 'agents')!;
-            const shownAgents = agentsCard.lines.filter((line) => line.kind === 'agent').length;
+            const shownAgents = titles(agentsCard).length;
             const projects = card(layout, 'projects');
             const listed = (lines: CardLayout['lines']) => lines.filter((line) => !['blank', 'addProject', 'newAgent'].includes(line.kind));
             if (shownAgents < agents && projects) expect(listed(projects.lines).length, where).toBeLessThanOrEqual(2);
@@ -284,15 +291,17 @@ describe('sidebarCardsLayout', () => {
       let blanks = 0;
       body.slice(firstItem, lastItem + 1).forEach((line) => {
         if (line.kind === 'blank') { blanks += 1; return; }
-        const key = 'index' in line && ['agent', 'detail', 'block'].includes(line.kind) ? `agent:${line.index}` : `${line.kind}:${items.length}`;
+        const key = 'index' in line && ['agent', 'block'].includes(line.kind) ? `agent:${line.index}` : `${line.kind}:${items.length}`;
         if (items.at(-1) !== key || blanks > 0) {
           if (items.length > 0) between.push(blanks);
           items.push(key);
         }
         blanks = 0;
       });
+      // Two agent boxes side by side take no spacing row: their borders set them apart.
+      const pairs = items.slice(1).filter((item, index) => !(item.startsWith('agent:') && items[index].startsWith('agent:'))).length;
       return {
-        button: button === 1, items: items.length, between, top: Math.max(0, firstItem), after: body.length - 1 - lastItem,
+        button: button === 1, items: items.length, pairs, between, top: Math.max(0, firstItem), after: body.length - 1 - lastItem,
         more: lines.some((line) => line.kind === 'more'), spare: lines.filter((line) => line.kind === 'blank').length,
       };
     }
@@ -320,7 +329,7 @@ describe('sidebarCardsLayout', () => {
               continue;
             }
             // Every item shown: spacing first, then the top padding, then the bottom one, as the spare rows allow.
-            const spacing = got.items - 1;
+            const spacing = got.pairs;
             expect(spaced, where).toBe(spacing > 0 && got.spare >= spacing);
             const rest = got.spare - (spaced ? spacing : 0);
             expect(got.top, where).toBe(rest >= 1 ? 1 : 0);
@@ -372,8 +381,10 @@ describe('sidebarCardsLayout', () => {
         ' '.repeat(COLS),
       ]);
       const agents = card(sidebarCardsLayout(few(), 40, INITIAL_SIDEBAR_NAV, COLS), 'agents')!;
-      expect(agents.lines.slice(0, 6)).toEqual([
-        { kind: 'blank' }, { kind: 'agent', index: 0 }, { kind: 'detail', index: 0 }, { kind: 'blank' }, { kind: 'agent', index: 1 }, { kind: 'blank' },
+      // Two boxes take no spacing row between them: their borders set them apart; the top padding stays.
+      const box = (index: number, ...parts: string[]) => parts.map((part) => ({ kind: 'block', index, part }));
+      expect(agents.lines.slice(0, 9)).toEqual([
+        { kind: 'blank' }, ...box(0, 'top', 'title', 'question', 'bottom'), ...box(1, 'top', 'title', 'bottom'), { kind: 'blank' },
       ]);
     });
 
@@ -397,36 +408,37 @@ describe('sidebarCardsLayout', () => {
     });
 
     it('never lets spacing make the Agents card grow: its need is its content, padding and spacing take only rows it has', () => {
-      // 8 agents (three with a question row: 11 rows) and the button need 14 rows at 22: the others shrink to their content.
+      // 3 agents (boxes of 4, 3 and 3 rows) and the button need 13 rows: the others shrink to their content.
       for (const rows of [22, 30, 40]) {
-        const flat = sidebarCardsLayout(model(0, 8), rows, INITIAL_SIDEBAR_NAV, COLS);
+        const flat = sidebarCardsLayout(model(0, 3), rows, INITIAL_SIDEBAR_NAV, COLS);
         const share = Math.floor((rows - 2) / 3);
         const [projects, project, agents] = flat.cards;
         expect(projects.rows, `${rows}`).toBeLessThanOrEqual(share);
         expect(project.rows, `${rows}`).toBeLessThanOrEqual(share);
         // Agents takes at most its content's rows beyond its share, whatever the spacing would want.
-        expect(agents.rows, `${rows}`).toBeLessThanOrEqual(Math.max(rows - 2 - 2 * share, 2 + 11 + 1));
+        expect(agents.rows, `${rows}`).toBeLessThanOrEqual(Math.max(rows - 2 - 2 * share, 2 + 10 + 1));
       }
-      expect(rowsOf(sidebarCardsLayout(model(0, 8), 22, INITIAL_SIDEBAR_NAV, COLS))).toEqual([4, 5, 11]);
-      // At 30 rows the Agents content (14 rows) fits after the others give up their spare rows: no spacing, no padding.
-      const at30 = card(sidebarCardsLayout(model(0, 8), 30, INITIAL_SIDEBAR_NAV, COLS), 'agents')!;
-      expect(at30.rows).toBe(14);
-      expect(at30.lines.some((line) => line.kind === 'blank')).toBe(false);
+      expect(rowsOf(sidebarCardsLayout(model(0, 3), 22, INITIAL_SIDEBAR_NAV, COLS))).toEqual([4, 5, 11]);
+      // At 24 rows the Agents content (13 rows) fits after the others give up their spare rows: no spacing, no padding.
+      const at24 = card(sidebarCardsLayout(model(0, 3), 24, INITIAL_SIDEBAR_NAV, COLS), 'agents')!;
+      expect(at24.rows).toBe(13);
+      expect(at24.lines.some((line) => line.kind === 'blank')).toBe(false);
     });
 
-    it('keeps an expanded block whole: spacing goes between agents, never inside a block', () => {
+    it('keeps an expanded block whole: no spacing goes between two boxes or inside one', () => {
       const sidebar = few();
       const layout = sidebarCardsLayout(sidebar, 40, expandedNav(sidebar), COLS);
       const lines = card(layout, 'agents')!.lines;
       const top = lines.findIndex((line) => line.kind === 'block' && line.part === 'top');
       const bottom = lines.findIndex((line) => line.kind === 'block' && line.part === 'bottom');
       expect(lines.slice(top, bottom + 1).every((line) => line.kind === 'block')).toBe(true);
-      expect(lines[top - 1]).toEqual({ kind: 'blank' });
-      expect(lines[0]).toEqual({ kind: 'blank' });
-      // A click on the spacing row above the block hits nothing.
+      expect(lines.slice(0, 2)).toEqual([{ kind: 'blank' }, { kind: 'block', index: 0, part: 'top' }]);
+      const expandedTop = lines.findIndex((line) => line.kind === 'block' && line.index === 1 && line.part === 'top');
+      expect(lines[expandedTop - 1]).toEqual({ kind: 'block', index: 0, part: 'bottom' });
+      // A click on the padding row above the boxes hits nothing.
       const agents = card(layout, 'agents')!;
-      expect(sidebarCardTarget(layout, 5, agents.y + 1 + top - 1)).toBeNull();
-      expect(sidebarCardClick(layout, INITIAL_SIDEBAR_NAV, 5, agents.y + 1 + top - 1)).toBeNull();
+      expect(sidebarCardTarget(layout, 5, agents.y + 1)).toBeNull();
+      expect(sidebarCardClick(layout, INITIAL_SIDEBAR_NAV, 5, agents.y + 1)).toBeNull();
     });
   });
 
@@ -582,7 +594,8 @@ describe('sidebar navigation (keys move in the projects, project and agents boxe
 });
 
 describe('sidebarCardTarget and sidebarCardClick', () => {
-  const { layout, lines } = render(model(2, 3, { tasks: { todo: 1 } }));
+  const ROWS = 30;
+  const { layout, lines } = render(model(2, 3, { tasks: { todo: 1 } }), { rows: ROWS });
   const rowOf = (part: string) => lines.findIndex((line) => line.includes(part));
 
   it('hits each card\'s rows: each project, the active project on its coordinator, workers and tasks rows, each agent on both its rows', () => {
@@ -593,6 +606,11 @@ describe('sidebarCardTarget and sidebarCardClick', () => {
     expect(sidebarCardTarget(layout, 10, rowOf('a1 '))).toEqual({ card: 'agents', index: 0, onMarker: false });
     expect(sidebarCardTarget(layout, 10, rowOf('? question 1'))).toEqual({ card: 'agents', index: 0, onMarker: false });
     expect(sidebarCardTarget(layout, 10, rowOf('a3 '))).toEqual({ card: 'agents', index: 2, onMarker: false });
+    // An agent's box borders hit the agent too: its top and bottom rows and its sides.
+    expect(sidebarCardTarget(layout, 10, rowOf('a2 ') - 1)).toEqual({ card: 'agents', index: 1, onMarker: false });
+    expect(sidebarCardTarget(layout, 10, rowOf('a2 ') + 1)).toEqual({ card: 'agents', index: 1, onMarker: false });
+    expect(sidebarCardTarget(layout, 1, rowOf('a2 '))).toEqual({ card: 'agents', index: 1, onMarker: false });
+    expect(sidebarCardTarget(layout, COLS - 2, rowOf('a2 '))).toEqual({ card: 'agents', index: 1, onMarker: false });
   });
 
   it('hits the settings button on its columns only, and a click on it opens the active project\'s settings', () => {
@@ -625,9 +643,10 @@ describe('sidebarCardTarget and sidebarCardClick', () => {
 
   it('says when a click hits the collapse marker, and only on the agent\'s first row', () => {
     const y = rowOf('a2 ');
-    expect(lines[y].slice(2, 5)).toBe('[+]');
-    expect([1, 2, 3, 4, 5].map((x) => sidebarCardTarget(layout, x, y)?.onMarker)).toEqual([false, true, true, true, false]);
-    expect(sidebarCardTarget(layout, 3, rowOf('? question 1'))?.onMarker).toBe(false);
+    expect(lines[y].slice(3, 6)).toBe('[+]');
+    expect([2, 3, 4, 5, 6].map((x) => sidebarCardTarget(layout, x, y)?.onMarker)).toEqual([false, true, true, true, false]);
+    expect(sidebarCardTarget(layout, 4, rowOf('? question 1'))?.onMarker).toBe(false);
+    expect(sidebarCardTarget(layout, 4, y - 1)?.onMarker).toBe(false); // the box's top border
   });
 
   it('hits nothing on borders, gap rows, blank rows, the notice row and `+N more` lines', () => {
@@ -641,7 +660,7 @@ describe('sidebarCardTarget and sidebarCardClick', () => {
     expect(gapRows(layout)).toHaveLength(2);
     expect(sidebarCardTarget(layout, 5, rowOf('[ PROJECTS ]'))).toBeNull();
     expect(sidebarCardTarget(layout, 5, rowOfLine(layout, 'agents', (line) => line.kind === 'blank'))).toBeNull(); // a blank row of the Agents card
-    expect(sidebarCardTarget(layout, 5, 21)).toBeNull(); // its bottom border
+    expect(sidebarCardTarget(layout, 5, ROWS - 1)).toBeNull(); // its bottom border
     const noticed = render(model(0, 1, { notice: 'registry error: boom' }));
     expect(sidebarCardTarget(noticed.layout, 5, noticed.lines.findIndex((line) => line.includes('registry error')))).toBeNull();
     const none = sidebarCardsLayout(model(0, 0, { projects: [], activeProjectId: null, notice: 'no registered projects' }), 22, INITIAL_SIDEBAR_NAV, COLS);
@@ -677,7 +696,6 @@ describe('drawSidebarCards', () => {
     expect(lines).toEqual([
       '┌─ [ PROJECTS ] ────────────── 2 ┐',
       `│ ▸ ${CJK_PROJECT} [RUNNING] │`,
-      '│                                │',
       '│   o1              [STOPPED] !2 │',
       '│ [ + ADD PROJECT ]              │',
       '└────────────────────────────────┘',
@@ -690,11 +708,13 @@ describe('drawSidebarCards', () => {
       '└────────────────────────────────┘',
       ' '.repeat(COLS),
       '┌─ [ AGENTS ] ─────────── 2 live ┐',
+      // Two boxes and the button need a row more than the Agents card has: the second agent goes behind `+1 more`.
+      '│┌──────────────────────────────┐│',
+      '││ [+] agent-… 12m [PERMISSION] ││',
+      '││     ? may I run npm test     ││',
+      '│└──────────────────────────────┘│',
+      '│ +1 more                        │',
       '│                                │',
-      '│ [+] agent-🚀… 12m [PERMISSION] │',
-      '│     ? may I run npm test       │',
-      '│                                │',
-      '│ [+] thrall worker  8m [REVIEW] │',
       '│ [ + NEW AGENT ]                │',
       '└────────────────────────────────┘',
     ]);
@@ -702,8 +722,9 @@ describe('drawSidebarCards', () => {
   });
 
   it('shows the coordinator state once on the Project card, and says when there is no project', () => {
-    const { lines } = render(model(0, 2));
-    expect(lines.slice(7, 13).join('\n').match(/\[RUNNING\]/g)).toHaveLength(1);
+    const { layout: twoAgents, lines } = render(model(0, 2));
+    const projectCard = card(twoAgents, 'project')!;
+    expect(lines.slice(projectCard.y, projectCard.y + projectCard.rows).join('\n').match(/\[RUNNING\]/g)).toHaveLength(1);
     expect(lines.join('\n')).not.toMatch(/Status|STATUS|needs? you/);
     // No project: Projects still offers its button; the Project card has no settings and the Agents card no new-agent button.
     const none = render(model(1, 2, { status: { coordinator: null, workers: null, attention: 0 }, projects: [], activeProjectId: null, agents: [], notice: 'no registered projects' })).lines;
@@ -717,12 +738,17 @@ describe('drawSidebarCards', () => {
   });
 
   it('keeps the question or reason row only for agents needing attention', () => {
-    const { lines } = render(model(0, 4));
+    const { lines } = render(model(0, 4), { rows: 40 });
     const agentRows = lines.slice(lines.findIndex((line) => line.includes('AGENTS')) + 1);
-    expect(agentRows.slice(0, 6).map((line) => line.trim())).toEqual([
-      '│ [+] a1 worker 12m [QUESTION] │', '│     ? question 1 │', '│ [+] a2 worker 12m [IMPLEMENT] │', '│ [+] a3 worker 12m [IMPLEMENT] │',
-      '│ [+] a4 worker 12m [QUESTION] │', '│     ? question 4 │',
-    ].map((line) => expect.stringMatching(new RegExp(`^${line.replace(/[[\]+?|]/g, '\\$&').replace(/ /g, ' +')}$`))));
+    const top = '│┌──────────────────────────────┐│';
+    const bottom = '│└──────────────────────────────┘│';
+    // Every agent is a box; the question row sits inside it, under the name.
+    expect(agentRows.slice(0, 14)).toEqual([
+      top, '││ [+] a1 worker 12m [QUESTION] ││', '││     ? question 1             ││', bottom,
+      top, '││ [+] a2       12m [IMPLEMENT] ││', bottom,
+      top, '││ [+] a3       12m [IMPLEMENT] ││', bottom,
+      top, '││ [+] a4 worker 12m [QUESTION] ││', '││     ? question 4             ││', bottom,
+    ]);
   });
 
   it('says why there are no agents and dims a stale list', () => {
@@ -780,7 +806,7 @@ describe('drawSidebarCards', () => {
   });
 
   it('draws badges and counts in their amber status roles', () => {
-    const { frame, lines } = render(model(1, 3), { theme: AMBER });
+    const { frame, lines } = render(model(1, 3), { theme: AMBER, rows: 30 });
     const at = (part: string) => {
       const y = lines.findIndex((line) => line.includes(part));
       return frame.cells[y * COLS + lines[y].indexOf(part)];
@@ -810,15 +836,16 @@ describe('drawSidebarCards', () => {
       drawSidebarCards(frame, { x: 0, y: 0, cols, rows: 14 }, sidebarCardsLayout(sidebar, 14, INITIAL_SIDEBAR_NAV, cols), { focus: null, theme: CLASSIC });
       return Array.from({ length: 14 }, (_, y) => rowText(frame, y)).find((line) => line.includes('[+]'))!;
     };
-    expect(agentRow(39)).toBe('│ [+] thrall reviewer 12m [IMPLEMENT] │');
-    expect(agentRow(38)).toBe('│ [+] thrall         12m [IMPLEMENT] │');
-    expect(agentRow(30)).toBe('│ [+] thrall 12m [IMPLEMENT] │');
-    for (let cols = 30; cols < 39; cols += 1) {
+    // The row is the title row inside the agent's box: its border a column more on each side.
+    expect(agentRow(41)).toBe('││ [+] thrall reviewer 12m [IMPLEMENT] ││');
+    expect(agentRow(40)).toBe('││ [+] thrall         12m [IMPLEMENT] ││');
+    expect(agentRow(32)).toBe('││ [+] thrall 12m [IMPLEMENT] ││');
+    for (let cols = 32; cols < 41; cols += 1) {
       const row = agentRow(cols);
-      expect(row, `${cols}`).toMatch(/^│ \[\+\] thrall +12m \[IMPLEMENT\] │$/);
+      expect(row, `${cols}`).toMatch(/^││ \[\+\] thrall +12m \[IMPLEMENT\] ││$/);
     }
     // Narrower still, the name itself is cut as before.
-    expect(agentRow(29)).toBe('│ [+] thra… 12m [IMPLEMENT] │');
+    expect(agentRow(31)).toBe('││ [+] thra… 12m [IMPLEMENT] ││');
   });
 
   it('fits a narrow sidebar: badges and times give way to names, nothing spills', () => {
@@ -934,8 +961,10 @@ describe('expanded agents', () => {
       '│└──────────────────────────────┘│',
     ]);
     for (const line of lines) expect(stringWidth(line)).toBe(COLS);
-    // The other agents stay collapsed rows.
-    expect(lines.some((line) => line.includes('[+] a2'))).toBe(true);
+    // The other agents stay collapsed boxes.
+    const tall = render(details(0), { nav: at('p1/a1', ['p1/a1']), rows: 30 }).lines;
+    const a2 = tall.findIndex((line) => line.includes('[+] a2'));
+    expect(tall.slice(a2 - 1, a2 + 2).map((line) => line.replace(/[^│┌┐└┘]/g, ''))).toEqual(['│┌┐│', '││││', '│└┘│']);
   });
 
   it('shows a worker\'s activity when it says something, and no phase or provider row repeating the badge', () => {
@@ -1045,14 +1074,21 @@ describe('expanded agents', () => {
         expect(layout.cards.at(-1)!.y + layout.cards.at(-1)!.rows, where).toBe(rows);
         const index = layout.agentIndex;
         const expanded = nav.expanded.has(`p1/${cursorAgent}`);
-        const height = expanded ? (cursorAgent === 'a1' ? 8 : 7) : 1; // a1's question wraps to two lines
-        // A block fits when the Agents list can hold it (and a `+N more` line) below the Project card at its least
-        // (its coordinator row and its button) and above the Agents card's button.
-        const list = rows - 4 - 2 - 1;
-        const fits = list >= height + 1;
-        const shown = expanded ? blockRows(layout, index).length : card(layout, 'agents')!.lines.filter((line) => line.kind === 'agent' && line.index === index).length;
-        expect(shown, where).toBe(fits ? height : Math.min(height, list >= 2 ? list - 1 : list));
-        if (expanded && fits) expect(blockRows(layout, index).map((line) => (line.kind === 'block' ? line.part : '')), where).toContain('bottom');
+        // a1's question wraps to two lines; collapsed, a4's question row is inside its box.
+        const height = expanded ? (cursorAgent === 'a1' ? 8 : 7) : cursorAgent === 'a4' ? 4 : 3;
+        const lone = card(layout, 'agents')!.lines.filter((line) => line.kind === 'agent' && line.index === index).length;
+        if (expanded) {
+          // A block fits when the Agents list can hold it (and a `+N more` line) below the Project card at its least
+          // (its coordinator row and its button) and above the Agents card's button.
+          const list = rows - 4 - 2 - 1;
+          const fits = list >= height + 1;
+          const shown = blockRows(layout, index).length + lone;
+          expect(shown, where).toBe(fits ? height : Math.min(height, list >= 2 ? list - 1 : list));
+          if (fits) expect(blockRows(layout, index).map((line) => (line.kind === 'block' ? line.part : '')), where).toContain('bottom');
+        } else {
+          // A collapsed cursor agent shows its whole box, or, in a window too short for it, its title row alone.
+          expect([blockRows(layout, index).length, lone], where).toEqual(lone === 1 ? [0, 1] : [height, 0]);
+        }
         // The Project card shrinks only once Projects is down to its window (or gone).
         const projects = card(layout, 'projects');
         if (card(layout, 'project')!.rows < 5) expect(projects?.rows ?? 0, where).toBeLessThanOrEqual(5); // 5: coordinator, workers, settings; a window of 2 and the button
@@ -1065,16 +1101,20 @@ describe('expanded agents', () => {
     expect(rowsOf(layout)).toEqual([4, 11]);
     expect(card(layout, 'agents')!.lines.slice(-2)).toEqual([{ kind: 'more', count: 3 }, { kind: 'newAgent' }]);
     expect(blockRows(layout, 2).map((line) => (line.kind === 'block' ? line.part : ''))).toContain('bottom');
-    // At 22 every card is shown: Projects down to its window, the Project card a row below its share for the block's top border.
-    expect(rowsOf(sidebarCardsLayout(details(), 22, at('p1/a3', ['p1/a1', 'p1/a3']), COLS))).toEqual([5, 5, 12]);
-    // With the cursor collapsed at 12 rows the Agents card keeps its row, a `+N more` line and its button; Projects goes.
+    // At 22 every card is shown: Projects down to its window, the Project card keeping its content.
+    const at22 = sidebarCardsLayout(details(), 22, at('p1/a3', ['p1/a1', 'p1/a3']), COLS);
+    expect(rowsOf(at22)).toEqual([5, 6, 11]);
+    expect(blockRows(at22, 2).map((line) => (line.kind === 'block' ? line.part : ''))).toEqual(['top', 'title', 'model', 'task', 'detail', 'buttons', 'bottom']);
+    // With the cursor collapsed at 12 rows the Agents card keeps its box, a `+N more` line and its button; Projects goes.
     const collapsed = sidebarCardsLayout(details(), 12, at('p1/a2', ['p1/a1', 'p1/a3']), COLS);
     expect(rowsOf(collapsed)).toEqual([4, 7]);
-    expect(card(collapsed, 'agents')!.lines).toEqual([{ kind: 'agent', index: 1 }, { kind: 'more', count: 3 }, { kind: 'blank' }, { kind: 'blank' }, { kind: 'newAgent' }]);
+    expect(card(collapsed, 'agents')!.lines).toEqual([
+      ...['top', 'title', 'bottom'].map((part) => ({ kind: 'block', index: 1, part })), { kind: 'more', count: 3 }, { kind: 'newAgent' },
+    ]);
     expect(rowsOf(sidebarCardsLayout(details(), 12, at('p1/a2', []), COLS))).toEqual([4, 7]);
   });
 
-  it('toggles on a click anywhere on an agent\'s row or a block\'s title row; a click elsewhere in the block, its top border included, only moves the cursor to it', () => {
+  it('toggles on a click anywhere in an agent\'s box, its borders included; off the buttons on the buttons row a click only moves the cursor to it', () => {
     const nav = at('p1/a1', ['p1/a3']);
     const { layout, lines } = render(details(0), { nav, rows: 30 });
     const collapsed = lines.findIndex((line) => line.includes('[+] a2'));
@@ -1089,9 +1129,17 @@ describe('expanded agents', () => {
     const question = lines.findIndex((line) => line.includes('? may I'));
     expect(sidebarCardClick(layout, nav, 10, question)).toEqual({ nav: { ...nav, agentKey: 'p1/a1', expanded: new Set(['p1/a3', 'p1/a1']) }, command: null });
     expect(lines[block - 1]).toMatch(/^│┌─+┐│$/);
-    for (const y of [block - 1, block + 1, block + 3, block + 5]) {
-      expect(sidebarCardClick(layout, nav, 10, y), `row ${y}`).toEqual({ nav: { ...nav, agentKey: 'p1/a3' }, command: null });
+    // The expanded box's borders, sides and labelled rows collapse it.
+    const buttons = lines.findIndex((line, y) => y > block && line.includes('[ OPEN ]'));
+    for (const [x, y] of [[10, block - 1], [10, block + 1], [10, block + 3], [1, block], [COLS - 2, block + 2], [10, buttons + 1]]) {
+      expect(sidebarCardClick(layout, nav, x, y), `${x},${y}`).toEqual({ nav: { ...nav, agentKey: 'p1/a3', expanded: new Set() }, command: null });
     }
+    // A collapsed box's top and bottom borders and its sides expand it.
+    for (const [x, y] of [[10, collapsed - 1], [10, collapsed + 1], [1, collapsed], [COLS - 2, collapsed]]) {
+      expect(sidebarCardClick(layout, nav, x, y), `${x},${y}`).toEqual({ nav: { ...nav, agentKey: 'p1/a2', expanded: new Set(['p1/a3', 'p1/a2']) }, command: null });
+    }
+    // The buttons row off its buttons only moves the cursor.
+    expect(sidebarCardClick(layout, nav, 25, buttons)).toEqual({ nav: { ...nav, agentKey: 'p1/a3' }, command: null });
   });
 
   it('frames the block in the agent\'s status role, its text the same under mono', () => {
@@ -1231,6 +1279,128 @@ describe('no rounded corners in lib/cockpit2', () => {
   });
 });
 
+describe('agent boxes (every agent, collapsed or expanded)', () => {
+  const nav = (agentKey: string | null, expanded: string[] = []): SidebarNav => ({ ...INITIAL_SIDEBAR_NAV, agentKey, expanded: new Set(expanded) });
+  /** The sidebar rows from `y`, its box drawing only (text dropped), to compare the box shape. */
+  const frameOf = (lines: string[], from: number, count: number) => lines.slice(from, from + count).map((line) => line.replace(/[^│┌┐└┘─]/g, '').replace(/─+/g, '─'));
+
+  it('draws a collapsed worker, scout, attention agent and local session each as a box in its status role', () => {
+    const sidebar = model(0, 0, {
+      agents: [
+        agent('w1'),
+        agent('s1', { role: 'scout', phase: 'running', detail: 'scout' }),
+        agent('q1', { attention: 'question', detail: '? may I push' }),
+      ],
+    });
+    const session: LocalAgent = { tabId: 'agent:1', label: 'claude 1', provider: 'claude', variant: 'fresh', agentName: null, alive: true, elapsed: '2m' };
+    const { frame, lines } = render(sidebar, { rows: 40, locals: [session], theme: AMBER });
+    const row = (part: string) => lines.findIndex((line) => line.includes(part));
+    for (const [part, height] of [['[+] w1', 3], ['[+] s1', 3], ['[+] q1', 4], ['[+] ◇ claude 1', 3]] as const) {
+      const title = row(part);
+      expect(title, part).toBeGreaterThan(0);
+      expect(frameOf(lines, title - 1, height), part).toEqual(['│┌─┐│', ...Array.from({ length: height - 2 }, () => '││││'), '│└─┘│']);
+    }
+    expect(lines.slice(row('[+] w1') - 1, row('[+] w1') + 2)).toEqual([
+      '│┌──────────────────────────────┐│', '││ [+] w1       12m [IMPLEMENT] ││', '│└──────────────────────────────┘│',
+    ]);
+    expect(lines[row('[+] s1')]).toBe('││ [+] s1 scout   12m [RUNNING] ││');
+    expect(lines[row('[+] q1') + 1]).toBe('││     ? may I push             ││'); // the question row inside the box
+    // Each border in the agent's status role: the phase's, the attention kind's, status.local.
+    const border = (part: string) => frame.cells[(row(part) - 1) * COLS + 1].style;
+    expect(border('[+] w1')).toEqual(styleOf(AMBER, agentStatusRole(sidebar.agents[0])));
+    expect(border('[+] s1')).toEqual(styleOf(AMBER, agentStatusRole(sidebar.agents[1])));
+    expect(border('[+] q1')).toEqual(styleOf(AMBER, 'status.attention'));
+    expect(border('[+] ◇ claude 1')).toEqual(styleOf(AMBER, 'status.local'));
+    // A stale list dims the borders.
+    const stale = render({ ...sidebar, agentsStale: true }, { rows: 40, theme: AMBER });
+    const y = stale.lines.findIndex((line) => line.includes('[+] w1')) - 1;
+    expect(stale.frame.cells[y * COLS + 1].style.dim).toBe(true);
+  });
+
+  it('expands inside the box: the title row stays on its screen row and nothing above it moves', () => {
+    // While the Agents card has the rows for the expanded box (it keeps its size and its top padding).
+    for (const [rows, count] of [[40, 1], [40, 2], [30, 1]] as const) {
+      const sidebar = model(0, count);
+      for (const target of sidebar.agents) {
+        const before = render(sidebar, { rows, nav: nav(target.key), focus: 'agents' });
+        const after = render(sidebar, { rows, nav: nav(target.key, [target.key]), focus: 'agents' });
+        const where = `${rows} rows, ${count} agents, ${target.agent_id}`;
+        const title = before.lines.findIndex((line) => line.includes(`[+] ${target.agent_id} `));
+        expect(title, where).toBeGreaterThan(0);
+        expect(after.lines[title], where).toContain(`[-] ${target.agent_id} `);
+        // Every row above the title row (the cards above, the boxes above, the box's top border) is unchanged.
+        expect(after.lines.slice(0, title), where).toEqual(before.lines.slice(0, title));
+        // The body rows and the buttons go inside the box, below its title row.
+        expect(after.lines[title + 1], where).toMatch(/^││ model /);
+        expect(after.lines.findIndex((line, y) => y > title && line.includes('[ OPEN ] [ KILL ]')), where).toBeGreaterThan(title);
+      }
+    }
+  });
+
+  for (const rows of [8, 14, 22, 40]) {
+    it(`keeps the cursor agent's box in view at ${rows} rows with 1, 3 and 8 agents, \`+N more\` counting the agents not shown`, () => {
+      for (const count of [1, 3, 8]) {
+        const sidebar = model(0, count);
+        for (const [index, each] of sidebar.agents.entries()) {
+          for (const expanded of [false, true]) {
+            for (const onButtons of expanded ? [false, true] : [false]) {
+              const cursorNav: SidebarNav = { ...nav(each.key, expanded ? [each.key] : []), ...(onButtons ? { agentButton: 'open' as const } : {}) };
+              const layout = sidebarCardsLayout(sidebar, rows, cursorNav, COLS);
+              const agents = card(layout, 'agents')!;
+              const where = `${rows} rows, ${count} agents, cursor ${each.agent_id}${expanded ? ' expanded' : ''}${onButtons ? ' on its buttons' : ''}: ${JSON.stringify(agents.lines)}`;
+              const shown = agents.lines.slice(0, Math.max(0, agents.rows - 2));
+              const box = shown.filter((line) => line.kind === 'block' && line.index === index);
+              const lone = shown.filter((line) => line.kind === 'agent' && line.index === index);
+              const height = expanded ? 6 : index % 3 === 0 ? 4 : 3;
+              if (onButtons) {
+                // On its buttons their row is in view, the box's rows above it as far as they fit.
+                expect(box.some((line) => line.kind === 'block' && line.part === 'buttons'), where).toBe(true);
+              } else if (box.length > 0) {
+                // The whole box, or (an expanded box taller than the window) its rows from its top border.
+                expect(box[0], where).toEqual({ kind: 'block', index, part: 'top' });
+                expect(box.some((line) => line.kind === 'block' && line.part === 'title'), where).toBe(true);
+                if (!expanded) expect(box.length, where).toBe(height);
+              } else {
+                // Too short for even its box: its title row alone.
+                expect(lone, where).toHaveLength(1);
+              }
+              // `+N more` counts the agents whose title row is not shown.
+              const more = shown.find((line) => line.kind === 'more');
+              const hidden = count - titles({ ...agents, lines: shown }).length;
+              if (more?.kind === 'more') expect(more.count, where).toBe(hidden);
+              else if (agents.rows - 2 >= 3) expect(hidden, where).toBe(0);
+              // Only whole boxes besides the cursor's: every other agent shown has its top and bottom border.
+              for (const other of new Set(shown.flatMap((line) => (line.kind === 'block' && line.index !== index ? [line.index] : [])))) {
+                const parts = shown.flatMap((line) => (line.kind === 'block' && line.index === other ? [line.part] : []));
+                expect([parts[0], parts.at(-1)], where).toEqual(['top', 'bottom']);
+              }
+            }
+          }
+        }
+      }
+    });
+  }
+
+  it('draws the cursor bar on the box\'s title row only, and the cursor agent\'s title row alone when its box does not fit', () => {
+    const sidebar = model(0, 3);
+    const { frame, layout, lines } = render(sidebar, { rows: 40, nav: nav(sidebar.agents[1].key), focus: 'agents', theme: AMBER });
+    const title = lines.findIndex((line) => line.includes('[+] a2 '));
+    const cursorBg = styleOf(AMBER, 'row.cursor').bg;
+    const agents = card(layout, 'agents')!;
+    const bar = Array.from({ length: agents.rows - 2 }, (_, offset) => agents.y + 1 + offset).filter((y) => JSON.stringify(frame.cells[y * COLS + 5].style.bg) === JSON.stringify(cursorBg));
+    expect(bar).toEqual([title]);
+    expect(frame.cells[title * COLS + 1].style.bg).toEqual({ type: 'default' }); // the box's side keeps its own style
+    // At 8 rows the Agents card has no room for a box: the cursor agent's title row alone, with the bar across the card.
+    const short = render(sidebar, { rows: 8, nav: nav(sidebar.agents[1].key), focus: 'agents', theme: AMBER });
+    const lone = short.lines.findIndex((line) => line.includes('[+] a2'));
+    expect(card(short.layout, 'agents')!.lines[lone - card(short.layout, 'agents')!.y - 1]).toEqual({ kind: 'agent', index: 1 });
+    expect(short.lines[lone]).toMatch(/^│ \[\+\] a2 .*\[IMPLEMENT\] │$/);
+    expect(short.frame.cells[lone * COLS + 1].style.bg).toEqual(cursorBg);
+    // A click on it toggles the agent.
+    expect(sidebarCardClick(short.layout, nav(null), 10, lone)?.nav.expanded).toEqual(new Set([sidebar.agents[1].key]));
+  });
+});
+
 describe('local agent sessions (the cockpit\'s own, not the coordinator\'s)', () => {
   const fresh: LocalAgent = { tabId: 'agent:1', label: 'claude 1', provider: 'claude', variant: 'fresh', agentName: null, alive: true, elapsed: '2m' };
   const custom: LocalAgent = { tabId: 'agent:2', label: 'critic · claude', provider: 'claude', variant: 'custom', agentName: 'critic', alive: true };
@@ -1247,13 +1417,16 @@ describe('local agent sessions (the cockpit\'s own, not the coordinator\'s)', ()
   });
 
   it('lists the sessions after the coordinator\'s agents, the card\'s count telling them apart', () => {
-    const { layout, lines } = render(model(0, 2), { locals: LOCALS, rows: 30 });
-    expect(card(layout, 'agents')!.lines.filter((line) => line.kind === 'agent').map((line) => (line.kind === 'agent' ? line.index : -1))).toEqual([0, 1, 2, 3]);
+    const { layout, lines } = render(model(0, 2), { locals: LOCALS, rows: 40 });
+    expect(titles(card(layout, 'agents')!)).toEqual([0, 1, 2, 3]);
     const at = (part: string) => lines.findIndex((line) => line.includes(part));
     expect(at('[+] a2 ')).toBeLessThan(at('[+] ◇ claude 1'));
-    expect(at('[+] ◇ claude 1')).toBeLessThan(at('[+] ◇ critic · claude'));
-    expect(lines[at('◇ claude 1')]).toMatch(/│ \[\+\] ◇ claude 1 +2m \[LOCAL\] │/);
-    expect(lines[at('◇ critic')]).toMatch(/│ \[\+\] ◇ critic · claude +\[LOCAL\] │/);
+    expect(at('[+] ◇ claude 1')).toBeLessThan(at('[+] ◇ critic · clau'));
+    expect(lines[at('◇ claude 1')]).toMatch(/││ \[\+\] ◇ claude 1 +2m \[LOCAL\] ││/);
+    expect(lines[at('◇ critic')]).toBe('││ [+] ◇ critic · clau… [LOCAL] ││'); // the box's sides take a column each
+    // A collapsed session is a box too.
+    expect(lines[at('◇ claude 1') - 1]).toMatch(/^│┌─+┐│$/);
+    expect(lines[at('◇ claude 1') + 1]).toMatch(/^│└─+┘│$/);
     expect(lines.find((line) => line.includes('[ AGENTS ]'))).toContain('2 live · 2 local');
     // Only sessions: the count names them alone, and no empty-state line.
     const only = render(model(0, 0), { locals: [fresh] });

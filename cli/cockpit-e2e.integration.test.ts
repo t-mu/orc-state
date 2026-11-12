@@ -295,8 +295,9 @@ describe.skipIf(!tmuxOk)('orc cockpit end to end, in a host tmux pane', () => {
     // The master in the slot; the sidebar lists both projects and the worker (its agents are workers and scouts, never the master).
     await waitFor('the master in the slot', () => screen().includes('AGENT master READY'));
     await waitFor('the master\'s header on the pane box', () => screen().includes('[ MASTER ]') && screen().includes('[COORDINATOR '));
+    // Its box leaves `[+] worker… 0m [IN_PROGRESS]` room for the name's start only.
     await waitFor('the sidebar to list the worker and both projects', () =>
-      sidebarRow('worker-a') !== '' && sidebarRow(alpha.name) !== '' && sidebarRow(beta.name) !== '');
+      sidebarRow('[+] worker') !== '' && sidebarRow(alpha.name) !== '' && sidebarRow(beta.name) !== '');
     expect(sidebar().join('\n')).not.toContain('QUESTION');
 
     // The worker asks: its row gets the question badge.
@@ -368,13 +369,13 @@ describe.skipIf(!tmuxOk)('orc cockpit end to end, in a host tmux pane', () => {
       const shown = sidebar().join('\n');
       return shown.includes(`[ ${alpha.name.toUpperCase()} ]`) && shown.includes('[ PROJECTS ]') && shown.includes('[ AGENTS ]');
     });
-    await waitFor('the worker in the Agents card', () => sidebarRow('worker-a') !== '');
+    await waitFor('the worker in the Agents card', () => sidebarRow('[+] worker') !== '');
 
     // F10 gives the sidebar the keys (the Agents card, its first agent); Space expands the worker into its block.
     send(`${ESC}[21~`);
     await waitFor('the sidebar\'s keys in the footer', () => lines()[HOST_ROWS - 1].includes('Enter: open/expand'));
     send(' ');
-    await waitFor('the expanded agent block', () => sidebarRow('[-] worker-a') !== '' && sidebarRow('orch/task-a') !== '' && sidebarRow('[ OPEN ] [ KILL ]') !== '');
+    await waitFor('the expanded agent block', () => sidebarRow('[-] worker') !== '' && sidebarRow('orch/task-a') !== '' && sidebarRow('[ OPEN ] [ KILL ]') !== '');
 
     const coloured = chromeCells(styledScreen()).filter(({ cell }) => cell.fg !== null || cell.bg !== null);
     expect(coloured.map(({ where, cell }) => `${where} ${JSON.stringify(cell)}`), screen()).toEqual([]);
