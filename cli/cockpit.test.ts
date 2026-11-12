@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,8 +6,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { DEFAULT_COCKPIT_KEYS } from '../lib/cockpitKeys.ts';
 import { readProcessStart } from '../lib/processIdentity.ts';
 import {
-  addToCockpit, cockpitLaunch, cockpitTheme, cockpitOpeningHint, cockpitPaths, explorerCommand, insideOrcTmux, launchCockpit, oldCockpitLockPath, readTextOrNull, retireOldCockpit,
+  addToCockpit, cockpitLaunch, cockpitTheme, cockpitOpeningHint, cockpitPaths, commandFailure, coordinatorRestartCommand, explorerCommand, insideOrcTmux, launchCockpit,
+  oldCockpitLockPath, readTextOrNull, registrySettingsHost, retireOldCockpit, type RunCommand,
 } from './cockpit.ts';
+import { ProjectRegistry } from '../lib/projectRegistry.ts';
 import { BUILT_IN_THEMES } from '../lib/cockpit2/theme.ts';
 import { createViewStateStore } from '../lib/cockpit2/viewState.ts';
 
@@ -198,5 +200,80 @@ describe('addToCockpit', () => {
     expect(launch).toEqual({ kind: 'added', running: null });
     const { viewStatePath, viewStateLockPath } = cockpitPaths(home);
     expect(createViewStateStore({ path: viewStatePath, lockPath: viewStateLockPath }).load().tabs.activeProject).toBe('nested');
+  });
+});
+
+describe('registrySettingsHost', () => {
+  let temp: string;
+  let registry: ProjectRegistry;
+  let projectId: string;
+  afterEach(() => {
+    registry?.close();
+    if (temp) rmSync(temp, { recursive: true, force: true });
+  });
+  function setup(run?: RunCommand) {
+    temp = mkdtempSync(join(tmpdir(), 'orc-cockpit-settings-'));
+    registry = new ProjectRegistry(join(temp, 'data'));
+    const root = join(temp, 'repo');
+    mkdirSync(root);
+    execFileSync('git', ['init', '-q', root]);
+    projectId = registry.add(root).id;
+    return registrySettingsHost(['/bin/node', '/orc/cli/orc.ts'], registry, run);
+  }
+
+  it('reads the effective settings (global under project) and writes project-scope settings, a number as a number', () => {
+    const host = setup();
+    registry.setSetting('worker_pool.max_workers', 1);
+    registry.setSetting('coordinator.pr_provider', 'github');
+    expect(host.read(projectId)).toMatchObject({ 'worker_pool.max_workers': 1, 'coordinator.pr_provider': 'github' });
+    host.write(projectId, 'worker_pool.max_workers', 3);
+    host.write(projectId, 'coordinator.merge_strategy', 'pr');
+    expect(registry.settings(projectId)).toEqual({ 'worker_pool.max_workers': 3, 'coordinator.merge_strategy': 'pr' });
+    expect(registry.settings()).toEqual({ 'worker_pool.max_workers': 1, 'coordinator.pr_provider': 'github' });
+    expect(host.read(projectId)).toMatchObject({ 'worker_pool.max_workers': 3, 'coordinator.merge_strategy': 'pr' });
+  });
+
+  it('stores null for a PR provider of none, overriding a global one, and rejects what the registry rejects', () => {
+    const host = setup();
+    registry.setSetting('coordinator.pr_provider', 'github');
+    host.write(projectId, 'coordinator.pr_provider', null);
+    expect(registry.settings(projectId)).toEqual({ 'coordinator.pr_provider': null });
+    expect(host.read(projectId)['coordinator.pr_provider']).toBeNull();
+    expect(() => host.write(projectId, 'worker_pool.max_workers', '3')).toThrow('non-negative integer');
+    expect(() => host.write(projectId, 'coordinator.merge_strategy', null)).toThrow('non-empty string');
+    expect(() => host.write('missing', 'worker_pool.max_workers', 1)).toThrow('not registered');
+  });
+
+  it('restarts the coordinator as orc --project=<id> coordinator restart --json without the project environment', async () => {
+    const calls: Array<{ file: string; args: string[]; env: NodeJS.ProcessEnv }> = [];
+    const host = setup((file, args, options, callback) => { calls.push({ file, args, env: options.env }); callback(null, '{}', ''); });
+    const saved = process.env.ORC_PROJECT_ID;
+    process.env.ORC_PROJECT_ID = 'elsewhere';
+    try { await host.restartCoordinator(projectId); }
+    finally { if (saved === undefined) delete process.env.ORC_PROJECT_ID; else process.env.ORC_PROJECT_ID = saved; }
+    expect(calls).toHaveLength(1);
+    expect(calls[0].file).toBe('/bin/node');
+    expect(calls[0].args).toEqual(['/orc/cli/orc.ts', `--project=${projectId}`, 'coordinator', 'restart', '--json']);
+    expect(calls[0].env.ORC_PROJECT_ID).toBeUndefined();
+  });
+
+  it('rejects a failed restart with its JSON error message, else stderr\'s last line', async () => {
+    const failing = (stdout: string, stderr: string): RunCommand => (_file, _args, _options, callback) => { callback(new Error('Command failed'), stdout, stderr); };
+    await expect(setup(failing('{"error":{"code":"x","message":"Coordinator did not start"}}\n', '')).restartCoordinator(projectId)).rejects.toThrow('Coordinator did not start');
+    registry.close(); rmSync(temp, { recursive: true, force: true });
+    await expect(setup(failing('', 'warning\nError: boom\n')).restartCoordinator(projectId)).rejects.toThrow(/^Error: boom$/);
+  });
+});
+
+describe('coordinatorRestartCommand and commandFailure', () => {
+  it('builds the restart command from the orc command', () => {
+    expect(coordinatorRestartCommand(['orc'], 'p1')).toEqual({ file: 'orc', args: ['--project=p1', 'coordinator', 'restart', '--json'] });
+  });
+
+  it('prefers the JSON error, then stderr\'s last line, then the error', () => {
+    const error = new Error('Command failed: orc');
+    expect(commandFailure(error, '{"error":{"message":"nope"}}', 'Error: other')).toBe('nope');
+    expect(commandFailure(error, 'not json', 'a\nError: other\n')).toBe('Error: other');
+    expect(commandFailure(error, '{"ok":true}', '')).toBe('Command failed: orc');
   });
 });

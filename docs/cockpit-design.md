@@ -70,10 +70,10 @@ A file that cannot be read or parsed, or names an unknown base, is reported and 
 │ 34 cols   ┊ █ master █ █ w1 ! Q × █ a label row capped by  │
 │ (drag the ┊ ▀▀▀▀▀▀▀▀▀▀ ▀▀▀▀▀▀▀▀▀▀▀▀ half blocks, 1-col gaps│
 │  gutter)  ┊                         a blank gap row        │
-│ Project   ┊┌─ [ W1 ] task-1 · implement ───── [QUESTION] ─┐│
-│ Other     ┊│ slot: the active tab's pane, inside          ││
-│ projects  ┊│ the pane box                                 ││
-│ Agents    ┊└──────────────────────────────────────────────┘│
+│ Projects  ┊┌─ [ W1 ] task-1 · implement ───── [QUESTION] ─┐│
+│ Project   ┊│ slot: the active tab's pane, inside          ││
+│ Agents    ┊│ the pane box                                 ││
+│ (gap rows)┊└──────────────────────────────────────────────┘│
 └ footer: 1 row, full width ─────────────────────────────────┘
 ```
 
@@ -85,4 +85,41 @@ The tab strip is four rows: one block per tab on the label row (its second row),
 
 Every shown tab owns its window: the master's, a worker's or a scout's window (and the task explorer's) is sized to the slot when its tab is shown and whenever the slot changes (a terminal resize or a dragged divider), so its screen fills the slot. A hidden tab's window keeps its last size; a window resized from outside the cockpit while shown is cropped, or padded with a dim edge marker (`┊`, `┈`), into the slot until the slot next changes.
 
-The sidebar is three cards (`lib/cockpit2/sidebarCards.ts`): Project (the active project's coordinator state, worker capacity and, only while there is one, a notice row), Other projects (one row each) and Agents (one row each, a second row for an agent needing attention; a row too narrow for the agent's role drops the role whole rather than cutting it). Space or a click on an agent's `[+]` expands it into a box with its task, phase, provider, activity or question and the open key. When rows run short, Other projects shrinks to a `+N more` line before Agents loses rows; the cursor's row (an expanded agent's whole block) stays in view.
+The sidebar is three cards (`lib/cockpit2/sidebarCards.ts`), top to bottom, with one blank row between two cards (no card's: it shows the canvas):
+
+```
+┌─ [ PROJECTS ] ───────────── 2 ┐   every registered project: state badge, `!N` when
+│ ▸ orc-state         [RUNNING] │   its agents need a human; `▸` and text.accent mark
+│   arek-on-trail        [IDLE] │   the active one
+└───────────────────────────────┘
+                                    gap
+┌─ [ ORC-STATE ] ───────────────┐   the active project: coordinator state, worker
+│ coordinator         [RUNNING] │   capacity, open task counts (`no open tasks`; no
+│ workers 2/4                   │   row without its status), the notice only while
+│ tasks 3 todo · 1 in progress  │   there is one, the settings button (`button`)
+│ [ SETTINGS ]                  │
+└───────────────────────────────┘
+                                    gap
+┌─ [ AGENTS ] ──────── 3 live ──┐   one row per agent, a second for one needing
+│ [+] grommash worker [PERMI…]  │   attention
+└───────────────────────────────┘
+```
+
+Agents: a row too narrow for the agent's role drops the role whole rather than cutting it; Space or a click on an agent's `[+]` expands it into a box with its task, phase, provider, activity or question and the open key. The keys move in three boxes, one per card, `Tab` and `Shift-Tab` cycling them: Projects (by project, `Enter` opens it), Project (only its settings button, `Enter` or a click on it opens the active project's settings dialog) and Agents. When rows run short, Projects shrinks to a `+N more` window around its cursor (the active project while the keys are elsewhere) before Agents loses rows; Agents keeps the cursor agent's row (an expanded agent's whole block) and a `+N more` line before the Project card loses rows; Projects goes last unless the keys are in it. The gaps count in the rows (two at 80x24) and go before the Project card loses a row, Projects goes or Agents is down to its least.
+
+## Dialog layer
+
+A dialog is drawn over everything else: the frame behind it is dimmed (`dim` on every cell), the dialog is a box (`drawBox`, focused border) filled with the theme's panel surface (the default background without surfaces), centred, at most 52 columns, and the terminal cursor is hidden. While it is open it takes every key and click; nothing reaches the pane, the sidebar or the tab strip, and pastes and other mouse events are dropped.
+
+The one dialog is the project settings dialog (`lib/cockpit2/settingsDialog.ts`), opened by the Project card's `[ SETTINGS ]` button (`Enter` or a click), titled `[ SETTINGS · <PROJECT> ]`. It edits the project-scope registry settings ([configuration.md](configuration.md), Settings), reading the effective values (`orc project config list`) when it opens:
+
+| Field | Key | Choices | Applies |
+|---|---|---|---|
+| Max workers | `worker_pool.max_workers` | 0 to 8 | at once |
+| Merge | `coordinator.merge_strategy` | `direct`, `pr` | after a coordinator restart |
+| PR provider (only while Merge is `pr`) | `coordinator.pr_provider` | `none`, `github` | after a coordinator restart |
+| Default worker provider | `worker_pool.provider` | `claude`, `codex`, `gemini` | at once |
+| Default worker model | `worker_pool.provider_models.<provider>` | claude: `sonnet`, `opus`, `haiku`; others: their stored model only | at once |
+| Execution mode | `worker_pool.execution_mode` | `full-access`, `sandbox` | after a coordinator restart |
+
+A stored value outside the choices stays selectable. Switching the provider shows that provider's stored model (else `worker_pool.model`) and writes no model. Keys: `↑`/`↓`, `j`/`k`, `Tab`/`Shift-Tab` move over the fields and buttons; `←`/`→`, `h`/`l` or `Space` change the field under the cursor (between buttons they move); a click on a field's value changes it, on its label focuses it. `Enter` on a field saves, on a button presses it; `Esc` or `q` cancel. Changed values are drawn in `text.accent`; a note says whether the changes apply at once or after a coordinator restart (`status.warn`). The buttons are `[ SAVE ]`, `[ SAVE & RESTART ]` (only while a changed field needs a restart) and `[ CANCEL ]`. Saving writes only the changed shown fields (`none` stores null); save & restart then runs `orc --project=<id> coordinator restart`. `pr` merge without a PR provider is refused with an error in the dialog. While saving or restarting the dialog ignores keys; a failed write or restart keeps it open with the error (`error`). It closes when its project is removed from the registry.

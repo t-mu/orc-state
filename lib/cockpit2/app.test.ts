@@ -9,6 +9,7 @@ import {
 import type { ColorDepth } from './color.ts';
 import { BUILT_IN_THEMES, resolveTheme, type Theme } from './theme.ts';
 import type { ExplorerHost } from './explorer.ts';
+import type { SettingValue, SettingsHost } from './settingsDialog.ts';
 import type { MouseEvent } from './mouse.ts';
 import { EDGE_COLUMN, EDGE_ROW } from './frame.ts';
 import type { PaneClient } from './sessions.ts';
@@ -299,11 +300,12 @@ interface StartOptions {
   /** Adjusts each fake client as it is created (before its first mode query). */
   setup?: (fake: FakeClient) => void;
   explorer?: ExplorerHost;
+  settings?: SettingsHost;
   colorDepth?: ColorDepth;
   theme?: Theme;
 }
 
-function start({ keys = DEFAULT_COCKPIT_KEYS, projects = [projectState('demo')], store = new MemoryStore(), projectId = 'demo', setup, explorer, colorDepth, theme }: StartOptions = {}) {
+function start({ keys = DEFAULT_COCKPIT_KEYS, projects = [projectState('demo')], store = new MemoryStore(), projectId = 'demo', setup, explorer, settings, colorDepth, theme }: StartOptions = {}) {
   const terminal = new FakeTerminal();
   const watcher = new FakeWatcher(projects);
   const clients: FakeClient[] = [];
@@ -318,6 +320,7 @@ function start({ keys = DEFAULT_COCKPIT_KEYS, projects = [projectState('demo')],
     },
     resyncDelayMs: 5,
     explorer,
+    settings,
     colorDepth,
     theme,
   });
@@ -965,9 +968,11 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     expect(rows[wide]).toContain('QUESTION');
     expect(wide).toBeLessThan(rows.findIndex((row) => row.includes('w1 ')));
     expect(rows[0].endsWith('┐')).toBe(true);
-    // Every card row ends on the sidebar's right border, wide names or not.
+    // Every card row ends on the sidebar's right border, wide names or not; the gap rows between cards are blank.
     const screen = await shown(terminal);
-    for (let y = 1; y < 15; y++) expect(screen.row(y)[SIDEBAR_COLS - 1].text).toMatch(/[┐│┘]/);
+    const gaps = rows.slice(0, 14).flatMap((row, index) => (row.trim() === '' ? [index] : []));
+    expect(gaps.length).toBeGreaterThan(0);
+    for (let y = 1; y < 15; y++) expect(screen.row(y)[SIDEBAR_COLS - 1].text).toMatch(gaps.includes(y - 1) ? /^ $/ : /[┐│┘]/);
     expect(rows.some((row) => row.includes('[master]'))).toBe(false); // the mode is the footer's
     expect(text(screen, 23)).toContain('[master] keys go to the master');
   });
@@ -1031,7 +1036,7 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     await attached(terminal);
     const master = clients[0];
     terminal.type(F10);
-    await waitForFooter(terminal, '↑↓ Tab · Enter: open · Space: expand · Esc: pane');
+    await waitForFooter(terminal, 'Tab: card · Enter: open · Space: +/- · Esc: pane');
     // The cursor starts on the first agent (the one needing attention); down moves to w1, Enter opens it.
     terminal.type(`${ESC}[B\r`);
     expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: ['w1'], active: 'w1' });
@@ -1071,6 +1076,22 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     expect(other.sent).toEqual([`${other.paneId} y`, `${other.paneId} z`]);
   });
 
+  it('cycles the Projects, Project and Agents cards with Tab and Shift-Tab; without a settings host Enter and a click on [ SETTINGS ] are refused', async () => {
+    const { terminal, app } = withWorkers();
+    await attached(terminal);
+    terminal.type(F10);
+    await waitForFooter(terminal, 'Tab: card');
+    // From the Agents card Shift-Tab goes to the Project card, whose only target is the settings button.
+    terminal.type(`${ESC}[Z\r`);
+    await waitForTabBar(terminal, 1, 'This cockpit cannot change settings.');
+    expect(app.tabs().projects[0]).toMatchObject({ tabs: [], active: null }); // nothing opened
+    // Any key clears the notice; a click on the button asks again.
+    terminal.type(ESC);
+    await waitFor(async () => !text(await shown(terminal), 2).includes('This cockpit cannot change settings.'));
+    terminal.type(click(4, await sidebarRow(terminal, '[ SETTINGS ]')));
+    await waitForTabBar(terminal, 1, 'This cockpit cannot change settings.');
+  });
+
   it('expands and collapses the cursor agent with Space in the sidebar and an agent with a click on its marker; Space in the slot reaches the pane', async () => {
     const { terminal, client, app } = withWorkers();
     await attached(terminal);
@@ -1082,7 +1103,7 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
 
     // Sidebar focused: Space expands the cursor's agent (the one needing attention sorts first) without opening it, and collapses it again.
     terminal.type(F10);
-    await waitForFooter(terminal, 'Space: expand');
+    await waitForFooter(terminal, 'Space: +/-');
     terminal.type(' ');
     await waitForSidebar(terminal, `[-] ${WIDE_AGENT}`);
     await waitForSidebar(terminal, 'Enter: open tab');
@@ -1703,5 +1724,208 @@ describe('runApp pane mouse (fake tmux clients)', () => {
     await waitFor(() => client().resizes.length === 2);
     expect(client().resizes).toEqual(['37x16', '43x16']);
     await waitFor(() => store.state.sidebarCols === undefined);
+  });
+});
+
+// ── settings dialog ──────────────────────────────────────────────────────────
+
+class FakeSettingsHost implements SettingsHost {
+  writes: Array<[string, string, SettingValue]> = [];
+  restarts: string[] = [];
+  reads: string[] = [];
+  /** Set to make writes throw. */
+  writeError: Error | null = null;
+  /** Set to make reads throw. */
+  readError: Error | null = null;
+  /** The pending restart, resolved or rejected by the test. */
+  restart: { resolve: () => void; reject: (error: Error) => void } | null = null;
+  constructor(public settings: Record<string, unknown> = {
+    'worker_pool.max_workers': 2, 'coordinator.merge_strategy': 'direct', 'worker_pool.provider': 'claude',
+    'worker_pool.provider_models.claude': 'opus', 'worker_pool.execution_mode': 'full-access',
+  }) {}
+  read(projectId: string) {
+    this.reads.push(projectId);
+    if (this.readError) throw this.readError;
+    return this.settings;
+  }
+  write(projectId: string, key: string, value: SettingValue) {
+    if (this.writeError) throw this.writeError;
+    this.writes.push([projectId, key, value]);
+  }
+  restartCoordinator(projectId: string) {
+    this.restarts.push(projectId);
+    return new Promise<void>((resolve, reject) => { this.restart = { resolve, reject }; });
+  }
+}
+
+describe('runApp settings dialog (fake tmux client, fake settings host)', () => {
+  const DIALOG_TITLE = 'SETTINGS · DEMO-PROJECT';
+  const screenHas = async (terminal: FakeTerminal, part: string) => {
+    const screen = await shown(terminal);
+    return Array.from({ length: screen.rows }, (_, y) => text(screen, y)).some((row) => row.includes(part));
+  };
+  const waitForScreen = (terminal: FakeTerminal, part: string) => waitFor(() => screenHas(terminal, part));
+  const waitForClosed = (terminal: FakeTerminal) => waitFor(async () => !(await screenHas(terminal, DIALOG_TITLE)));
+  /** Opens the dialog from the keyboard: F10, Shift-Tab to the Project card, Enter on [ SETTINGS ]. */
+  async function openDialog(terminal: FakeTerminal): Promise<void> {
+    terminal.type(F10);
+    await waitForFooter(terminal, 'Tab: card');
+    terminal.type(`${ESC}[Z\r`);
+    await waitForScreen(terminal, DIALOG_TITLE);
+  }
+  /** The frame cell where `part` first starts, on whichever row has it. */
+  async function cellOf(terminal: FakeTerminal, part: string): Promise<{ x: number; y: number }> {
+    const screen = await shown(terminal);
+    for (let y = 0; y < screen.rows; y++) {
+      const x = text(screen, y).indexOf(part);
+      if (x >= 0) return { x, y };
+    }
+    throw new Error(`${part} is not shown`);
+  }
+
+  it('opens on Enter on [ SETTINGS ] over a dimmed frame with the project\'s settings, hides the cursor, and Esc closes it without writing', async () => {
+    const host = new FakeSettingsHost();
+    const { terminal, client } = start({ settings: host });
+    await attached(terminal);
+    await openDialog(terminal);
+    expect(host.reads).toEqual(['demo']);
+    await waitForScreen(terminal, '‹ opus ›');
+    const screen = await shown(terminal);
+    // Behind the dialog: the dimmed sidebar; the cursor is hidden.
+    expect(screen.row(2)[1].style.dim).toBe(true);
+    expect(terminal.writes.join('').lastIndexOf('\x1b[?25l')).toBeGreaterThan(terminal.writes.join('').lastIndexOf('\x1b[?25h'));
+    terminal.type(ESC);
+    await waitForClosed(terminal);
+    expect(host.writes).toEqual([]);
+    expect(client().sent).toEqual([]);
+  });
+
+  it('opens on a click on [ SETTINGS ]; a click on CANCEL closes it', async () => {
+    const host = new FakeSettingsHost();
+    const { terminal } = start({ settings: host });
+    await attached(terminal);
+    terminal.type(click(4, await sidebarRow(terminal, '[ SETTINGS ]')));
+    await waitForScreen(terminal, DIALOG_TITLE);
+    const cancel = await cellOf(terminal, '[ CANCEL ]');
+    terminal.type(click(cancel.x + 2, cancel.y));
+    await waitForClosed(terminal);
+    expect(host.writes).toEqual([]);
+  });
+
+  it('takes every key while open: none reaches the pane or the sidebar', async () => {
+    const host = new FakeSettingsHost();
+    const { terminal, client, app } = start({ settings: host });
+    await attached(terminal);
+    await openDialog(terminal);
+    // x, a paste and F10 do nothing; j moves the dialog's cursor, not the sidebar's.
+    terminal.type(`x${ESC}[200~pasted${ESC}[201~${F10}jj`);
+    await sleep(50);
+    expect(client().sent).toEqual([]);
+    expect(client().pastes).toEqual([]);
+    expect(app.tabs().projects[0]).toMatchObject({ tabs: [], active: null });
+    await waitForScreen(terminal, DIALOG_TITLE);
+  });
+
+  it('writes exactly the changed max workers on Enter and closes', async () => {
+    const host = new FakeSettingsHost();
+    const { terminal } = start({ settings: host });
+    await attached(terminal);
+    await openDialog(terminal);
+    terminal.type('l');
+    await waitForScreen(terminal, '‹ 3 ›');
+    await waitForScreen(terminal, 'Applies at once.');
+    terminal.type('\r');
+    await waitForClosed(terminal);
+    expect(host.writes).toEqual([['demo', 'worker_pool.max_workers', 3]]);
+    expect(host.restarts).toEqual([]);
+  });
+
+  it('refuses pr merge without a PR provider: the error shows and nothing is written', async () => {
+    const host = new FakeSettingsHost();
+    const { terminal } = start({ settings: host });
+    await attached(terminal);
+    await openDialog(terminal);
+    terminal.type('jl');
+    await waitForScreen(terminal, 'PR provider');
+    terminal.type('\r');
+    await waitForScreen(terminal, 'PR merge needs a PR provider.');
+    expect(host.writes).toEqual([]);
+    await waitForScreen(terminal, DIALOG_TITLE);
+  });
+
+  it('pr merge with github and SAVE & RESTART writes both, restarts the coordinator once, ignores keys meanwhile, and closes after', async () => {
+    const host = new FakeSettingsHost();
+    const { terminal } = start({ settings: host });
+    await attached(terminal);
+    await openDialog(terminal);
+    // Merge → pr, PR provider → github, then Tab over the rest of the fields and SAVE to SAVE & RESTART.
+    terminal.type('jljl');
+    await waitForScreen(terminal, '‹ github ›');
+    await waitForScreen(terminal, '! Applies after a coordinator restart.');
+    terminal.type('\t\t\t\t\t');
+    terminal.type('\r');
+    await waitForScreen(terminal, 'Restarting the coordinator…');
+    expect(host.writes).toEqual([['demo', 'coordinator.merge_strategy', 'pr'], ['demo', 'coordinator.pr_provider', 'github']]);
+    expect(host.restarts).toEqual(['demo']);
+    terminal.type(`\r${ESC}`);
+    await sleep(50);
+    expect(host.restarts).toEqual(['demo']);
+    await waitForScreen(terminal, DIALOG_TITLE);
+    host.restart!.resolve();
+    await waitForClosed(terminal);
+    expect(host.writes).toHaveLength(2);
+  });
+
+  it('keeps the dialog open with the first line of a failed write, and saves on a retry', async () => {
+    const host = new FakeSettingsHost();
+    host.writeError = new Error('worker_pool.max_workers must be a non-negative integer\nmore detail');
+    const { terminal } = start({ settings: host });
+    await attached(terminal);
+    await openDialog(terminal);
+    terminal.type('l\r');
+    await waitForScreen(terminal, 'worker_pool.max_workers must be a non-negativ');
+    expect(await screenHas(terminal, 'more detail')).toBe(false);
+    await waitForScreen(terminal, DIALOG_TITLE);
+    // It still takes keys: a retry once the write works saves and closes.
+    host.writeError = null;
+    terminal.type('\r');
+    await waitForClosed(terminal);
+    expect(host.writes).toEqual([['demo', 'worker_pool.max_workers', 3]]);
+  });
+
+  it('shows a failed restart in the dialog', async () => {
+    const host = new FakeSettingsHost();
+    const { terminal } = start({ settings: host });
+    await attached(terminal);
+    await openDialog(terminal);
+    // Execution mode (the last field, up from the first over the buttons) → sandbox, then SAVE & RESTART.
+    terminal.type('kkkl');
+    await waitForScreen(terminal, '‹ sandbox ›');
+    terminal.type('jj\r');
+    await waitFor(() => host.restart !== null);
+    host.restart!.reject(new Error('Coordinator did not start'));
+    await waitForScreen(terminal, 'Coordinator did not start');
+    expect(host.writes).toEqual([['demo', 'worker_pool.execution_mode', 'sandbox']]);
+  });
+
+  it('closes when its project is removed', async () => {
+    const host = new FakeSettingsHost();
+    const { terminal, watcher } = start({ settings: host });
+    await attached(terminal);
+    await openDialog(terminal);
+    watcher.emit({ type: 'removed', project_id: 'demo' });
+    await waitForClosed(terminal);
+  });
+
+  it('refuses to open when the settings cannot be read', async () => {
+    const host = new FakeSettingsHost();
+    host.readError = new Error('Project is not registered: demo');
+    const { terminal } = start({ settings: host });
+    await attached(terminal);
+    terminal.type(F10);
+    await waitForFooter(terminal, 'Tab: card');
+    terminal.type(`${ESC}[Z\r`);
+    await waitForTabBar(terminal, 1, 'The settings could not be read');
+    expect(await screenHas(terminal, DIALOG_TITLE)).toBe(false);
   });
 });
