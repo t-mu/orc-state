@@ -2426,14 +2426,34 @@ describe('runApp add-project and new-agent dialogs (fake hosts)', () => {
       expect(await sidebarHas(terminal, '1 local')).toBe(false);
     });
 
-    it('drops the session when its tab is closed, and shows [ENDED] for one whose session ended in a tab not shown', async () => {
+    it('closes a hidden agent session tab when its session ends, and its [LOCAL] row leaves the card', async () => {
       const { terminal, app, clients } = await withSession();
       expect(app.apply((state) => openAgent(state, 'demo', 'w1')).ok).toBe(true);
+      expect(app.apply((state) => openAgent(state, 'demo', 'agent:1')).ok).toBe(true);
+      await waitFor(async () => (await sidebarRows(terminal)).some((row) => row.includes('◇ claude 1')));
+      // Back to the worker tab: the agent session is hidden.
+      expect(app.apply((state) => selectTab(state, 'w1')).ok).toBe(true);
       clients.find((candidate) => candidate.target.session === 'agent-demo-1')!.emit('exit', 'session closed');
-      await waitFor(async () => (await sidebarRows(terminal)).some((row) => row.includes('◇ claude 1') && row.includes('[ENDED]')));
-      expect(app.apply((state) => closeTab(state, 'agent:1')).ok).toBe(true);
+      await waitFor(() => !app.tabs().projects[0].tabs.includes('agent:1'));
+      expect(app.tabs().projects[0].active).toBe('w1');
       await waitFor(async () => !(await sidebarHas(terminal, '◇')));
     });
+  });
+
+  it('closes a hidden shell tab whose session ended, leaves the shown tab, and never closes a worker tab on exit', async () => {
+    const host = new FakeExplorerHost();
+    const { terminal, clients, app } = start({ explorer: host });
+    await attached(terminal);
+    terminal.type(click(await columnOf(terminal, 2, '+', SIDEBAR_COLS), 2));
+    await attached(terminal, 'shell-demo-1');
+    terminal.type(click(await columnOf(terminal, 2, '+', SIDEBAR_COLS), 2));
+    await attached(terminal, 'shell-demo-2');
+    expect(app.tabs().projects[0].active).toBe('shell:2');
+    // shell 1 is hidden: its end closes it without showing it; shell 2 stays shown.
+    clients.find((fake) => fake.target.session === 'shell-demo-1')!.emit('exit', 'session closed');
+    await waitFor(() => !app.tabs().projects[0].tabs.includes('shell:1'));
+    expect(app.tabs().projects[0].tabs).toEqual(['shell:2']);
+    expect(app.tabs().projects[0].active).toBe('shell:2');
   });
 
   it('starts a custom agent with its prompt as the first message; its session ending closes the tab', async () => {
