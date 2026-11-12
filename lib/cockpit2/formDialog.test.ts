@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createFrame } from './frame.ts';
 import { addProjectRequest, openAddProjectDialog } from './addProjectDialog.ts';
 import { drawForm, focusedField, formClick, formKey, formLayout, formType, formValue, typingInForm, type FormState } from './formDialog.ts';
-import { CUSTOM_AGENT, FRESH_SESSION, NO_CUSTOM_AGENTS, agentCommand, newAgentRequest, newAgentStep, openNewAgentDialog } from './newAgentDialog.ts';
+import { CUSTOM_AGENT, FRESH_SESSION, NO_CUSTOM_AGENTS, agentCommand, agentLaunchOptions, newAgentRequest, newAgentStep, openNewAgentDialog } from './newAgentDialog.ts';
 import { DEFAULT_THEME } from './theme.ts';
 
 const rowText = (frame: ReturnType<typeof createFrame>, y: number) => frame.cells.slice(y * frame.cols, (y + 1) * frame.cols).map((cell) => cell.text).join('');
@@ -115,9 +115,23 @@ describe('newAgentDialog', () => {
     expect(Array.from({ length: 24 }, (_, y) => rowText(frame, y)).join('\n')).toContain(NO_CUSTOM_AGENTS);
   });
 
-  it('runs the provider\'s own CLI', () => {
-    expect(agentCommand('claude')).toBe('claude');
-    expect(agentCommand('codex')).toBe('codex');
-    expect(agentCommand('gemini')).toBe('gemini');
+  it('runs the provider\'s own CLI, skipping its permission prompts under full-access (the default), with the project model', () => {
+    expect(agentCommand('claude')).toBe('claude --dangerously-skip-permissions');
+    expect(agentCommand('codex')).toBe('codex --dangerously-bypass-approvals-and-sandbox');
+    expect(agentCommand('gemini')).toBe('gemini --yolo');
+    expect(agentCommand('codex', { executionMode: 'full-access', model: 'gpt-6.1-sol' })).toBe('codex --dangerously-bypass-approvals-and-sandbox --model gpt-6.1-sol');
+    expect(agentCommand('claude', { executionMode: 'sandbox' })).toBe('claude');
+    expect(agentCommand('gemini', { executionMode: 'sandbox', model: 'flash' })).toBe('gemini --model flash');
+    // A model that is not a plain id never reaches the shell command.
+    expect(agentCommand('claude', { model: 'sonnet; rm -rf /' })).toBe('claude --dangerously-skip-permissions');
+  });
+
+  it('takes the execution mode and the provider\'s default model from the project settings', () => {
+    expect(agentLaunchOptions({}, 'codex')).toEqual({ executionMode: null, model: null });
+    expect(agentLaunchOptions({ default_execution_mode: 'sandbox', 'worker_pool.model': 'shared' }, 'codex')).toEqual({ executionMode: 'sandbox', model: 'shared' });
+    expect(agentLaunchOptions({
+      default_execution_mode: 'sandbox', 'worker_pool.execution_mode': 'full-access',
+      'worker_pool.model': 'shared', 'worker_pool.provider_models.codex': 'gpt-6.1-sol',
+    }, 'codex')).toEqual({ executionMode: 'full-access', model: 'gpt-6.1-sol' });
   });
 });

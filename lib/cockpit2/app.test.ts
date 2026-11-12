@@ -1392,6 +1392,8 @@ class FakeExplorerHost implements ExplorerHost {
   }
   prompts: Array<{ session: string; text: string }> = [];
   sendPrompt(target: TmuxTarget, text: string) { this.prompts.push({ session: target.session, text }); return Promise.resolve(); }
+  readonly accepted: string[] = [];
+  acceptStartup(target: TmuxTarget) { this.accepted.push(target.session); return Promise.resolve(); }
   stop(target: TmuxTarget) { this.stopped.push(target); return Promise.resolve(); }
 }
 
@@ -2322,6 +2324,23 @@ describe('runApp add-project and new-agent dialogs (fake hosts)', () => {
     await waitForTabBar(terminal, 1, 'cannot add projects');
   });
 
+  it('keeps the provider\'s permission prompts under a sandbox execution mode, and runs and records the project\'s model', async () => {
+    const host = new FakeExplorerHost();
+    const settings = new FakeSettingsHost({
+      'worker_pool.provider': 'codex', 'worker_pool.execution_mode': 'sandbox', 'worker_pool.provider_models.codex': 'gpt-6.1-sol',
+    });
+    const { terminal, app, store } = start({ explorer: host, settings, agentDefinitions: () => [critic], projects: [projectState('demo', { name: 'demo' })] });
+    await attached(terminal);
+    app.openNewAgent('demo');
+    await waitForScreen(terminal, '‹ codex ›');
+    terminal.type('\r');
+    await attached(terminal, 'agent-demo-1');
+    expect(host.agents[0].command).toBe('codex --model gpt-6.1-sol');
+    expect(host.accepted).toEqual([]); // sandbox: its startup questions are the user's
+    await waitFor(() => store.state.agentTabs?.demo?.['agent:1'] !== undefined);
+    expect(store.state.agentTabs?.demo?.['agent:1']).toMatchObject({ provider: 'codex', model: 'gpt-6.1-sol' });
+  });
+
   it('starts a fresh session on the project\'s provider in an agent:1 tab that types at once; × kills it', async () => {
     const host = new FakeExplorerHost();
     const settings = new FakeSettingsHost({ 'worker_pool.provider': 'codex' });
@@ -2333,7 +2352,9 @@ describe('runApp add-project and new-agent dialogs (fake hosts)', () => {
     expect(await screenText(terminal)).not.toContain('Agent');
     terminal.type('\r');
     await attached(terminal, 'agent-demo-1');
-    expect(host.agents).toEqual([{ session: 'agent-demo-1', cwd: '/repo/demo', size: '43x16', command: 'codex' }]);
+    // Full-access (the default execution mode): the provider's skip-permissions flag, and its startup questions answered.
+    expect(host.agents).toEqual([{ session: 'agent-demo-1', cwd: '/repo/demo', size: '43x16', command: 'codex --dangerously-bypass-approvals-and-sandbox' }]);
+    expect(host.accepted).toEqual(['agent-demo-1']);
     expect(host.prompts).toEqual([]);
     expect(app.tabs().projects[0].active).toBe('agent:1');
     await waitForTabBar(terminal, 1, 'codex 1 ×');
@@ -2426,7 +2447,7 @@ describe('runApp add-project and new-agent dialogs (fake hosts)', () => {
     await waitForScreen(terminal, 'Agent       critic');
     terminal.type('\r');
     await attached(terminal, 'agent-demo-1');
-    expect(host.agents[0].command).toBe('claude');
+    expect(host.agents[0].command).toBe('claude --dangerously-skip-permissions');
     await waitFor(() => host.prompts.length === 1);
     expect(host.prompts).toEqual([{ session: 'agent-demo-1', text: critic.prompt }]);
     await waitForTabBar(terminal, 1, 'critic · claude ×');

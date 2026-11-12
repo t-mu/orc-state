@@ -37,7 +37,7 @@ export interface ViewState {
 }
 
 /** An agent session tab's provider, the custom agent it was started as (null for a fresh session) and when it was opened (ISO; absent when unknown). */
-export interface AgentTabInfo { provider: string; agent: string | null; openedAt?: string }
+export interface AgentTabInfo { provider: string; agent: string | null; openedAt?: string; model?: string }
 export type AgentTabs = Record<string, Record<string, AgentTabInfo>>;
 
 export const DEFAULT_VIEW_STATE: ViewState = { tabs: EMPTY_COCKPIT_STATE, masterTargets: {} };
@@ -76,7 +76,7 @@ export function parseViewState(raw: string | null | undefined): ViewState {
 
 const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 
-/** Stored agent session tabs; an entry that is not a provider and an agent name (or null) is dropped, an `openedAt` that is not a string left out. */
+/** Stored agent session tabs; an entry that is not a provider and an agent name (or null) is dropped, an `openedAt` or `model` that is not a string left out. */
 function parseAgentTabs(stored: unknown): AgentTabs {
   const result: AgentTabs = {};
   if (!isRecord(stored)) return result;
@@ -84,7 +84,11 @@ function parseAgentTabs(stored: unknown): AgentTabs {
     if (!isRecord(tabs)) continue;
     for (const [tabId, info] of Object.entries(tabs)) {
       if (!isRecord(info) || typeof info.provider !== 'string' || !(info.agent === null || typeof info.agent === 'string')) continue;
-      (result[projectId] ??= {})[tabId] = { provider: info.provider, agent: info.agent, ...(typeof info.openedAt === 'string' ? { openedAt: info.openedAt } : {}) };
+      (result[projectId] ??= {})[tabId] = {
+        provider: info.provider, agent: info.agent,
+        ...(typeof info.openedAt === 'string' ? { openedAt: info.openedAt } : {}),
+        ...(typeof info.model === 'string' ? { model: info.model } : {}),
+      };
     }
   }
   return result;

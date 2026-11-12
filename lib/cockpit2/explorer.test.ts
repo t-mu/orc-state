@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import type { ProjectWatchState } from '../../client.ts';
 import { nextAttention, type CockpitTabState } from '../cockpitTabs.ts';
 import {
-  EXPLORER_SOCKET, SHELL_SCRIPT, agentScreenReady, agentScript, agentSessionName, attentionQueue, explorerScript, explorerSessionName, isAgentSessionTab,
+  EXPLORER_SOCKET, SHELL_SCRIPT, agentScreenReady, startupAnswer, agentScript, agentSessionName, attentionQueue, explorerScript, explorerSessionName, isAgentSessionTab,
   isOwnedSessionTab, isShellTab, nextAgentTab, nextShellTab, shellSessionName, tmuxExplorerHost,
 } from './explorer.ts';
 
@@ -98,6 +98,7 @@ describe('agent session tabs', () => {
   });
 
   it('is ready for a prompt once drawn and not asking whether to trust the folder', () => {
+    expect(agentScreenReady('WARNING: Claude Code running in Bypass Permissions mode\n 1. No, exit\n❯ 2. Yes, I accept')).toBe(false);
     expect(agentScreenReady('')).toBe(false);
     expect(agentScreenReady('\n  \n')).toBe(false);
     expect(agentScreenReady('> \n? for shortcuts')).toBe(true);
@@ -191,5 +192,16 @@ describe('attentionQueue', () => {
     step = nextAttention(step.state, waiting);
     expect(step.state.activeProject).toBe('b');
     expect(step.state.projects[0].active).toBeNull();
+  });
+});
+
+describe('startupAnswer', () => {
+  it('accepts Claude\'s bypass-permissions mode with 2 then Enter, a trust or continue question with Enter, nothing on a ready screen', () => {
+    expect(startupAnswer('WARNING: Claude Code running in Bypass Permissions mode\n 1. No, exit\n❯ 2. Yes, I accept')).toEqual(['2', 'Enter']);
+    expect(startupAnswer('Do you trust the files in this folder?\n❯ 1. Yes, proceed\n 2. No, exit')).toEqual(['Enter']);
+    expect(startupAnswer('You are in /repo\n› 1. Yes, continue')).toEqual(['Enter']);
+    expect(startupAnswer('Press Enter to continue')).toEqual(['Enter']);
+    expect(startupAnswer('┌───┐\n│ > Try "fix lint errors" │\n└───┘')).toBeNull();
+    expect(startupAnswer('')).toBeNull();
   });
 });
