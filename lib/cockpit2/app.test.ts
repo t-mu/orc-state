@@ -965,9 +965,11 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     expect(rows[wide]).toContain('QUESTION');
     expect(wide).toBeLessThan(rows.findIndex((row) => row.includes('w1 ')));
     expect(rows[0].endsWith('┐')).toBe(true);
-    // Every card row ends on the sidebar's right border, wide names or not.
+    // Every card row ends on the sidebar's right border, wide names or not; the gap rows between cards are blank.
     const screen = await shown(terminal);
-    for (let y = 1; y < 15; y++) expect(screen.row(y)[SIDEBAR_COLS - 1].text).toMatch(/[┐│┘]/);
+    const gaps = rows.slice(0, 14).flatMap((row, index) => (row.trim() === '' ? [index] : []));
+    expect(gaps.length).toBeGreaterThan(0);
+    for (let y = 1; y < 15; y++) expect(screen.row(y)[SIDEBAR_COLS - 1].text).toMatch(gaps.includes(y - 1) ? /^ $/ : /[┐│┘]/);
     expect(rows.some((row) => row.includes('[master]'))).toBe(false); // the mode is the footer's
     expect(text(screen, 23)).toContain('[master] keys go to the master');
   });
@@ -1031,7 +1033,7 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     await attached(terminal);
     const master = clients[0];
     terminal.type(F10);
-    await waitForFooter(terminal, '↑↓ Tab · Enter: open · Space: expand · Esc: pane');
+    await waitForFooter(terminal, 'Tab: card · Enter: open · Space: +/- · Esc: pane');
     // The cursor starts on the first agent (the one needing attention); down moves to w1, Enter opens it.
     terminal.type(`${ESC}[B\r`);
     expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: ['w1'], active: 'w1' });
@@ -1071,6 +1073,22 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     expect(other.sent).toEqual([`${other.paneId} y`, `${other.paneId} z`]);
   });
 
+  it('cycles the Projects, Project and Agents cards with Tab and Shift-Tab; Enter and a click on [ SETTINGS ] ask for the settings, not available yet', async () => {
+    const { terminal, app } = withWorkers();
+    await attached(terminal);
+    terminal.type(F10);
+    await waitForFooter(terminal, 'Tab: card');
+    // From the Agents card Shift-Tab goes to the Project card, whose only target is the settings button.
+    terminal.type(`${ESC}[Z\r`);
+    await waitForTabBar(terminal, 1, 'Settings are not available yet.');
+    expect(app.tabs().projects[0]).toMatchObject({ tabs: [], active: null }); // nothing opened
+    // Any key clears the notice; a click on the button asks again.
+    terminal.type(ESC);
+    await waitFor(async () => !text(await shown(terminal), 2).includes('Settings are not available yet.'));
+    terminal.type(click(4, await sidebarRow(terminal, '[ SETTINGS ]')));
+    await waitForTabBar(terminal, 1, 'Settings are not available yet.');
+  });
+
   it('expands and collapses the cursor agent with Space in the sidebar and an agent with a click on its marker; Space in the slot reaches the pane', async () => {
     const { terminal, client, app } = withWorkers();
     await attached(terminal);
@@ -1082,7 +1100,7 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
 
     // Sidebar focused: Space expands the cursor's agent (the one needing attention sorts first) without opening it, and collapses it again.
     terminal.type(F10);
-    await waitForFooter(terminal, 'Space: expand');
+    await waitForFooter(terminal, 'Space: +/-');
     terminal.type(' ');
     await waitForSidebar(terminal, `[-] ${WIDE_AGENT}`);
     await waitForSidebar(terminal, 'Enter: open tab');

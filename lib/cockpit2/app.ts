@@ -30,12 +30,12 @@
  * `project › tab` and the cockpit keys; a terminal too short drops the
  * footer, then the tab bar's borders, then the header, before the slot
  * shrinks. The header, the tab bar and the footer are drawn by widgets.ts,
- * the sidebar's Project, Other projects and Agents cards by sidebarCards.ts,
+ * the sidebar's Projects, Project and Agents cards by sidebarCards.ts,
  * from the pure models of lib/tui. The keys belong to the slot or to a
  * sidebar box: the dashboard key (F10 by default) or the prefix then `o`
  * focus the sidebar, where arrows (or
- * j/k), Tab, Enter, Space and Esc navigate, open, expand or collapse an agent
- * and return to the pane. Clicks on a sidebar row open that project or agent
+ * j/k), Tab (cycling the cards), Enter, Space and Esc navigate, open, expand
+ * or collapse an agent and return to the pane. Clicks on a sidebar row open that project or agent
  * (on an agent's collapse marker expand or collapse it), on a header button open the
  * explorer or jump to attention, on a tab show it, on a tab's close
  * marker close it (only the view: the agent keeps running). What Enter or a
@@ -571,7 +571,7 @@ export function runApp(options: AppOptions): App {
   });
 
   // ── widgets ──
-  /** The sidebar's cards as drawn now: the active project, the other registered projects, the active one's agents; an agent that left is no longer expanded. */
+  /** The sidebar's cards as drawn now: every registered project, the active one and its agents; an agent that left is no longer expanded. */
   function currentSidebar() {
     const model = buildSidebarModel(buildProjectViews([...watched.values()]), {
       stateDir: '', activeProjectId: tabs.activeProject, nowMs: Date.now(), registryError, agentDetails: true,
@@ -913,6 +913,7 @@ export function runApp(options: AppOptions): App {
     if (!command) return;
     if (command.type === 'focusSlot') setFocus('slot');
     else if (command.type === 'openProject') { if (apply((state) => showProject(state, command.projectId)).ok) setFocus('slot'); }
+    else if (command.type === 'openSettings') { refusal = 'Settings are not available yet.'; scheduleRender(); }
     else if (apply((state) => openAgent(state, command.projectId, command.agentId)).ok) setFocus('slot');
   }
 

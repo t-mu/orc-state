@@ -85,6 +85,8 @@ export interface SidebarModel {
   agents: SidebarAgent[];
   /** The agents are from the active project's last known status (it is not running). */
   agentsStale: boolean;
+  /** The active project's task counts by status (`orc status`'s `tasks.counts`); null or absent without its status. */
+  tasks?: Record<string, number> | null;
   /** Why nothing is shown: an unreadable registry or no project at all. */
   notice: string | null;
 }
@@ -197,6 +199,7 @@ export function buildSidebarModel(
     activeProjectId: active?.project_id ?? null,
     agents: active ? sidebarAgents(active, options.nowMs, { details: options.agentDetails ?? false }) : [],
     agentsStale: active?.stale ?? false,
+    tasks: active?.status?.tasks?.counts ?? null,
     notice: options.registryError
       ? `registry error: ${options.registryError}`
       : views.length === 0 ? 'no registered projects' : null,
