@@ -412,6 +412,25 @@ describe('spawnEphemeralWorker', () => {
     expect(mockStart).toHaveBeenCalledOnce();
   });
 
+  it('records the model it launches with on the agent', async () => {
+    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'tmux:amber-anchor', provider_ref: null });
+    const adapter = { start: mockStart, send: vi.fn(), stop: vi.fn(), heartbeatProbe: vi.fn().mockResolvedValue(true) };
+    const { spawnEphemeralWorker } = await import('./workerRuntime.ts');
+    const result = await spawnEphemeralWorker(dir, {
+      agentId: 'amber-anchor',
+      provider: 'claude',
+      adapter,
+      workingDirectory: '/tmp/work',
+      taskModel: 'sonnet',
+      emit: vi.fn(),
+    });
+    expect(result.ok).toBe(true);
+    expect(result.agent?.model).toBe('sonnet');
+    expect((mockStart.mock.calls[0] as [string, Record<string, unknown>])[1].model).toBe('sonnet');
+    const agents = JSON.parse(readFileSync(join(dir, 'agents.json'), 'utf8')).agents as Agent[];
+    expect(agents.find((a) => a.agent_id === 'amber-anchor')?.model).toBe('sonnet');
+  });
+
   it('treats dead worker cleanup as terminal session cleanup rather than slot repair', async () => {
     const mockStart = vi.fn().mockRejectedValue(new Error('launch failed'));
     const adapter = {
