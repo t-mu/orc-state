@@ -124,6 +124,8 @@ export interface LocalAgent {
   alive: boolean;
   /** Its run time since its tab was opened, when known. */
   elapsed?: string | null;
+  /** The model it was launched with; absent: the CLI's own default. */
+  model?: string | null;
 }
 
 /** A local agent session's sidebar key: apart from every coordinator agent's (`<project>/<agent>`). */
@@ -1095,7 +1097,7 @@ export function drawSidebarCards(frame: Frame, region: Region, layout: SidebarCa
     const labelled = (label: string, value: Run[]): Run[] => cutRuns([[blockLabel(label), muted], ...value], textCols);
     const custom = session.variant === 'custom' && session.agentName;
     const runs: Run[] = line.part === 'model'
-      ? labelled(BLOCK_LABELS.model, [[session.provider, primary], [' · ', muted], ['default', primary]])
+      ? labelled(BLOCK_LABELS.model, [[session.provider, primary], [' · ', muted], [session.model ?? 'default', primary]])
       : line.part === 'type' ? custom ? labelled(BLOCK_LABELS.agent, [[session.agentName ?? '', primary]]) : labelled(BLOCK_LABELS.type, [['fresh session', primary]])
       : [[fitText(line.text ?? '', textCols), muted]];
     drawRuns(frame, x + 2, y, runs, textCols);

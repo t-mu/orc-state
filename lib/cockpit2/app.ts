@@ -96,7 +96,7 @@ import {
 import { formClick, formKey, formLayout, formType, drawForm, typingInForm, type FormKey, type FormState, type FormStep } from './formDialog.ts';
 import { addProjectRequest, openAddProjectDialog, type ProjectHost } from './addProjectDialog.ts';
 import {
-  agentCommand, newAgentRequest, newAgentStep, openNewAgentDialog, type AgentDefinition, type NewAgentDialogState,
+  agentCommand, agentLaunchOptions, newAgentRequest, type AgentLaunchOptions, newAgentStep, openNewAgentDialog, type AgentDefinition, type NewAgentDialogState,
 } from './newAgentDialog.ts';
 import { createTokenizer, keyMatcher, type Token } from './input.ts';
 import { createMotionCoalescer, encodeMouse, parseSgrMouse, routeSlotMouse, type MouseEvent } from './mouse.ts';
@@ -676,6 +676,7 @@ export function runApp(options: AppOptions): App {
         variant: info?.agent ? 'custom' : 'fresh', agentName: info?.agent ?? null,
         alive: sessions.get(tabKey({ projectId, agentId: tabId }))?.state.kind !== 'ended',
         elapsed: Number.isFinite(opened) ? formatElapsed((nowMs - opened) / 1000) : null,
+        model: info?.model ?? null,
       };
     });
   }
@@ -1340,22 +1341,29 @@ export function runApp(options: AppOptions): App {
     if (!cwd) { updateForm(generation, (form) => ({ ...form, error: `Project ${projectId} is not registered.` })); return; }
     const id = nextAgentTab(tabs.projects.find((project) => project.projectId === projectId)?.tabs ?? []);
     updateForm(generation, (form) => ({ ...form, busy: 'Starting the session…', error: null }));
+    let launch: AgentLaunchOptions = {};
+    try { launch = options.settings ? agentLaunchOptions(options.settings.read(projectId), request.provider) : {}; } catch { /* the CLI defaults */ }
     let target: TmuxTarget;
     try {
-      target = await host.startAgent(agentSessionName(projectId, id), cwd, slotSize(), agentCommand(request.provider));
+      target = await host.startAgent(agentSessionName(projectId, id), cwd, slotSize(), agentCommand(request.provider, launch));
     } catch (error) {
       updateForm(generation, (form) => ({ ...form, busy: null, error: errorLine(error) }));
       return;
     }
     if (closed) return;
-    agentTabs[projectId] = { ...agentTabs[projectId], [id]: { provider: request.provider, agent: request.agent?.name ?? null, openedAt: new Date().toISOString() } };
+    agentTabs[projectId] = { ...agentTabs[projectId], [id]: { provider: request.provider, agent: request.agent?.name ?? null, openedAt: new Date().toISOString(), ...(launch.model ? { model: launch.model } : {}) } };
     if (generation === dialogGeneration) closeDialog();
     setFocus('slot');
     apply((state) => openAgent(state, projectId, id));
+    // Under full-access (the project's execution mode, by default) the session starts in its provider's
+    // skip-permissions mode and its startup questions are answered here, so it opens straight into the CLI.
+    const fullAccess = (launch.executionMode ?? 'full-access') !== 'sandbox';
+    const label = agentTabLabel(projectId, id);
+    const ready = fullAccess ? host.acceptStartup(target).catch(() => { /* left for the user */ }) : Promise.resolve();
     if (request.agent) {
-      const label = agentTabLabel(projectId, id);
+      const prompt = request.agent.prompt;
       // Not tracked: quitting does not wait for a session to get ready.
-      host.sendPrompt(target, request.agent.prompt).catch((error: unknown) => {
+      void ready.then(() => host.sendPrompt(target, prompt)).catch((error: unknown) => {
         if (closed) return;
         refusal = `${label}: its prompt was not sent: ${errorLine(error)}`;
         scheduleRender();

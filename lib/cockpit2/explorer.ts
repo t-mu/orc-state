@@ -76,8 +76,20 @@ export function agentScript(command: string): string {
 }
 const shellWord = (text: string) => `'${text.replace(/'/g, `'\\''`)}'`;
 
-/** Lines on a provider's screen that ask the user first (trust this folder): a prompt sent then would answer them. */
-const STARTUP_QUESTION = /do you trust|trust (?:this|the files in this) folder|yes, continue|press enter to continue/i;
+/** Lines on a provider's screen that ask the user first (trust this folder, accept Claude's bypass-permissions mode): a prompt sent then would answer them. */
+const STARTUP_QUESTION = /do you trust|trust (?:this|the files in this) folder|yes, continue|press enter to continue|bypass permissions mode|yes, i accept/i;
+
+/**
+ * The keys that answer the startup question on a full-access session's
+ * screen, or null when it asks none: Claude's bypass-permissions
+ * confirmation takes `2` (Yes, I accept) then Enter; a trust or continue
+ * question takes Enter (its default is to trust and go on).
+ */
+export function startupAnswer(text: string): string[] | null {
+  if (/bypass permissions mode/i.test(text) && /yes, i accept/i.test(text)) return ['2', 'Enter'];
+  if (STARTUP_QUESTION.test(text)) return ['Enter'];
+  return null;
+}
 
 /**
  * Whether a pane's text shows a provider ready for its first message: drawn
@@ -114,6 +126,13 @@ export interface ExplorerHost {
    * then Enter, as a worker's bootstrap is sent; rejects when it never got ready.
    */
   sendPrompt(target: TmuxTarget, text: string): Promise<void>;
+  /**
+   * Answers a full-access session's startup questions the way orc's worker
+   * launcher does (trust the folder: Enter; Claude's bypass-permissions
+   * confirmation: "2. Yes, I accept"), until the session is ready; resolves
+   * once it is (or after a timeout: whatever is left stays for the user).
+   */
+  acceptStartup(target: TmuxTarget): Promise<void>;
   /** Kills an explorer's session, resolving once tmux has; errors are ignored (it may be gone already). */
   stop(target: TmuxTarget): Promise<void>;
 }
@@ -132,6 +151,10 @@ export interface TmuxExplorerHostOptions {
   promptTimeoutMs?: number;
   /** The pause between the paste and its Enter (default 500 ms, as a worker's bootstrap). */
   promptEnterDelayMs?: number;
+  /** How long a full-access session's startup questions are answered before they are left to the user (default 30 s). */
+  startupTimeoutMs?: number;
+  /** The pause after answering a startup question, for its dialog to go away (default 800 ms). */
+  startupSettleMs?: number;
 }
 
 function runTmux(tmuxBinary: string, args: string[], env?: NodeJS.ProcessEnv): Promise<void> {
@@ -247,6 +270,32 @@ export function tmuxExplorerHost(options: TmuxExplorerHostOptions): ExplorerHost
       await runTmux(options.tmuxBinary, [...base, 'paste-buffer', '-d', '-p', '-b', buffer, '-t', pane]);
       await delay(options.promptEnterDelayMs ?? 500);
       await runTmux(options.tmuxBinary, [...base, 'send-keys', '-t', pane, 'Enter']);
+    },
+    async acceptStartup(target) {
+      const base = ['-L', target.socket, '-f', '/dev/null'];
+      const pane = `=${target.session}:`;
+      const pollMs = options.promptPollMs ?? 250;
+      const settleMs = options.promptSettleMs ?? 1_500;
+      const deadline = Date.now() + (options.startupTimeoutMs ?? 30_000);
+      let last: string | null = null;
+      let since = Date.now();
+      while (Date.now() < deadline) {
+        const screen = await tmuxOutput(options.tmuxBinary, [...base, 'capture-pane', '-p', '-t', pane]);
+        if (screen !== last) { last = screen; since = Date.now(); }
+        const answer = startupAnswer(screen);
+        if (answer) {
+          for (const key of answer) {
+            await runTmux(options.tmuxBinary, [...base, 'send-keys', '-t', pane, key]);
+            await delay(200);
+          }
+          // Let the dialog go away before looking again.
+          await delay(options.startupSettleMs ?? 800);
+          last = null;
+          continue;
+        }
+        if (agentScreenReady(screen) && Date.now() - since >= settleMs) return;
+        await delay(pollMs);
+      }
     },
     stop(target) {
       return runTmux(options.tmuxBinary, ['-L', target.socket, 'kill-session', '-t', `=${target.session}`]).catch(() => { /* gone already */ });
