@@ -335,6 +335,20 @@ describe('sidebar navigation (keys move in the projects, project and agents boxe
     expect(sidebarCardClick(at(nav), INITIAL_SIDEBAR_NAV, 4, projects.y + 3)?.command).toEqual({ type: 'openProject', projectId: 'c' });
   });
 
+  it('expands the cursor agent with expand and collapses it with collapse, each a no-op when it already is', () => {
+    const nav: SidebarNav = { ...INITIAL_SIDEBAR_NAV, box: 'agents' };
+    const v = view(nav);
+    const key = v.model.agents[v.agentIndex].key;
+    const opened = navigateSidebar(v, nav, 'expand');
+    expect(opened.nav.expanded.has(key)).toBe(true);
+    expect(navigateSidebar(view(opened.nav), opened.nav, 'expand')).toEqual({ nav: opened.nav, command: null });
+    const closed = navigateSidebar(view(opened.nav), opened.nav, 'collapse');
+    expect(closed.nav.expanded.has(key)).toBe(false);
+    expect(navigateSidebar(view(closed.nav), closed.nav, 'collapse')).toEqual({ nav: closed.nav, command: null });
+    const project: SidebarNav = { ...INITIAL_SIDEBAR_NAV, box: 'project' };
+    expect(navigateSidebar(view(project), project, 'expand')).toEqual({ nav: project, command: null });
+  });
+
   it('opens the active project\'s settings with Enter in the project box; up and down stay on the button', () => {
     const nav: SidebarNav = { ...INITIAL_SIDEBAR_NAV, box: 'project' };
     expect(navigateSidebar(view(nav), nav, 'open')).toEqual({ nav, command: { type: 'openSettings', projectId: 'p1' } });

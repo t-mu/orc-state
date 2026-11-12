@@ -229,6 +229,14 @@ export function navigateSidebar(view: SidebarCursor, nav: SidebarNav, key: Sideb
       if (nav.box !== 'agents' || length === 0 || onButton) return { nav, command: null };
       return { nav: toggleAgent(nav, keys[current]), command: null };
     }
+    case 'expand':
+    case 'collapse': {
+      // → expands the cursor agent, ← collapses it; either is a no-op when it already is.
+      if (nav.box !== 'agents' || length === 0 || onButton) return { nav, command: null };
+      const expanded = nav.expanded.has(keys[current]);
+      if (expanded === (key === 'expand')) return { nav, command: null };
+      return { nav: toggleAgent(nav, keys[current]), command: null };
+    }
     case 'kill': {
       if (nav.box !== 'agents' || length === 0 || onButton) return { nav, command: null };
       return killAgentStep(nav, view, current);

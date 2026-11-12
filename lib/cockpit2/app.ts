@@ -1541,7 +1541,8 @@ export function runApp(options: AppOptions): App {
         scheduleRender();
         return;
       case 'switchFocus': setFocus(focus === 'slot' ? nav.box : 'slot'); return;
-      case 'focusSidebar': setFocus(nav.box); return;
+      // The dashboard key toggles: into the sidebar from the pane, back to the pane from the sidebar.
+      case 'focusSidebar': setFocus(focus === 'slot' ? nav.box : 'slot'); return;
       case 'sidebar': {
         // Only a focused sidebar gets these: the box the keys are in follows the cursor.
         const step = navigateSidebar(currentSidebar(), nav, action.key);

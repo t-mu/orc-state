@@ -1057,6 +1057,12 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     expect(worker.sent).toEqual([`${worker.paneId} x`]);
     expect(master.sent).toEqual([]);
 
+    // F10 toggles: pressed in the sidebar it returns to the pane, the tab still typing.
+    terminal.type(F10);
+    await waitForFooter(terminal, 'Enter: open');
+    terminal.type(F10);
+    await waitForFooter(terminal, '[typing] Ctrl-]: stop typing');
+
     // Back in the sidebar (its cursor kept on w1): k moves up, Enter opens the wide-named agent.
     terminal.type(F10);
     await waitForFooter(terminal, 'Enter: open');
