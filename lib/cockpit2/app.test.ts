@@ -1273,7 +1273,7 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     const fake = explorerClient(clients)!;
     // The explorer's window is the cockpit's own: sized to the slot, not an ignore-size view.
     expect(fake.ignoreSize).toBe(false);
-    await waitForTabBar(terminal, 1, '2 tasks ×');
+    await waitForTabBar(terminal, 1, ' tasks ×');
     await waitForFooter(terminal, '[tasks] Ctrl-] or ×: close');
     expect(text(await shown(terminal), 5, 35)).toBe('┌─ [ TASKS ] task explorer · demo-project ──┐'); // the explorer's header on the pane box
     expect(text(await shown(terminal), 0)).not.toContain('tasks'); // no entry while it is shown
@@ -1366,7 +1366,7 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     expect(fake.sent).toEqual([`${fake.paneId} \r`, `${fake.paneId} ${ESC}`]);
     await sleep(30);
     expect(host.stopped).toEqual([]);
-    await waitForTabBar(terminal, 1, '2 tasks ×');
+    await waitForTabBar(terminal, 1, ' tasks ×');
     // q in its list: the explorer quits on its own, its session ends, the cockpit closes the tab.
     terminal.type('q');
     await waitFor(() => fake.sent.length === 3);

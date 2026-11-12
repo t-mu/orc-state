@@ -128,7 +128,7 @@ describe.skipIf(!hasTmux)('runApp (private tmux server)', () => {
     terminal.type(`${F12}t`);
     await waitForSlotLine(terminal, 'explorer-for-fake');
     expect(explorerTmux('display-message', '-p', '-t', '=explorer-fake:', '#{window_width}x#{window_height} #{status}').stdout.trim()).toBe('43x16 off');
-    await waitForTabBar(terminal, 1, '2 tasks ×');
+    await waitForTabBar(terminal, 1, ' tasks ×');
     // Its keys reach it one read each, also when they arrive in one read (j and k navigate the real explorer); the master gets none.
     terminal.type('jjk');
     await waitForSlotLine(terminal, '[j][j][k]');

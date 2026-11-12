@@ -58,9 +58,9 @@ describe('tab bar rows', () => {
     const model = buildTabBarModel(state(['w1'], 'w1'), new Map([['w1', 'question']]));
     const layout = layoutTabBar(model, 40);
     expect(tabBarText(tabBarRows(model, layout, 40))).toEqual([
-      '┌──────────┐ ┌───────────────────┐',
-      '│ 1 master │ │ 2 w1 ! QUESTION × │',
-      `┴──────────┴─┘                   └${'─'.repeat(6)}`,
+      '┌────────┐ ┌─────────────────┐',
+      '│ master │ │ w1 ! QUESTION × │',
+      `┴────────┴─┘                 └${'─'.repeat(10)}`,
     ]);
   });
 
@@ -124,7 +124,7 @@ describe('layoutTabBar overflow', () => {
     expect(layout.cells.map(cell => cell.index)).toEqual([1]);
     const rows = tabBarText(tabBarRows(model, layout, 30));
     expect(rows.every(row => row.length <= 30)).toBe(true);
-    expect(rows[1]).toBe('‹ 1 │ 2 a-ve… ! PERMISSION × │'); // the badge keeps its `!`, the name gives way
+    expect(rows[1]).toBe('‹ 1 │ a-very… ! PERMISSION × │'); // the badge keeps its `!`, the name gives way
   });
 });
 
@@ -132,11 +132,11 @@ describe('wide-character tab names', () => {
   const model = buildTabBarModel(state(['作業者', 'agent-🚀'], '作業者'), new Map([['作業者', 'question']]));
 
   it('measures tabs by display width, so borders, close markers and clicks line up', () => {
-    expect(tabWidth(model.tabs[1])).toBe(2 + stringWidth(' 2 作業者') + ' ! QUESTION'.length + ' × '.length);
+    expect(tabWidth(model.tabs[1])).toBe(2 + stringWidth(' 作業者') + ' ! QUESTION'.length + ' × '.length);
     const layout = layoutTabBar(model, 80);
     const rows = tabBarText(tabBarRows(model, layout, 80));
-    expect(rows.map(row => stringWidth(row))).toEqual([55, 55, 80]); // the rule under the tabs runs to the right edge
-    expect(rows[1]).toBe('│ 1 master │ │ 2 作業者 ! QUESTION × │ │ 3 agent-🚀 × │');
+    expect(rows.map(row => stringWidth(row))).toEqual([49, 49, 80]); // the rule under the tabs runs to the right edge
+    expect(rows[1]).toBe('│ master │ │ 作業者 ! QUESTION × │ │ agent-🚀 × │');
     for (const cell of layout.cells.slice(1)) {
       expect(tabBarClickTarget(model, layout, cell.closeX!)?.kind).toBe('close');
       expect(tabBarClickTarget(model, layout, cell.closeX! - 2)?.kind).toBe('select');
@@ -148,7 +148,7 @@ describe('wide-character tab names', () => {
     const layout = layoutTabBar(long, 24);
     const rows = tabBarText(tabBarRows(long, layout, 24));
     for (const row of rows) expect(stringWidth(row)).toBeLessThanOrEqual(24);
-    expect(rows[1]).toBe('‹ 1 │ 2 日本語のと… × │'); // the next character would not fit its two columns
+    expect(rows[1]).toBe('‹ 1 │ 日本語のとて… × │'); // the next character would not fit its two columns
   });
 });
 
@@ -183,7 +183,7 @@ describe('tabBarClickTarget', () => {
       const tab = overflow.tabs[cell.index];
       expect([top[cell.x], top[cell.x + cell.width - 1]]).toEqual(['┌', '┐']);
       expect([bottom[cell.x], bottom[cell.x + cell.width - 1]]).toEqual(tab.active ? ['┘', '└'] : ['┴', '┴']);
-      expect(row.slice(cell.x, cell.x + cell.width)).toContain(`${tab.number} ${tab.label} ! `);
+      expect(row.slice(cell.x, cell.x + cell.width)).toContain(` ${tab.label} ! `);
       expect(row[cell.closeX!]).toBe('×');
       expect(tabBarClickTarget(overflow, shown, cell.closeX!)).toEqual({ kind: 'close', tab });
       expect(tabBarClickTarget(overflow, shown, cell.x)).toEqual({ kind: 'select', tab });
