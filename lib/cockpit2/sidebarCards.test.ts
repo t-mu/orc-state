@@ -754,17 +754,18 @@ describe('expanded agents', () => {
       const fallback = details(0);
       fallback.agents = [{ ...fallback.agents[1], detail }];
       const layout = sidebarCardsLayout(fallback, 22, at('p1/a2', ['p1/a2']), COLS);
-      expect(parts(layout), String(detail)).toEqual(['top', 'model', 'task', 'buttons', 'bottom']);
+      expect(parts(layout), String(detail)).toEqual(['top', 'title', 'model', 'task', 'buttons', 'bottom']);
     }
   });
 
   it('lays out a worker\'s block: the row, labelled provider · model and task, at most two unlabelled lines of its question, the buttons', () => {
     const layout = sidebarCardsLayout(details(0), 22, at('p1/a1', ['p1/a1']), COLS);
-    expect(parts(layout)).toEqual(['top', 'model', 'task', 'detail', 'detail', 'buttons', 'bottom']);
+    expect(parts(layout)).toEqual(['top', 'title', 'model', 'task', 'detail', 'detail', 'buttons', 'bottom']);
     const { lines } = render(details(0), { nav: at('p1/a1', ['p1/a1']), focus: 'agents' });
-    const top = lines.findIndex((line) => line.includes('[-] a1'));
-    expect(lines.slice(top, top + 7).map((line) => line.trimEnd())).toEqual([
-      '│┌ [-] a1 worker 12m [QUESTION] ┐│',
+    const top = lines.findIndex((line) => line.includes('[-] a1')) - 1;
+    expect(lines.slice(top, top + 8).map((line) => line.trimEnd())).toEqual([
+      '│┌──────────────────────────────┐│',
+      '││ [-] a1 worker 12m [QUESTION] ││',
       '││ model  claude · opus         ││',
       '││ task   cockpit-style/foo     ││',
       '││ ? may I run npm test and     ││',
@@ -811,13 +812,14 @@ describe('expanded agents', () => {
   it('gives a scout its brief instead of a task row, no `scout` or state row; an unknown provider is `-`, an unknown model `default`', () => {
     const sidebar = details(0);
     sidebar.agents = [agent('s1', { role: 'scout', phase: 'running', detail: 'scout', task_ref: null, provider: 'codex', model: null, brief: null })];
-    expect(parts(sidebarCardsLayout(sidebar, 22, at('p1/s1', ['p1/s1']), COLS))).toEqual(['top', 'model', 'buttons', 'bottom']);
+    expect(parts(sidebarCardsLayout(sidebar, 22, at('p1/s1', ['p1/s1']), COLS))).toEqual(['top', 'title', 'model', 'buttons', 'bottom']);
     sidebar.agents = [{ ...sidebar.agents[0], brief: 'find the errors in docs/contracts.md and docs/cli.md' }];
-    expect(parts(sidebarCardsLayout(sidebar, 22, at('p1/s1', ['p1/s1']), COLS))).toEqual(['top', 'model', 'brief', 'buttons', 'bottom']);
+    expect(parts(sidebarCardsLayout(sidebar, 22, at('p1/s1', ['p1/s1']), COLS))).toEqual(['top', 'title', 'model', 'brief', 'buttons', 'bottom']);
     const { lines } = render(sidebar, { nav: at('p1/s1', ['p1/s1']) });
-    const top = lines.findIndex((line) => line.includes('[-] s1'));
-    expect(lines.slice(top, top + 5).map((line) => line.trimEnd())).toEqual([
-      '│┌ [-] s1 scout   12m [RUNNING] ┐│',
+    const top = lines.findIndex((line) => line.includes('[-] s1')) - 1;
+    expect(lines.slice(top, top + 6).map((line) => line.trimEnd())).toEqual([
+      '│┌──────────────────────────────┐│',
+      '││ [-] s1 scout   12m [RUNNING] ││',
       '││ model  codex · default       ││',
       '││ brief  find the errors in d… ││',
       '││ [ OPEN ] [ KILL ]            ││',
@@ -883,7 +885,7 @@ describe('expanded agents', () => {
         expect(layout.cards.at(-1)!.y + layout.cards.at(-1)!.rows, where).toBe(rows);
         const index = layout.agentIndex;
         const expanded = nav.expanded.has(`p1/${cursorAgent}`);
-        const height = expanded ? (cursorAgent === 'a1' ? 7 : 6) : 1; // a1's question wraps to two lines
+        const height = expanded ? (cursorAgent === 'a1' ? 8 : 7) : 1; // a1's question wraps to two lines
         // A block fits when the Agents list can hold it (and a `+N more` line) below the Project card at its least
         // (its coordinator row and its button) and above the Agents card's button.
         const list = rows - 4 - 2 - 1;
@@ -898,13 +900,13 @@ describe('expanded agents', () => {
     });
   }
 
-  it('fits the cursor block at 14 rows by shrinking Projects, then the Project card, then dropping Projects', () => {
-    const layout = sidebarCardsLayout(details(), 14, at('p1/a3', ['p1/a1', 'p1/a3']), COLS);
-    expect(rowsOf(layout)).toEqual([4, 10]);
+  it('fits the cursor block at 15 rows by shrinking Projects, then the Project card, then dropping Projects', () => {
+    const layout = sidebarCardsLayout(details(), 15, at('p1/a3', ['p1/a1', 'p1/a3']), COLS);
+    expect(rowsOf(layout)).toEqual([4, 11]);
     expect(card(layout, 'agents')!.lines.slice(-2)).toEqual([{ kind: 'more', count: 3 }, { kind: 'newAgent' }]);
     expect(blockRows(layout, 2).map((line) => (line.kind === 'block' ? line.part : ''))).toContain('bottom');
-    // At 22 every card is shown: Projects down to its window, the Project card in its share.
-    expect(rowsOf(sidebarCardsLayout(details(), 22, at('p1/a3', ['p1/a1', 'p1/a3']), COLS))).toEqual([5, 6, 11]);
+    // At 22 every card is shown: Projects down to its window, the Project card a row below its share for the block's top border.
+    expect(rowsOf(sidebarCardsLayout(details(), 22, at('p1/a3', ['p1/a1', 'p1/a3']), COLS))).toEqual([5, 5, 12]);
     // With the cursor collapsed at 12 rows the Agents card keeps its row, a `+N more` line and its button; Projects goes.
     const collapsed = sidebarCardsLayout(details(), 12, at('p1/a2', ['p1/a1', 'p1/a3']), COLS);
     expect(rowsOf(collapsed)).toEqual([4, 7]);
@@ -912,7 +914,7 @@ describe('expanded agents', () => {
     expect(rowsOf(sidebarCardsLayout(details(), 12, at('p1/a2', []), COLS))).toEqual([4, 7]);
   });
 
-  it('toggles on a click anywhere on an agent\'s row or a block\'s top row; a click elsewhere in the block only moves the cursor to it', () => {
+  it('toggles on a click anywhere on an agent\'s row or a block\'s title row; a click elsewhere in the block, its top border included, only moves the cursor to it', () => {
     const nav = at('p1/a1', ['p1/a3']);
     const { layout, lines } = render(details(0), { nav, rows: 30 });
     const collapsed = lines.findIndex((line) => line.includes('[+] a2'));
@@ -926,7 +928,8 @@ describe('expanded agents', () => {
     // An attention agent's question row is part of its row.
     const question = lines.findIndex((line) => line.includes('? may I'));
     expect(sidebarCardClick(layout, nav, 10, question)).toEqual({ nav: { ...nav, agentKey: 'p1/a1', expanded: new Set(['p1/a3', 'p1/a1']) }, command: null });
-    for (const y of [block + 1, block + 3, block + 5]) {
+    expect(lines[block - 1]).toMatch(/^│┌─+┐│$/);
+    for (const y of [block - 1, block + 1, block + 3, block + 5]) {
       expect(sidebarCardClick(layout, nav, 10, y), `row ${y}`).toEqual({ nav: { ...nav, agentKey: 'p1/a3' }, command: null });
     }
   });
@@ -941,9 +944,11 @@ describe('expanded agents', () => {
     for (const [name, index] of [['a1', 0], ['a2', 1]] as const) {
       const role = agentStatusRole(sidebar.agents[index]);
       expect(role).toBe(name === 'a1' ? 'status.attention' : 'status.active');
-      const top = amber.lines.findIndex((line) => line.includes(`[-] ${name}`));
+      // The top border is a row of its own above the title row, drawn whole in the role.
+      const top = amber.lines.findIndex((line) => line.includes(`[-] ${name}`)) - 1;
       const bottom = top + blockRows(amber.layout, index).length - 1;
-      for (const [x, y] of [[1, top], [COLS - 2, top], [1, top + 1], [COLS - 2, top + 2], [1, bottom], [10, bottom]]) {
+      expect(amber.lines[top].slice(1, COLS - 1)).toBe(`┌${'─'.repeat(COLS - 4)}┐`);
+      for (const [x, y] of [[1, top], [10, top], [COLS - 2, top], [1, top + 1], [COLS - 2, top + 2], [1, bottom], [10, bottom]]) {
         expect(amber.frame.cells[y * COLS + x].style, `${name} ${x},${y}`).toEqual(styleOf(AMBER, role));
       }
     }
@@ -954,12 +959,16 @@ describe('expanded agents', () => {
     expect(stale.frame.cells[(top + 1) * COLS + 3].style.dim).toBe(true);
   });
 
-  it('puts the cursor bar on the block\'s top row', () => {
+  it('puts the cursor bar on the block\'s title row, inside its borders, and leaves the top border visible', () => {
     const nav = at('p1/a2', ['p1/a2']);
     const { frame, lines } = render(details(0), { nav, focus: 'agents', theme: AMBER });
-    const top = lines.findIndex((line) => line.includes('[-] a2'));
-    expect(frame.cells[top * COLS + 3].style.bg).toEqual(styleOf(AMBER, 'row.cursor').bg);
-    expect(frame.cells[(top + 1) * COLS + 3].style.bg).not.toEqual(styleOf(AMBER, 'row.cursor').bg);
+    const title = lines.findIndex((line) => line.includes('[-] a2'));
+    expect(frame.cells[title * COLS + 3].style.bg).toEqual(styleOf(AMBER, 'row.cursor').bg);
+    expect(frame.cells[(title + 1) * COLS + 3].style.bg).not.toEqual(styleOf(AMBER, 'row.cursor').bg);
+    expect(lines[title - 1].slice(1, COLS - 1)).toBe(`┌${'─'.repeat(COLS - 4)}┐`);
+    for (const x of [1, 3, COLS - 2]) expect(frame.cells[(title - 1) * COLS + x].style).toEqual(styleOf(AMBER, 'status.active'));
+    expect(lines[title][1]).toBe('│');
+    expect(frame.cells[title * COLS + 1].style).toEqual(styleOf(AMBER, 'status.active'));
   });
 
   describe('the buttons by keyboard', () => {
@@ -1125,10 +1134,11 @@ describe('local agent sessions (the cockpit\'s own, not the coordinator\'s)', ()
   it('expands into its block: provider · default, type or agent, the note (wrapped), the buttons, framed in status.local', () => {
     const nav = navAt(K1, [K1, K2]);
     const { frame, layout, lines } = render(model(0, 0), { locals: LOCALS, nav, theme: AMBER, rows: 40 });
-    expect(blockRows(layout, 0).map((line) => (line.kind === 'block' ? line.part : ''))).toEqual(['top', 'model', 'type', 'note', 'note', 'buttons', 'bottom']);
+    expect(blockRows(layout, 0).map((line) => (line.kind === 'block' ? line.part : ''))).toEqual(['top', 'title', 'model', 'type', 'note', 'note', 'buttons', 'bottom']);
     const top = lines.findIndex((line) => line.includes('[-] ◇ claude 1'));
-    expect(lines.slice(top, top + 7)).toEqual([
-      '│┌ [-] ◇ claude 1    2m [LOCAL] ┐│',
+    expect(lines.slice(top - 1, top + 7)).toEqual([
+      '│┌──────────────────────────────┐│',
+      '││ [-] ◇ claude 1    2m [LOCAL] ││',
       '││ model  claude · default      ││',
       '││ type   fresh session         ││',
       '││ not managed by the           ││',
@@ -1138,7 +1148,7 @@ describe('local agent sessions (the cockpit\'s own, not the coordinator\'s)', ()
     ]);
     expect(LOCAL_NOTE).toBe('not managed by the coordinator');
     expect(lines.find((line) => line.includes('agent  critic'))).toBe('││ agent  critic                ││');
-    for (const [x, y] of [[1, top], [COLS - 2, top + 1], [1, top + 6]]) expect(frame.cells[y * COLS + x].style).toEqual(styleOf(AMBER, 'status.local'));
+    for (const [x, y] of [[1, top - 1], [10, top - 1], [1, top], [COLS - 2, top + 1], [1, top + 6]]) expect(frame.cells[y * COLS + x].style).toEqual(styleOf(AMBER, 'status.local'));
     expect(frame.cells[(top + 1) * COLS + 3].style).toEqual(styleOf(AMBER, 'text.muted'));
     expect(frame.cells[(top + 1) * COLS + 10].style).toEqual(styleOf(AMBER, 'text.primary'));
     expect(frame.cells[(top + 3) * COLS + 3].style).toEqual(styleOf(AMBER, 'text.muted'));
@@ -1167,12 +1177,12 @@ describe('local agent sessions (the cockpit\'s own, not the coordinator\'s)', ()
   });
 
   it('keeps the cursor session\'s whole block in view in a short sidebar, the other agents behind `+N more`', () => {
-    // 15: the block (7), a `+N more` line, the button and the borders, and the Project card at its least (4).
-    for (const rows of [22, 16, 15]) {
+    // 16: the block (8), a `+N more` line, the button and the borders, and the Project card at its least (4).
+    for (const rows of [22, 17, 16]) {
       const layout = sidebarCardsLayout(model(0, 3), rows, navAt(K2, [K2]), COLS, LOCALS);
       const agents = card(layout, 'agents')!;
       expect(agents.y + agents.rows, `${rows}`).toBe(rows);
-      expect(blockRows(layout, 4).map((line) => (line.kind === 'block' ? line.part : '')), `${rows}`).toEqual(['top', 'model', 'type', 'note', 'note', 'buttons', 'bottom']);
+      expect(blockRows(layout, 4).map((line) => (line.kind === 'block' ? line.part : '')), `${rows}`).toEqual(['top', 'title', 'model', 'type', 'note', 'note', 'buttons', 'bottom']);
       expect(agents.lines.some((line) => line.kind === 'more'), `${rows}`).toBe(true);
       expect(agents.lines.at(-1)).toEqual({ kind: 'newAgent' });
     }

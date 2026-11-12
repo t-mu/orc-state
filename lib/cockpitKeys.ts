@@ -8,28 +8,31 @@
  */
 
 // ── Keys ─────────────────────────────────────────────────────────────────────
-// Defaults are function keys: they need no Option/Alt/AltGr on any keyboard layout.
+// Defaults are function keys and Ctrl-Space: they need no Option/Alt/AltGr on any keyboard layout.
 
 /** The direct keys' actions: `tab1`..`tab9` select that tab of the active project, `dashboard` focuses the sidebar, `attention` shows the next agent needing attention. */
 export const COCKPIT_ACTIONS = ['tab1', 'tab2', 'tab3', 'tab4', 'tab5', 'tab6', 'tab7', 'tab8', 'tab9', 'dashboard', 'attention'] as const;
 export type CockpitAction = typeof COCKPIT_ACTIONS[number];
 
 export interface CockpitKeys {
-  /** The tmux prefix: prefix + d/o as in tmux, n/p/&/1-9 for the active project's tabs, N/P for projects; pressed twice, it reaches the pane. */
+  /**
+   * The leader (`ORC_COCKPIT_PREFIX`): the key after it is a cockpit command (lib/cockpit2/dispatch.ts `LEADER_TABLE`);
+   * pressed twice, it reaches the pane.
+   */
   prefix: string;
   /** Keys bound without the prefix; null leaves the action to the prefix table only. */
   direct: Record<CockpitAction, string | null>;
-  /** The direct quit key (`quit=<key>` in `ORC_COCKPIT_KEYS`); null leaves only prefix then d. */
+  /** The direct quit key (`quit=<key>` in `ORC_COCKPIT_KEYS`); null (the default) leaves only the leader then q. */
   quit: string | null;
 }
 
 export const DEFAULT_COCKPIT_KEYS: CockpitKeys = {
-  prefix: 'F12',
+  prefix: 'C-Space',
   direct: {
     tab1: 'F1', tab2: 'F2', tab3: 'F3', tab4: 'F4', tab5: 'F5', tab6: 'F6', tab7: 'F7', tab8: 'F8', tab9: 'F9',
     dashboard: 'F10', attention: 'F11',
   },
-  quit: 'C-q',
+  quit: null,
 };
 
 const FUNCTION_KEY = /^F([1-9]|1[0-2])$/i;
@@ -52,7 +55,7 @@ function isDirectKeyName(key: string): boolean {
  * direct key; `quit=<key>` sets the quit key). Anything invalid is
  * reported in `problems` and its default kept; a direct key that clashes with
  * the prefix or an earlier direct key is dropped, and so is a quit key that
- * clashes with any of them (silently when it is the default).
+ * clashes with any of them.
  */
 export function resolveCockpitKeys(env: NodeJS.ProcessEnv = process.env): { keys: CockpitKeys; problems: string[] } {
   const problems: string[] = [];
@@ -64,14 +67,13 @@ export function resolveCockpitKeys(env: NodeJS.ProcessEnv = process.env): { keys
   }
   const direct = { ...DEFAULT_COCKPIT_KEYS.direct };
   let quit = DEFAULT_COCKPIT_KEYS.quit;
-  let quitSet = false;
   for (const entry of (env.ORC_COCKPIT_KEYS ?? '').split(',').map((part) => part.trim()).filter(Boolean)) {
     const split = entry.indexOf('=');
     const action = entry.slice(0, split).trim();
     const key = entry.slice(split + 1).trim();
     if (split >= 0 && action === 'quit') {
       if (key.toLowerCase() === 'none') quit = null;
-      else if (isDirectKeyName(key)) { quit = key; quitSet = true; }
+      else if (isDirectKeyName(key)) quit = key;
       else problems.push(`ORC_COCKPIT_KEYS: '${key}' cannot be the quit key (a function key F1-F12, or a C- or M- key); using ${quit ?? 'none'}`);
       continue;
     }
@@ -96,8 +98,7 @@ export function resolveCockpitKeys(env: NodeJS.ProcessEnv = process.env): { keys
     }
   }
   if (quit != null && taken.has(quit.toLowerCase())) {
-    // The default yields silently: a prefix or direct key set to C-q is not a quit key the user asked for.
-    if (quitSet) problems.push(`ORC_COCKPIT_KEYS: ${quit} is already the prefix or another action's key; there is no direct quit key`);
+    problems.push(`ORC_COCKPIT_KEYS: ${quit} is already the prefix or another action's key; there is no direct quit key`);
     quit = null;
   }
   return { keys: { prefix, direct, quit }, problems };

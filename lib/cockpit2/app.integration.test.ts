@@ -6,7 +6,7 @@ import { DEFAULT_COCKPIT_KEYS } from '../cockpitKeys.ts';
 import { runApp } from './app.ts';
 import { tmuxExplorerHost, type ExplorerHost } from './explorer.ts';
 import { EDGE_ROW } from './frame.ts';
-import { FakeTerminal, FakeWatcher, F12, MemoryStore, apps, projectState, shown, slotRows, text, waitFor, waitForSlotLine, waitForTabBar } from '../../test-fixtures/cockpitAppFakes.ts';
+import { FakeTerminal, FakeWatcher, LEADER, MemoryStore, apps, projectState, shown, slotRows, text, waitFor, waitForSlotLine, waitForTabBar } from '../../test-fixtures/cockpitAppFakes.ts';
 
 // ── the app against a private tmux server ────────────────────────────────────
 
@@ -57,19 +57,19 @@ describe.skipIf(!hasTmux)('runApp (private tmux server)', () => {
     }
     expect((await shown(terminal)).row(0).length).toBe(120);
 
-    terminal.type('\x11');
+    terminal.type(`${LEADER}q`);
     await app.done;
     expect(terminal.restored).toBe(1);
     expect(tmux('has-session', '-t', `=${session}`).status).toBe(0);
   }, 20_000);
 
-  it('quits on the prefix then d and leaves the master\'s session running', async () => {
+  it('quits on the leader then q and leaves the master\'s session running', async () => {
     const session = 'orc-master-prefix';
     const created = tmux('new-session', '-d', '-s', session, '-x', '100', '-y', '30', 'env -i PS1="$ " sh');
     expect(created.status, created.stderr).toBe(0);
     const { terminal, app } = startReal([projectState('fake', { master: { socket, session } })]);
     await waitForSlotLine(terminal, '$');
-    terminal.type(`${F12}d`);
+    terminal.type(`${LEADER}q`);
     await app.done;
     expect(terminal.restored).toBe(1);
     expect(tmux('has-session', '-t', `=${session}`).status).toBe(0);
@@ -125,7 +125,7 @@ describe.skipIf(!hasTmux)('runApp (private tmux server)', () => {
     await waitForSlotLine(terminal, '$');
     const before = app.tabs();
 
-    terminal.type(`${F12}t`);
+    terminal.type(`${LEADER}e`);
     await waitForSlotLine(terminal, 'explorer-for-fake');
     expect(explorerTmux('display-message', '-p', '-t', '=explorer-fake:', '#{window_width}x#{window_height} #{status}').stdout.trim()).toBe('43x16 off');
     await waitForTabBar(terminal, 1, ' tasks ×');
@@ -142,9 +142,9 @@ describe.skipIf(!hasTmux)('runApp (private tmux server)', () => {
     await waitFor(async () => text(await shown(terminal), 0).endsWith(' tasks')); // its header entry is back
 
     // Opened again, it closes with the cockpit.
-    terminal.type(`${F12}t`);
+    terminal.type(`${LEADER}e`);
     await waitForSlotLine(terminal, 'explorer-for-fake');
-    terminal.type('\x11');
+    terminal.type(`${LEADER}q`);
     await app.done;
     await waitFor(() => explorerTmux('has-session', '-t', '=explorer-fake').status !== 0);
     expect(tmux('has-session', '-t', `=${master}`).status).toBe(0);

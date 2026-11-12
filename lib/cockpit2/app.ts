@@ -16,12 +16,12 @@
  *
  * Rendering happens only when something changed, at most once per frame
  * interval; an idle cockpit writes nothing. Input goes through the
- * dispatcher (dispatch.ts): cockpit keys and the prefix table, then the shown
+ * dispatcher (dispatch.ts): cockpit keys and the leader's table, then the shown
  * tab's mode. The master tab takes keys directly; worker and scout tabs open
  * view-only and take keys only after `i`. Keys go to the pane as bytes, pastes
  * through `paste()`. The pane's cursor key mode is mirrored to the real
- * terminal. The quit key (`C-q` by default) or the prefix then `d` ends the
- * app; masters, workers and coordinators keep running, and closing a tab only
+ * terminal. The leader (Ctrl-Space by default) then `q`, or a quit key (none
+ * by default), ends the app; masters, workers and coordinators keep running, and closing a tab only
  * detaches its view.
  *
  * The terminal's top row is the header: the orc mark, the active project's
@@ -31,9 +31,11 @@
  * footer, then the tab bar's borders, then the header, before the slot
  * shrinks. The header, the tab bar and the footer are drawn by widgets.ts,
  * the sidebar's Projects, Project and Agents cards by sidebarCards.ts,
- * from the pure models of lib/tui. The keys belong to the slot or to a
- * sidebar box: the dashboard key (F10 by default) or the prefix then `o`
- * focus the sidebar, where arrows (or
+ * from the pure models of lib/tui. The keys belong to the slot, the tab
+ * strip or a sidebar box: the leader then Tab or Shift-Tab walks that ring;
+ * in the tab strip ←/→ move a highlight, Enter shows the tab, w or Delete
+ * close it, Esc or ↓ return to the pane. The dashboard key (F10 by default)
+ * or the leader then `s` focus the sidebar, where arrows (or
  * j/k), Tab (cycling the cards), Enter, Space and Esc navigate, open, expand
  * or collapse an agent and return to the pane. Clicks on a sidebar row open that project or agent
  * (on an agent's collapse marker expand or collapse it), on a header button open the
@@ -55,7 +57,7 @@
  * (selection.ts), highlighted, and the release copies it with OSC 52. A press
  * in the slot keeps the mouse until its release, wherever the pointer goes.
  *
- * The task explorer (explorer.ts) is a tab of its own: the prefix then `t`,
+ * The task explorer (explorer.ts) is a tab of its own: the leader then `e`,
  * or the header's `tasks` entry, starts it for the active project in a
  * session on the cockpit's private tmux server and shows it after the
  * project's tabs. It owns its keys: Esc, `q`, `h` and Backspace go back from
@@ -84,7 +86,8 @@ import { ATTENTION_BADGE, buildSidebarModel, fitText, formatElapsed, projectStat
 import { buildProjectViews } from '../tui/status.ts';
 import { buildTabBarModel, tabAttention, tabBarClickTarget } from '../tui/tabBarModel.ts';
 import { blitScreen, createFrame, drawText, slotCursor, type Frame, type Region } from './frame.ts';
-import { createDispatcher, cursorKeyMirror, modeNotice, type DispatchContext } from './dispatch.ts';
+import { LEADER_NOTICE, createDispatcher, cursorKeyMirror, leaderLabel, modeNotice, type DispatchContext, type TabStripKey } from './dispatch.ts';
+import { drawHelpDialog, helpDialogKey, helpDialogLayout, openHelpDialog, type HelpDialogState, type HelpKey } from './helpDialog.ts';
 import type { ColorDepth } from './color.ts';
 import {
   AGENT_TAB_PREFIX, EXPLORER_SOCKET, agentSessionName, attentionQueue, isAgentSessionTab, isOwnedSessionTab, isShellTab, nextAgentTab, nextShellTab,
@@ -342,7 +345,8 @@ type Modal =
   | { kind: 'settings'; projectId: string; state: SettingsDialogState }
   | { kind: 'confirm'; projectId: string; state: ConfirmDialogState; run: () => Promise<void> }
   | { kind: 'addProject'; projectId: null; state: FormState }
-  | { kind: 'newAgent'; projectId: string; state: NewAgentDialogState };
+  | { kind: 'newAgent'; projectId: string; state: NewAgentDialogState }
+  | { kind: 'help'; projectId: null; state: HelpDialogState };
 
 /** Why the app ended: the user quit, or another cockpit took over (instance.ts). */
 export type AppExit = 'quit' | 'takeover';
@@ -370,27 +374,28 @@ export interface App {
   openNewAgent(projectId: string): void;
 }
 
-/** How to quit, as the slot's messages show it. */
+/** How to quit, as the slot's messages show it: the quit key (when one is bound) and the leader then q. */
 export function quitHint(keys: CockpitKeys): string {
-  return [...(keys.quit ? [`${keyLabel(keys.quit)}: quit`] : []), `${keyLabel(keys.prefix)} d: quit`].join(' · ');
+  return [...(keys.quit ? [`${keyLabel(keys.quit)}: quit`] : []), `${leaderLabel(keys, 'q')}: quit`].join(' · ');
 }
 
 /**
  * The footer's key hints from the resolved keys: quit (the quit key, else
- * the prefix then d), the dashboard key (else the prefix then o) and the attention key (left
- * out when it has no direct key).
+ * the leader then q), the dashboard key (else the leader then s), the
+ * attention key (else the leader then !) and the leader then ? for help.
  */
 export function footerHints(keys: CockpitKeys): FooterHint[] {
   const { dashboard, attention } = keys.direct;
   return [
-    keys.quit ? { key: keyLabel(keys.quit), action: 'quit' } : { key: `${keyLabel(keys.prefix)} d`, action: 'quit' },
-    { key: dashboard ? keyLabel(dashboard) : `${keyLabel(keys.prefix)} o`, action: 'dashboard' },
-    ...(attention ? [{ key: keyLabel(attention), action: 'attention' }] : []),
+    { key: keys.quit ? keyLabel(keys.quit) : leaderLabel(keys, 'q'), action: 'quit' },
+    { key: dashboard ? keyLabel(dashboard) : leaderLabel(keys, 's'), action: 'dashboard' },
+    { key: attention ? keyLabel(attention) : leaderLabel(keys, '!'), action: 'attention' },
+    { key: leaderLabel(keys, '?'), action: 'help' },
   ];
 }
 
-/** Where the keys go: the slot (the shown tab) or a sidebar box. */
-export type Focus = 'slot' | SidebarBox;
+/** Where the keys go: the slot (the shown tab), the tab strip or a sidebar box. */
+export type Focus = 'slot' | 'tabs' | SidebarBox;
 
 function drawMessage(frame: Frame, region: Region, lines: string[], theme: Theme): void {
   lines.forEach((line, index) => {
@@ -443,7 +448,7 @@ export function slotMessage({ tab, project, target, session, keys }: SlotContext
   return null;
 }
 
-/** Starts the cockpit on an opened terminal; it runs until `quit()`, the quit key or prefix then `d`. */
+/** Starts the cockpit on an opened terminal; it runs until `quit()`, the leader then `q` or a quit key. */
 export function runApp(options: AppOptions): App {
   const { terminal, keys, store } = options;
   const theme = options.theme ?? DEFAULT_THEME;
@@ -726,7 +731,8 @@ export function runApp(options: AppOptions): App {
     const context: DispatchContext = explorer
       ? { mode: 'view', agentTab: false, explorer: explorerMessage(explorer, sessions.shown(), keys) ? 'message' : 'live' }
       : tab ? inputContext(tab) : { mode: 'view', agentTab: false };
-    return focus === 'slot' ? context : { ...context, sidebar: true };
+    if (focus === 'slot') return context;
+    return focus === 'tabs' ? { ...context, tabStrip: true } : { ...context, sidebar: true };
   }
 
   /** What the slot shows: a message, or the shown tab's screen. */
@@ -828,14 +834,18 @@ export function runApp(options: AppOptions): App {
     const frame = createFrame(layout.cols, layout.rows);
     drawHeader(frame, layout.header, currentHeader(), theme);
     const sidebar = currentSidebar();
-    drawSidebarCards(frame, layout.sidebar, sidebar, { focus: focus === 'slot' ? null : focus, theme });
-    drawTabBar(frame, layout.tabBar, currentTabBar(), {
+    drawSidebarCards(frame, layout.sidebar, sidebar, { focus: focus === 'slot' || focus === 'tabs' ? null : focus, theme });
+    const tabBar = currentTabBar();
+    drawTabBar(frame, layout.tabBar, tabBar, {
       slotFocused: focus === 'slot',
       error: refusal ?? (lastSaveError ? `view state not saved: ${lastSaveError}` : null),
+      highlight: focus === 'tabs' ? tabStripItems(tabBar)[tabCursor] ?? null : null,
       theme,
     });
     if (layout.paneFrame) drawPaneBox(frame, layout.paneFrame, paneHeader(), focus === 'slot', theme);
-    drawFooter(frame, layout.footer, { mode: modeNotice(keyContext()), breadcrumb: breadcrumb(), hints: footerHints(keys), theme });
+    drawFooter(frame, layout.footer, {
+      mode: dispatcher.leaderArmed ? LEADER_NOTICE : modeNotice(keyContext()), breadcrumb: breadcrumb(), hints: footerHints(keys), theme,
+    });
     const { message, screen } = slotContent();
     let cursor: Cursor = { x: 0, y: 0, visible: false };
     if (!screen) {
@@ -860,7 +870,8 @@ export function runApp(options: AppOptions): App {
       else if (modal.kind === 'addProject' || modal.kind === 'newAgent') {
         const form = modal.kind === 'addProject' ? modal.state : modal.state.form;
         drawForm(frame, formLayout(form, layout.cols, layout.rows), form, theme, panel);
-      } else drawConfirmDialog(frame, confirmDialogLayout(modal.state, layout.cols, layout.rows), modal.state, theme, panel);
+      } else if (modal.kind === 'help') drawHelpDialog(frame, helpDialogLayout(modal.state, layout.cols, layout.rows), modal.state, theme, panel);
+      else drawConfirmDialog(frame, confirmDialogLayout(modal.state, layout.cols, layout.rows), modal.state, theme, panel);
       cursor = { x: 0, y: 0, visible: false };
     }
     if (prevFrame && prevCursor && framesEqual(prevFrame, frame) && sameCursor(prevCursor, cursor)) return;
@@ -1023,7 +1034,7 @@ export function runApp(options: AppOptions): App {
   }
 
   // ── input ──
-  const dispatcher = createDispatcher(keys);
+  const dispatcher = createDispatcher(keys, { onLeaderTimeout: scheduleRender });
   /** Agent tabs in typing mode, by tab key; every other agent tab is view-only. */
   const typingTabs = new Set<string>();
   const mirrorCursorKeys = cursorKeyMirror((data) => terminal.write(data));
@@ -1032,8 +1043,90 @@ export function runApp(options: AppOptions): App {
 
   function setFocus(next: Focus): void {
     if (focus === next) return;
+    // The tab strip's highlight starts on the shown tab.
+    if (next === 'tabs') {
+      const view = currentTabBar();
+      tabCursor = Math.max(0, tabStripItems(view).findIndex((item) => item !== 'plus' && view.model.tabs[item].active));
+    }
     focus = next;
     scheduleRender();
+  }
+
+  const sidebarFocused = () => focus !== 'slot' && focus !== 'tabs';
+
+  // ── tab strip ──
+  /** The tab strip's highlight while it has the keys: a position in `tabStripItems`. */
+  let tabCursor = 0;
+
+  /** What the tab strip's highlight moves over: the model's tabs (by index), then the new-shell tab. */
+  function tabStripItems(view: ReturnType<typeof currentTabBar>): Array<number | 'plus'> {
+    if (view.model.notice) return view.plus ? ['plus'] : [];
+    return [...view.model.tabs.map((_, index) => index), ...(view.plus ? ['plus' as const] : [])];
+  }
+
+  /** The container focus ring: the pane, the tab strip, the sidebar (its box), the pane. */
+  function cycleFocus(delta: 1 | -1): void {
+    const ring: Focus[] = ['slot', 'tabs', nav.box];
+    const at = focus === 'slot' ? 0 : focus === 'tabs' ? 1 : 2;
+    setFocus(ring[(at + delta + ring.length) % ring.length]);
+  }
+
+  /** A tab strip key: move the highlight (wrapping), show or close the highlighted tab, or return to the pane. */
+  function onTabStripKey(key: TabStripKey): void {
+    const view = currentTabBar();
+    const items = tabStripItems(view);
+    if (key === 'back') { setFocus('slot'); return; }
+    if (items.length === 0) return;
+    tabCursor = Math.min(tabCursor, items.length - 1);
+    if (key === 'left' || key === 'right') {
+      tabCursor = (tabCursor + (key === 'right' ? 1 : -1) + items.length) % items.length;
+      scheduleRender();
+      return;
+    }
+    const item = items[tabCursor];
+    if (item === 'plus') {
+      if (key === 'open') void openShell();
+      return;
+    }
+    const tab = view.model.tabs[item];
+    if (tab.agentId === EXPLORER_TAB) {
+      if (key === 'open') setFocus('slot');
+      else closeExplorer();
+      return;
+    }
+    const id = tab.agentId ?? MASTER_TAB;
+    if (key === 'open') {
+      setFocus('slot');
+      apply((state) => selectTab(state, id));
+      return;
+    }
+    // Closing only detaches the view; the agent keeps running. The highlight stays in place, on the next tab.
+    apply((state) => closeTab(state, id));
+    tabCursor = Math.min(tabCursor, Math.max(0, tabStripItems(currentTabBar()).length - 1));
+    scheduleRender();
+  }
+
+  /** The leader then i: a worker or scout tab starts typing (and the pane takes the keys) or stops; nothing elsewhere. */
+  function toggleTyping(): void {
+    const tab = shownTab(tabs);
+    if (explorer || !tab || tab.agentId === null || isOwnedSessionTab(tab.agentId)) return;
+    const key = tabKey(tab);
+    if (typingTabs.has(key)) typingTabs.delete(key);
+    else {
+      typingTabs.add(key);
+      setFocus('slot');
+    }
+    scheduleRender();
+  }
+
+  /** Runs `open` on the active project, or says no project is open. */
+  function withActiveProject(open: (projectId: string) => void): void {
+    if (tabs.activeProject === null) {
+      refusal = 'No project is open in the cockpit; run orc start-session in one.';
+      scheduleRender();
+      return;
+    }
+    open(tabs.activeProject);
   }
 
   // ── dialogs ──
@@ -1317,9 +1410,27 @@ export function runApp(options: AppOptions): App {
     up: 'previous', down: 'next', left: 'left', right: 'right', next: 'next', previous: 'previous', enter: 'enter', escape: 'escape',
   };
 
+  const matchHelp = keyMatcher(['Up', 'k', 'Down', 'j', 'PageUp', 'PageDown', 'Home', 'End', 'Escape', 'q', 'Enter']);
+  const HELP_KEYS: Readonly<Record<string, HelpKey>> = {
+    Up: 'up', k: 'up', Down: 'down', j: 'down', PageUp: 'pageUp', PageDown: 'pageDown', Home: 'home', End: 'end',
+    Escape: 'close', q: 'close', Enter: 'close',
+  };
+
+  /** A token while the help dialog is open: its keys scroll or close it; clicks and other keys do nothing. */
+  function onHelpToken(token: Token): void {
+    if (modal?.kind !== 'help' || token.kind === 'mouse') return;
+    const name = matchHelp(token);
+    if (!name) return;
+    const step = helpDialogKey(modal.state, helpDialogLayout(modal.state, layout.cols, layout.rows), HELP_KEYS[name]);
+    if (step.close) { closeDialog(); return; }
+    modal = { ...modal, state: step.state };
+    scheduleRender();
+  }
+
   /** A key or mouse token while a dialog is open: the dialog gets it, nothing behind it does. */
   function onDialogToken(token: Token): void {
     if (!modal) return;
+    if (modal.kind === 'help') { onHelpToken(token); return; }
     if (modal.kind === 'addProject' || modal.kind === 'newAgent') { onFormToken(token); return; }
     let key: DialogKey | null = null;
     let at: { x: number; y: number } | null = null;
@@ -1379,7 +1490,7 @@ export function runApp(options: AppOptions): App {
       // A click on an agent's row only expands or collapses it (only OPEN opens its tab), and one on KILL only asks: a focused sidebar's keys
       // follow the cursor to the agents box.
       if (step.command && step.command.type !== 'killAgent') setFocus('slot');
-      else if (focus !== 'slot') setFocus(step.nav.box);
+      else if (sidebarFocused()) setFocus(step.nav.box);
     },
     tabBar: (event, at) => {
       if (!isClick(event)) return;
@@ -1498,7 +1609,10 @@ export function runApp(options: AppOptions): App {
       if (screen && screen.scrollOffset > 0) { screen.scrollToBottom(); scheduleRender(); }
       clearSelection();
     }
+    const wasArmed = dispatcher.leaderArmed;
     const action = dispatcher.dispatch(token, keyContext());
+    // The footer shows the armed leader's keys.
+    if (dispatcher.leaderArmed !== wasArmed) scheduleRender();
     switch (action.type) {
       case 'forward':
         if (explorer) sendToExplorer(action.bytes);
@@ -1541,9 +1655,16 @@ export function runApp(options: AppOptions): App {
         else typingTabs.delete(tabKey(tab));
         scheduleRender();
         return;
-      case 'switchFocus': setFocus(focus === 'slot' ? nav.box : 'slot'); return;
-      // The dashboard key toggles: into the sidebar from the pane, back to the pane from the sidebar.
-      case 'focusSidebar': setFocus(focus === 'slot' ? nav.box : 'slot'); return;
+      case 'toggleTyping': toggleTyping(); return;
+      case 'cycleFocus': cycleFocus(action.delta); return;
+      // The dashboard key toggles: into the sidebar from the pane or the tab strip, back to the pane from the sidebar.
+      case 'focusSidebar': setFocus(sidebarFocused() ? 'slot' : nav.box); return;
+      case 'focusPane': setFocus('slot'); return;
+      case 'tabStrip': onTabStripKey(action.key); return;
+      case 'newShell': void openShell(); return;
+      case 'newAgent': withActiveProject(openNewAgent); return;
+      case 'settings': withActiveProject(openSettings); return;
+      case 'help': showDialog({ kind: 'help', projectId: null, state: openHelpDialog(keys) }); return;
       case 'sidebar': {
         // Only a focused sidebar gets these: the box the keys are in follows the cursor.
         const step = navigateSidebar(currentSidebar(), nav, action.key);
@@ -1611,6 +1732,7 @@ export function runApp(options: AppOptions): App {
   function quit(reason: AppExit = 'quit'): void {
     if (closed) return;
     closed = true;
+    dispatcher.disarm();
     if (renderTimer) clearTimeout(renderTimer);
     clearInterval(ticker);
     motion.cancel();

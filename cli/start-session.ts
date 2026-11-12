@@ -28,7 +28,7 @@
  *      tmux servers) is retired first.
  *      `--no-cockpit` attaches to the master directly
  *
- * Quitting the cockpit (Ctrl-q, or its prefix then d: F12 d by default), the
+ * Quitting the cockpit (its leader then q: Ctrl-Space q by default), the
  * master's Ctrl-b d with `--no-cockpit`, or closing the terminal leaves the
  * master running; the master's credential is revoked when it exits or by `orc kill-all`.
  */

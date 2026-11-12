@@ -33,21 +33,28 @@ orc start-session
 
 ### Getting around
 
-The cockpit claims only its own keys, function keys and `Ctrl-q` by default, so they work on any keyboard layout without Option/Alt. Every other key, `Ctrl-b` included, reaches the active tab, and a paste arrives there as one paste. Click a tab in the tab bar to show it, its `×` to close an agent tab, and a project or an agent in the sidebar to open it; what you click takes the keys. In the slot, a program that uses the mouse gets it; otherwise the wheel scrolls the tab's scrollback and a drag selects text, copied to the clipboard on release (hold Shift to select over a program that uses the mouse).
+The cockpit claims only its own keys, function keys and its leader `Ctrl-Space` by default, so they work on any keyboard layout without Option/Alt. Every other key, `Ctrl-b` and `Ctrl-q` included, reaches the active tab, and a paste arrives there as one paste. Click a tab in the tab bar to show it, its `×` to close an agent tab, and a project or an agent in the sidebar to open it; what you click takes the keys. In the slot, a program that uses the mouse gets it; otherwise the wheel scrolls the tab's scrollback and a drag selects text, copied to the clipboard on release (hold Shift to select over a program that uses the mouse).
+
+`Ctrl-Space` is the leader: press it, release, then the command key. While it waits the footer shows `LEADER` and its main keys.
 
 | Keys | Does |
 |---|---|
-| `F1` … `F9` (or `F12 1` … `F12 9`) | select tab 1–9 of the active project (tab 1 is its master) |
-| `F10` (or `F12 o`) | give the sidebar the keys; `Esc` (or `F12 o` again) gives them back to the tab |
-| `F11` | show the next agent that needs you (its project and tab) |
-| `F12 n` / `F12 p` | next / previous tab of the active project |
-| `F12 N` / `F12 P` | next / previous project, its tabs as you left them |
-| `Ctrl-q` or `F12 d` | quit the cockpit; nothing else stops |
-| `F12 &` | close the current agent tab; the master tab stays; never stops a master or agent |
-| `F12 t` | open the task explorer of the active project as a tab; Esc or `q` in its list closes it and shows the tab you had |
-| `F12` `F12` | send `F12` to the tab |
+| `Ctrl-Space ?` | the help dialog: every key, as configured |
+| `F1` … `F9` (or `Ctrl-Space 1` … `9`) | select tab 1–9 of the active project (tab 1 is its master) |
+| `Ctrl-Space ←` / `→` (or `h` / `l`) | previous / next tab; keep pressing `←`/`→` to walk on |
+| `Ctrl-Space Tab` / `Shift-Tab` | move the keys to the next / previous container: pane, tab strip, sidebar; keep pressing `Tab` to walk on |
+| `F10` (or `Ctrl-Space s`) | give the sidebar the keys; `Esc` (or `F10` again) gives them back to the tab |
+| `F11` (or `Ctrl-Space !`) | show the next agent that needs you (its project and tab) |
+| `Ctrl-Space n` / `N` | next / previous project, its tabs as you left them |
+| `Ctrl-Space w` | close the current tab; the master tab stays; never stops a master or agent |
+| `Ctrl-Space t` / `a` | a new shell tab / the new-agent dialog |
+| `Ctrl-Space e` | open the task explorer of the active project as a tab; Esc or `q` in its list closes it and shows the tab you had |
+| `Ctrl-Space ,` | the project's settings dialog |
+| `Ctrl-Space i` | start or stop typing on a worker or scout tab |
+| `Ctrl-Space q` | quit the cockpit; nothing else stops |
+| `Ctrl-Space` `Ctrl-Space` | send `Ctrl-Space` to the tab |
 
-`F12` is the prefix: press it, release, then the key. Change the prefix and the other keys with `ORC_COCKPIT_PREFIX` and `ORC_COCKPIT_KEYS` ([configuration.md → Cockpit keys](configuration.md#cockpit-keys)).
+In the tab strip (`Ctrl-Space Tab`), `←`/`→` move the highlight, `Enter` shows the tab, `w` closes it and `Esc` goes back to the tab. Change the leader and the other keys with `ORC_COCKPIT_PREFIX` and `ORC_COCKPIT_KEYS` ([configuration.md → Cockpit keys](configuration.md#cockpit-keys)); on macOS, where `Ctrl-Space` switches input sources, set `ORC_COCKPIT_PREFIX=F12` or free the shortcut.
 
 In the sidebar (`F10` gives it the keys):
 
@@ -62,7 +69,7 @@ The sidebar and the tab bar only show a question. Answer it through the master, 
 
 ### Quit and come back
 
-- Quit with `Ctrl-q` or `F12 d`, or close the terminal. The master, the workers and the coordinator keep running, and the master's MCP tools keep working.
+- Quit with `Ctrl-Space q`, or close the terminal. The master, the workers and the coordinator keep running, and the master's MCP tools keep working.
 - Run `orc start-session` again to reopen the cockpit. A live master is reattached with no prompts and no state reset, and the cockpit opens with the tabs it had.
 - `orc cockpit` opens the cockpit on the current project without starting a coordinator or a master; it moves between terminals and adds projects as `orc start-session` does.
 - One cockpit runs at a time. Run `orc start-session` in another terminal and the cockpit moves there: the old one exits and says the cockpit moved to another terminal.

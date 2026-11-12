@@ -9,8 +9,8 @@
  * (lib/cockpit2/app.ts), starting in the current project. This layer resolves
  * everything lib/cockpit2 must not read itself: the tmux binary, the view-state
  * file and the cockpit lock under orc's data home, the cockpit keys and the
- * current project, the terminal's colour depth and the theme, and it runs the project watcher. Quitting (Ctrl-q, or the
- * prefix then d) never stops a master, a worker or a coordinator.
+ * current project, the terminal's colour depth and the theme, and it runs the project watcher. Quitting (the leader
+ * then q: Ctrl-Space q by default) never stops a master, a worker or a coordinator.
  *
  * `launchCockpit` is the cockpit as `orc cockpit` and `orc start-session` run
  * it: one per user (lib/cockpit2/instance.ts). It takes over
@@ -41,6 +41,7 @@ import type { ProjectHost } from '../lib/cockpit2/addProjectDialog.ts';
 import type { AgentDefinition } from '../lib/cockpit2/newAgentDialog.ts';
 import { isSameProcess, readProcessStart } from '../lib/processIdentity.ts';
 import { quitHint, runApp, type AgentActionHost, type AppExit } from '../lib/cockpit2/app.ts';
+import { leaderLabel } from '../lib/cockpit2/dispatch.ts';
 import { submitOperatorMutation } from '../lib/operatorDispatch.ts';
 import { colorDepthFromEnv } from '../lib/cockpit2/color.ts';
 import { tmuxExplorerHost } from '../lib/cockpit2/explorer.ts';
@@ -421,9 +422,9 @@ export async function runCockpit(options: CockpitOptions): Promise<CockpitResult
   }
 }
 
-/** The keys the cockpit names when it opens. */
+/** The keys the cockpit names when it opens: the sidebar, the help dialog and quit. */
 export function cockpitOpeningHint(keys: CockpitKeys): string {
-  return [...(keys.direct.dashboard ? [`${keyLabel(keys.direct.dashboard)}: sidebar`] : []), quitHint(keys)].join(' · ');
+  return [...(keys.direct.dashboard ? [`${keyLabel(keys.direct.dashboard)}: sidebar`] : []), `${leaderLabel(keys, '?')}: help`, quitHint(keys)].join(' · ');
 }
 
 /**

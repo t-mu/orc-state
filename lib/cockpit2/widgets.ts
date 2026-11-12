@@ -11,7 +11,8 @@
  * take their two columns and are never split.
  *
  * With the slot focused the active tab's label is reversed, a marker that
- * does not rely on colour. Colour comes on top, from the theme's roles
+ * does not rely on colour; with the tab strip focused the highlighted tab is
+ * marked `▸` and its label underlined. Colour comes on top, from the theme's roles
  * (lib/cockpit2/theme.ts). Tab clicks hit-test with `tabBarClickTarget` from
  * the model. Everything here is pure; nothing touches a session.
  */
@@ -153,6 +154,8 @@ export interface TabBarDrawOptions {
   slotFocused: boolean;
   /** What the last action reported, or a failed save; takes the bottom row. */
   error: string | null;
+  /** The tab strip has the keys: the highlighted tab (its index in the model) or the new-shell tab (`plus`); null otherwise. */
+  highlight?: number | 'plus' | null;
   /** The styles the tab bar is drawn in. */
   theme: Theme;
 }
@@ -205,20 +208,33 @@ export function drawTabBar(frame: Frame, region: Region, view: TabBarView, optio
     const cols = Math.min(cell.width, region.cols - cell.x);
     if (cols <= 0) break;
     drawTabBlock(frame, region, cell.x, cols, labelY, fill);
-    const runs: Run[] = [[cell.text, fill]];
+    const highlighted = options.highlight === cell.index;
+    const runs: Run[] = [[cell.text, highlighted ? { ...fill, underline: true, bold: true } : fill]];
     if (cell.badge) runs.push([cell.badge, onFill(styleOf(theme, badgeRole(tab.attention ? attentionRole(tab.attention) : 'status.attention')))]);
     if (tab.closable) runs.push([' ', fill], [CLOSE_MARKER, onFill(styleOf(theme, 'tab.close'))]);
     drawRuns(frame, x + 1, labelY, runs, cols - 2);
+    if (highlighted) drawHighlightMark(frame, x, labelY, fill, theme);
     end = cell.x + cell.width;
   }
   if (layout.rightMarker) drawText(frame, region.x + end, labelY, layout.rightMarker, muted, region.cols - end);
-  if (view.plus) drawTabBlock(frame, region, view.plus.x, PLUS_COLS, labelY, styleOf(theme, 'tab.inactive'));
-  if (view.plus) drawText(frame, region.x + view.plus.x, labelY, PLUS_LABEL, { ...styleOf(theme, 'tab.inactive'), bold: true }, PLUS_COLS);
+  if (view.plus) {
+    const fill = styleOf(theme, 'tab.inactive');
+    const highlighted = options.highlight === 'plus';
+    drawTabBlock(frame, region, view.plus.x, PLUS_COLS, labelY, fill);
+    drawText(frame, region.x + view.plus.x, labelY, PLUS_LABEL, { ...fill, bold: true, ...(highlighted ? { underline: true } : {}) }, PLUS_COLS);
+    if (highlighted) drawHighlightMark(frame, region.x + view.plus.x, labelY, fill, theme);
+  }
+}
+
+/** The tab strip's highlight mark: a `▸` in the block's first column, in `chrome.borderFocus` on the block's fill. */
+export const TAB_HIGHLIGHT_MARK = '▸';
+function drawHighlightMark(frame: Frame, x: number, y: number, fill: CellStyle, theme: Theme): void {
+  drawText(frame, x, y, TAB_HIGHLIGHT_MARK, { ...fill, fg: styleOf(theme, 'chrome.borderFocus').fg, bold: true }, 1);
 }
 
 // ── footer ───────────────────────────────────────────────────────────────────
 
-/** A key hint in the footer: `key` (a key label, e.g. `Ctrl-q` or `F12 d`) and what it does. */
+/** A key hint in the footer: `key` (a key label, e.g. `F10` or `Ctrl-Space q`) and what it does. */
 export interface FooterHint { key: string; action: string }
 
 export interface FooterDrawOptions {

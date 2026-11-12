@@ -156,7 +156,8 @@ describe('cockpitTheme', () => {
 
 describe('cockpitOpeningHint', () => {
   it('names the sidebar and quit keys', () => {
-    expect(cockpitOpeningHint(DEFAULT_COCKPIT_KEYS)).toBe('F10: sidebar · Ctrl-q: quit · F12 d: quit');
+    expect(cockpitOpeningHint(DEFAULT_COCKPIT_KEYS)).toBe('F10: sidebar · Ctrl-Space ?: help · Ctrl-Space q: quit');
+    expect(cockpitOpeningHint({ ...DEFAULT_COCKPIT_KEYS, prefix: 'F12', quit: 'C-q' })).toBe('F10: sidebar · F12 ?: help · Ctrl-q: quit · F12 q: quit');
   });
 });
 

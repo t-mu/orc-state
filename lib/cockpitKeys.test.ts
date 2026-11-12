@@ -2,11 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_COCKPIT_KEYS, isTmuxKeyName, resolveCockpitKeys } from './cockpitKeys.ts';
 
 describe('resolveCockpitKeys', () => {
-  it('defaults to F12 and function keys, none of them Ctrl-], Alt or an AltGr character', () => {
+  it('defaults to the Ctrl-Space leader and function keys, none of them Ctrl-], Alt or an AltGr character', () => {
     const { keys, problems } = resolveCockpitKeys({});
     expect(problems).toEqual([]);
     expect(keys).toEqual(DEFAULT_COCKPIT_KEYS);
-    expect(keys.prefix).toBe('F12');
+    expect(keys.prefix).toBe('C-Space');
+    expect(isTmuxKeyName(keys.prefix)).toBe(true);
     expect(Object.values(keys.direct)).toEqual(['F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11']);
   });
 
@@ -21,7 +22,7 @@ describe('resolveCockpitKeys', () => {
     const { keys, problems } = resolveCockpitKeys({ ORC_COCKPIT_PREFIX: 'Ctrl-]', ORC_COCKPIT_KEYS: 'tab1=a,tab2=Hyper-x,bogus=F3,tab4' });
     expect(keys).toEqual(DEFAULT_COCKPIT_KEYS);
     expect(problems).toEqual([
-      "ORC_COCKPIT_PREFIX: unknown key 'Ctrl-]'; using F12",
+      "ORC_COCKPIT_PREFIX: unknown key 'Ctrl-]'; using C-Space",
       "ORC_COCKPIT_KEYS: 'a' cannot be the tab1 key (a function key F1-F12, or a C- or M- key); using F1",
       "ORC_COCKPIT_KEYS: 'Hyper-x' cannot be the tab2 key (a function key F1-F12, or a C- or M- key); using F2",
       expect.stringContaining("unknown entry 'bogus=F3'"),
@@ -40,15 +41,16 @@ describe('resolveCockpitKeys', () => {
 });
 
 describe('the cockpit quit key', () => {
-  it('defaults to C-q and is set or unbound with quit=<key> in ORC_COCKPIT_KEYS', () => {
-    expect(resolveCockpitKeys({}).keys.quit).toBe('C-q');
+  it('defaults to none (the leader then q quits) and is set or unbound with quit=<key> in ORC_COCKPIT_KEYS', () => {
+    expect(resolveCockpitKeys({}).keys.quit).toBeNull();
+    expect(resolveCockpitKeys({ ORC_COCKPIT_KEYS: 'quit=C-q' })).toMatchObject({ keys: { quit: 'C-q' }, problems: [] });
     expect(resolveCockpitKeys({ ORC_COCKPIT_KEYS: 'quit=C-x' })).toMatchObject({ keys: { quit: 'C-x' }, problems: [] });
     expect(resolveCockpitKeys({ ORC_COCKPIT_KEYS: 'quit=none' }).keys.quit).toBeNull();
   });
 
   it('rejects a plain key and drops one that clashes with the prefix or a direct key, leaving them unchanged', () => {
     const plain = resolveCockpitKeys({ ORC_COCKPIT_KEYS: 'quit=q' });
-    expect(plain.keys.quit).toBe('C-q');
+    expect(plain.keys.quit).toBeNull();
     expect(plain.problems).toEqual([expect.stringContaining("'q' cannot be the quit key")]);
     const clash = resolveCockpitKeys({ ORC_COCKPIT_KEYS: 'quit=F10' });
     expect(clash.keys.quit).toBeNull();
@@ -56,15 +58,20 @@ describe('the cockpit quit key', () => {
     expect(clash.problems).toEqual([expect.stringContaining('there is no direct quit key')]);
   });
 
-  it('drops the default quit key silently when the prefix or a direct key is C-q, so orc start-session warns about nothing new', () => {
+  it('binds no quit key when the prefix or a direct key is C-q, and warns only about a quit key that was asked for', () => {
     expect(resolveCockpitKeys({ ORC_COCKPIT_PREFIX: 'C-q' })).toEqual({ keys: expect.objectContaining({ prefix: 'C-q', quit: null }), problems: [] });
     expect(resolveCockpitKeys({ ORC_COCKPIT_KEYS: 'dashboard=C-q' })).toMatchObject({ keys: { quit: null }, problems: [] });
+    expect(resolveCockpitKeys({ ORC_COCKPIT_PREFIX: 'C-q', ORC_COCKPIT_KEYS: 'quit=C-q' }).problems).toEqual([expect.stringContaining('there is no direct quit key')]);
+  });
+
+  it('keeps the leader overridable: ORC_COCKPIT_PREFIX=F12 restores the old prefix key', () => {
+    expect(resolveCockpitKeys({ ORC_COCKPIT_PREFIX: 'F12' })).toMatchObject({ keys: { prefix: 'F12', quit: null }, problems: [] });
   });
 });
 
 describe('isTmuxKeyName', () => {
   it('accepts tmux key names and rejects the rest', () => {
-    for (const key of ['F12', 'f5', 'C-]', 'M-x', 'C-M-Left', 'PageUp', '&']) expect(isTmuxKeyName(key)).toBe(true);
+    for (const key of ['F12', 'C-Space', 'f5', 'C-]', 'M-x', 'C-M-Left', 'PageUp', '&']) expect(isTmuxKeyName(key)).toBe(true);
     for (const key of ['', 'F13', 'Ctrl-a', 'C-', 'ö', 'two']) expect(isTmuxKeyName(key)).toBe(false);
   });
 });
