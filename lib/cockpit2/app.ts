@@ -637,6 +637,7 @@ export function runApp(options: AppOptions): App {
       if (!state) return;
       if (update.type === 'status') watched.set(update.project_id, { ...state, status: update.status });
       else watched.set(update.project_id, { ...state, connection: update.connection, error: update.error });
+      noteMissingAgents(update.project_id, update.type === 'status');
       // A project that came back up: an ended master session of its shown tab is tried again.
       const tab = shownTab(tabs);
       if (update.type === 'connection' && update.connection === 'running' && tab?.projectId === update.project_id
@@ -981,6 +982,55 @@ export function runApp(options: AppOptions): App {
     stopExplorer();
     showActive();
     closeEndedShell();
+    closeGoneTabs();
+  }
+
+  /** Consecutive live status updates that did not list a worker or scout tab's agent, by tab key. */
+  const missingUpdates = new Map<string, number>();
+  /** Worker and scout tabs whose agent was missing from enough live updates and that wait to close. */
+  const goneTabs = new Map<string, { projectId: string; id: string }>();
+  /** Updates an agent must be missing from, in a row, before its tab closes (a brief absence must not flap it). */
+  const MISSING_UPDATES_TO_CLOSE = 2;
+
+  /**
+   * Counts, per open worker or scout tab of the project, the live status updates that no longer list its agent.
+   * A status that is not live (project not running) counts nothing and forgets the counts, so only
+   * consecutive live updates close a tab. Shell, agent session and master tabs are never touched.
+   */
+  function noteMissingAgents(projectId: string, newStatus: boolean): void {
+    const state = watched.get(projectId);
+    const open = tabs.projects.find((entry) => entry.projectId === projectId)?.tabs ?? [];
+    const agentTabs = open.filter((id) => id !== MASTER_TAB && !isOwnedSessionTab(id));
+    if (state?.connection !== 'running' || !state.status) {
+      for (const id of open) { missingUpdates.delete(tabKey({ projectId, agentId: id })); goneTabs.delete(tabKey({ projectId, agentId: id })); }
+      return;
+    }
+    // A connection change alone brings no status: nothing new to count.
+    if (!newStatus) return;
+    const listed = new Set([...(state.status.worker_capacity?.slots ?? []), ...(state.status.scouts ?? [])].map((agent) => agent.agent_id));
+    for (const id of agentTabs) {
+      const key = tabKey({ projectId, agentId: id });
+      if (listed.has(id)) { missingUpdates.delete(key); goneTabs.delete(key); continue; }
+      const count = (missingUpdates.get(key) ?? 0) + 1;
+      missingUpdates.set(key, count);
+      if (count >= MISSING_UPDATES_TO_CLOSE) goneTabs.set(key, { projectId, id });
+    }
+    closeGoneTabs();
+  }
+
+  /** Closes the tabs whose agent is gone, shown or hidden; with the task explorer open they wait for it to close (closeExplorer). */
+  function closeGoneTabs(): void {
+    if (explorer) return;
+    for (const [key, { projectId, id }] of goneTabs) {
+      goneTabs.delete(key);
+      missingUpdates.delete(key);
+      if (!tabs.projects.some((entry) => entry.projectId === projectId && entry.tabs.includes(id))) continue;
+      // closeTab acts on the active project: close in the tab's own project, then put the active one back.
+      apply((state) => {
+        const closed = closeTab({ ...state, activeProject: projectId }, id);
+        return { ...closed, state: { ...closed.state, activeProject: state.activeProject } };
+      });
+    }
   }
 
   /**
