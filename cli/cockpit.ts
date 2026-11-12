@@ -26,7 +26,7 @@
  * the selected project until Esc or q: what the cockpit's explorer tab runs,
  * in a session on its private tmux server (lib/cockpit2/explorer.ts).
  */
-import { spawnSync } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -35,6 +35,8 @@ import { ProjectWatcher } from '../client.ts';
 import { keyLabel, resolveCockpitKeys, type CockpitKeys } from '../lib/cockpitKeys.ts';
 import { projectDataHome } from '../lib/dataHome.ts';
 import { ACTIVE_PROJECT } from '../lib/paths.ts';
+import { ProjectRegistry } from '../lib/projectRegistry.ts';
+import type { SettingsHost } from '../lib/cockpit2/settingsDialog.ts';
 import { isSameProcess, readProcessStart } from '../lib/processIdentity.ts';
 import { quitHint, runApp, type AppExit } from '../lib/cockpit2/app.ts';
 import { colorDepthFromEnv } from '../lib/cockpit2/color.ts';
@@ -66,6 +68,26 @@ const PROJECT_ENV = ['ORC_PROJECT_ID', 'ORC_STATE_DIR', 'ORC_CONTROL_SOCKET', 'O
 /** The shell command the explorer tab's session runs: `orc cockpit explorer --project=<id>` with this orc. */
 export function explorerCommand(orc: string[], projectId: string): string {
   return `unset ${PROJECT_ENV.join(' ')}; ${[...orc, 'cockpit', 'explorer', `--project=${projectId}`].map(shellQuote).join(' ')}`;
+}
+
+/**
+ * The settings dialog's host: a project's effective settings and project-scope
+ * writes through the global registry (as `orc project config list|set
+ * --project`), and a coordinator restart as `orc --project=<id> coordinator restart`.
+ */
+export function registrySettingsHost(orc: string[], registry: ProjectRegistry = new ProjectRegistry()): SettingsHost {
+  return {
+    read: (projectId) => registry.effectiveSettings(projectId, {}, process.env),
+    write: (projectId, key, value) => registry.setSetting(key, value, projectId),
+    restartCoordinator: (projectId) => new Promise((resolve, reject) => {
+      const env = { ...process.env };
+      for (const key of PROJECT_ENV) delete env[key];
+      execFile(orc[0], [...orc.slice(1), `--project=${projectId}`, 'coordinator', 'restart', '--json'], { env, encoding: 'utf8' }, (error, _stdout, stderr) => {
+        if (error) reject(new Error(stderr.trim().split('\n').at(-1) || error.message));
+        else resolve();
+      });
+    }),
+  };
 }
 
 /** The command that runs this orc (from source or compiled). */
@@ -216,6 +238,7 @@ export async function runCockpit(options: CockpitOptions): Promise<CockpitResult
       colorDepth: colorDepthFromEnv(process.env),
       theme: options.theme,
       explorer: tmuxExplorerHost({ tmuxBinary: tmuxBinary(), command: (projectId) => explorerCommand(thisOrc(), projectId) }),
+      settings: registrySettingsHost(thisOrc()),
     });
     if (wokenEarly) wake();
     const ended = await app.done;

@@ -66,7 +66,8 @@ export interface SidebarCursor {
 export type SidebarCommand =
   | { type: 'openProject'; projectId: string }
   | { type: 'openAgent'; projectId: string; agentId: string }
-  | { type: 'focusSlot' };
+  | { type: 'focusSlot' }
+  | { type: 'openSettings'; projectId: string };
 
 export interface SidebarStep { nav: SidebarNav; command: SidebarCommand | null }
 

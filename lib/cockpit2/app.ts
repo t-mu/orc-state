@@ -87,12 +87,16 @@ import { blitScreen, createFrame, drawText, slotCursor, type Frame, type Region 
 import { createDispatcher, cursorKeyMirror, modeNotice, type DispatchContext } from './dispatch.ts';
 import type { ColorDepth } from './color.ts';
 import { EXPLORER_SOCKET, attentionQueue, isShellTab, nextShellTab, shellSessionName, type ExplorerHost } from './explorer.ts';
-import { createTokenizer, type Token } from './input.ts';
+import { createTokenizer, keyMatcher, type Token } from './input.ts';
 import { createMotionCoalescer, encodeMouse, parseSgrMouse, routeSlotMouse, type MouseEvent } from './mouse.ts';
 import { renderDiff, sameStyle } from './render.ts';
 import type { Cursor, Screen } from './screen.ts';
 import { DEFAULT_THEME, attentionRole, parseThemeColor, projectStateRole, styleOf, type Theme } from './theme.ts';
 import { drawPaneBox, type PaneHeader } from './chrome.ts';
+import {
+  changes, dialogClick, dialogKey, dialogLayout, dimFrame, drawSettingsDialog, openSettingsDialog,
+  type DialogAction, type DialogKey, type SettingsDialogState, type SettingsHost,
+} from './settingsDialog.ts';
 import { highlightSelection, osc52, selectionText, type CellPoint, type Selection } from './selection.ts';
 import { Sessions, type ConnectPane, type PaneSession } from './sessions.ts';
 import type { TerminalSession } from './terminal.ts';
@@ -295,6 +299,8 @@ export interface AppOptions {
   tickMs?: number;
   /** Starts and stops the task explorer's sessions (explorer.ts `tmuxExplorerHost`); without one the explorer cannot open. */
   explorer?: ExplorerHost | undefined;
+  /** Reads and writes project settings and restarts coordinators for the settings dialog; without it the dialog cannot open. */
+  settings?: SettingsHost | undefined;
   /** The outer terminal's colour depth (color.ts `colorDepthFromEnv`, from the CLI layer; default `truecolor`). */
   colorDepth?: ColorDepth | undefined;
   /** The theme everything the cockpit draws itself is styled with (theme.ts `themeFromEnv`, from the CLI layer; default `amber`). */
@@ -733,6 +739,12 @@ export function runApp(options: AppOptions): App {
     // Arrow keys reach the pane in the form its program asked for; checked on every render, so on tab switch and mode change.
     mirrorCursorKeys(screen ? screen.modes().applicationCursorKeys : false);
     paintCanvas(frame, sidebar);
+    if (dialog) {
+      dimFrame(frame);
+      drawSettingsDialog(frame, dialogLayout(dialog, layout.cols, layout.rows), dialog, theme,
+        theme.surfaces ? parseThemeColor(theme.surfaces.panel)! : { type: 'default' });
+      cursor = { x: 0, y: 0, visible: false };
+    }
     if (prevFrame && prevCursor && framesEqual(prevFrame, frame) && sameCursor(prevCursor, cursor)) return;
     terminal.write(renderDiff(prevFrame, frame, cursor, options.colorDepth));
     prevFrame = frame;
@@ -905,6 +917,75 @@ export function runApp(options: AppOptions): App {
     scheduleRender();
   }
 
+  // ── settings dialog ──
+  /** The open settings dialog: it takes every key and click until it closes. */
+  let dialog: SettingsDialogState | null = null;
+
+  /** Opens the settings dialog of `projectId` with its effective settings. */
+  function openSettings(projectId: string): void {
+    const host = options.settings;
+    if (!host) {
+      refusal = 'This cockpit cannot change settings.';
+      scheduleRender();
+      return;
+    }
+    try {
+      dialog = openSettingsDialog(projectId, watched.get(projectId)?.project.name ?? projectId, host.read(projectId));
+    } catch (error) {
+      refusal = `The settings could not be read: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    clearSelection();
+    scheduleRender();
+  }
+
+  /** What a dialog key or click asked for: close, or save (and restart the coordinator). */
+  async function runDialogAction(action: DialogAction): Promise<void> {
+    if (!dialog || !action) return;
+    if (action === 'cancel') { dialog = null; scheduleRender(); return; }
+    const host = options.settings!;
+    const { projectId } = dialog;
+    try {
+      dialog = { ...dialog, busy: 'Saving…', error: null };
+      scheduleRender();
+      for (const { key, value } of changes(dialog)) host.write(projectId, key, value);
+      if (action === 'saveRestart') {
+        dialog = { ...dialog, busy: 'Restarting the coordinator…' };
+        scheduleRender();
+        await host.restartCoordinator(projectId);
+      }
+      dialog = null;
+    } catch (error) {
+      if (dialog) dialog = { ...dialog, busy: null, error: error instanceof Error ? error.message.split('\n')[0] : String(error) };
+    }
+    scheduleRender();
+  }
+
+  const matchDialog = keyMatcher(['Up', 'Down', 'Left', 'Right', 'Enter', 'Escape', 'Tab', 'BTab', 'Space', 'k', 'j', 'h', 'l', 'q']);
+  const DIALOG_KEYS: Readonly<Record<string, DialogKey>> = {
+    Up: 'up', k: 'up', Down: 'down', j: 'down', Left: 'left', h: 'left', Right: 'right', l: 'right', Space: 'right',
+    Enter: 'enter', Escape: 'escape', q: 'escape', Tab: 'next', BTab: 'previous',
+  };
+
+  /** A key or mouse token while the dialog is open: the dialog gets it, nothing behind it does. */
+  function onDialogToken(token: Token): void {
+    if (!dialog) return;
+    if (token.kind === 'mouse') {
+      const event = parseSgrMouse(token);
+      if (!event || !isClick(event)) return;
+      const step = dialogClick(dialog, dialogLayout(dialog, layout.cols, layout.rows), event.x, event.y);
+      dialog = step.state;
+      scheduleRender();
+      void runDialogAction(step.action);
+      return;
+    }
+    const name = matchDialog(token);
+    if (!name) return;
+    const step = dialogKey(dialog, DIALOG_KEYS[name]);
+    dialog = step.state;
+    scheduleRender();
+    void runDialogAction(step.action);
+  }
+
   /** Runs what a sidebar key or click asks for; what it opens is shown and takes the keys, by key as by click. */
   function runSidebar(step: SidebarStep): void {
     nav = step.nav;
@@ -912,6 +993,7 @@ export function runApp(options: AppOptions): App {
     const command: SidebarCommand | null = step.command;
     if (!command) return;
     if (command.type === 'focusSlot') setFocus('slot');
+    else if (command.type === 'openSettings') openSettings(command.projectId);
     else if (command.type === 'openProject') { if (apply((state) => showProject(state, command.projectId)).ok) setFocus('slot'); }
     else if (apply((state) => openAgent(state, command.projectId, command.agentId)).ok) setFocus('slot');
   }
@@ -1040,6 +1122,7 @@ export function runApp(options: AppOptions): App {
 
   function onToken(token: Token): void {
     if (closed) return;
+    if (dialog) { onDialogToken(token); return; }
     const tab = shownTab(tabs);
     if (refusal && token.kind !== 'mouse') {
       refusal = null;
