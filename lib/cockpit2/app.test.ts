@@ -2456,6 +2456,98 @@ describe('runApp add-project and new-agent dialogs (fake hosts)', () => {
     expect(app.tabs().projects[0].active).toBe('shell:2');
   });
 
+  describe('worker and scout tabs of a gone agent', () => {
+    const W2_TARGET = { socket: 'orc-w2', session: 'orc-w2-x' };
+    const withAgents = (workers: string[], scouts: string[] = []) => {
+      const state = projectState('demo', { workers: workers.map((id) => ({ agent_id: id, ...(id === 'w1' ? W1_TARGET : W2_TARGET) })) });
+      (state.status as unknown as { scouts: unknown[] }).scouts = scouts.map((id) => ({ agent_id: id, provider: 'codex', model: null, objective: 'look', status: 'running', launched_at: null, tmux_socket: 'orc-s', tmux_session: `orc-${id}`, session_handle: `tmux:orc-s:orc-${id}` }));
+      return state;
+    };
+    const emitStatus = (watcher: { emit: (update: never) => void }, state: ReturnType<typeof projectState>) => watcher.emit({ type: 'status', project_id: 'demo', status: state.status! } as never);
+
+    it('closes a worker tab once its agent is missing from two consecutive live updates, not after one', async () => {
+      const { terminal, app, watcher } = start({ projects: [withAgents(['w1'])] });
+      await attached(terminal);
+      app.apply((state) => openAgent(state, 'demo', 'w1'));
+      await attached(terminal, 'orc-w1');
+      emitStatus(watcher, withAgents([]));
+      await sleep(30);
+      expect(app.tabs().projects[0].tabs).toEqual(['w1']);
+      // It came back: the count starts over.
+      emitStatus(watcher, withAgents(['w1']));
+      emitStatus(watcher, withAgents([]));
+      await sleep(30);
+      expect(app.tabs().projects[0].tabs).toEqual(['w1']);
+      emitStatus(watcher, withAgents([]));
+      await waitFor(() => app.tabs().projects[0].tabs.length === 0);
+      expect(app.tabs().projects[0].active).toBeNull();
+    });
+
+    it('closes a scout tab the same way, and a hidden one leaves the shown tab alone', async () => {
+      const { terminal, app, watcher } = start({ projects: [withAgents(['w1'], ['s1'])] });
+      await attached(terminal);
+      app.apply((state) => openAgent(state, 'demo', 's1'));
+      app.apply((state) => openAgent(state, 'demo', 'w1'));
+      await attached(terminal, 'orc-w1');
+      expect(app.tabs().projects[0].active).toBe('w1');
+      emitStatus(watcher, withAgents(['w1']));
+      emitStatus(watcher, withAgents(['w1']));
+      await waitFor(() => !app.tabs().projects[0].tabs.includes('s1'));
+      expect(app.tabs().projects[0].tabs).toEqual(['w1']);
+      expect(app.tabs().projects[0].active).toBe('w1');
+    });
+
+    it('closes nothing while the project is not running, and a stop in between restarts the count', async () => {
+      const { terminal, app, watcher } = start({ projects: [withAgents(['w1'])] });
+      await attached(terminal);
+      app.apply((state) => openAgent(state, 'demo', 'w1'));
+      await attached(terminal, 'orc-w1');
+      emitStatus(watcher, withAgents([]));
+      watcher.emit({ type: 'connection', project_id: 'demo', connection: 'unreachable', error: null });
+      for (let i = 0; i < 3; i++) emitStatus(watcher, withAgents([]));
+      await sleep(30);
+      expect(app.tabs().projects[0].tabs).toEqual(['w1']);
+      watcher.emit({ type: 'connection', project_id: 'demo', connection: 'running', error: null });
+      emitStatus(watcher, withAgents([]));
+      await sleep(30);
+      expect(app.tabs().projects[0].tabs).toEqual(['w1']);
+      emitStatus(watcher, withAgents([]));
+      await waitFor(() => app.tabs().projects[0].tabs.length === 0);
+    });
+
+    it('does not carry a count over to a tab reopened after being closed by hand', async () => {
+      const { terminal, app, watcher } = start({ projects: [withAgents(['w1'])] });
+      await attached(terminal);
+      app.apply((state) => openAgent(state, 'demo', 'w1'));
+      await attached(terminal, 'orc-w1');
+      emitStatus(watcher, withAgents([]));
+      app.apply((state) => closeTab(state, 'w1'));
+      emitStatus(watcher, withAgents([]));
+      app.apply((state) => openAgent(state, 'demo', 'w1'));
+      emitStatus(watcher, withAgents([]));
+      await sleep(30);
+      expect(app.tabs().projects[0].tabs).toEqual(['w1']);
+    });
+
+    it('never closes shell tabs or the master tab, and handles each project on its own', async () => {
+      const host = new FakeExplorerHost();
+      const other = projectState('other');
+      other.status = withAgents(['x1']).status;
+      const { terminal, app, watcher } = start({ explorer: host, projects: [withAgents(['w1']), other] });
+      await attached(terminal);
+      terminal.type(click(await columnOf(terminal, 2, '+', SIDEBAR_COLS), 2));
+      await attached(terminal, 'shell-demo-1');
+      app.apply((state) => openAgent(state, 'demo', 'w1'));
+      app.apply((state) => openAgent(showProject(state, 'other').state, 'other', 'x1'));
+      app.apply((state) => showProject(state, 'demo'));
+      for (let i = 0; i < 2; i++) emitStatus(watcher, withAgents([]));
+      await waitFor(() => !app.tabs().projects.find((entry) => entry.projectId === 'demo')!.tabs.includes('w1'));
+      expect(app.tabs().projects.find((entry) => entry.projectId === 'demo')!.tabs).toEqual(['shell:1']);
+      expect(app.tabs().projects.find((entry) => entry.projectId === 'other')!.tabs).toEqual(['x1']);
+      expect(app.tabs().activeProject).toBe('demo');
+    });
+  });
+
   it('starts a custom agent with its prompt as the first message; its session ending closes the tab', async () => {
     const host = new FakeExplorerHost();
     const { terminal, clients, app } = start({ explorer: host, agentDefinitions: (root) => (root === '/repo/demo' ? [critic] : []) });
