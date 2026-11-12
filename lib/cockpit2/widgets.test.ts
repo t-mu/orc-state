@@ -67,10 +67,10 @@ function renderTabBar(cols: number, rows: number, state: TabBarState = TABS, slo
 describe('drawTabBar', () => {
   it('draws every tab at 200x60 with mode marks, badges and close markers, wide names in their display width', () => {
     const { line, bar, layout } = renderTabBar(200, 60);
-    expect(line).toContain(` 1 master `);
-    expect(line).toContain(` 2 ${VIEW_MARK} ${CJK_AGENT} ${CLOSE_MARKER} `);
-    expect(line).toContain(` 3 ${TYPING_MARK} ${EMOJI_AGENT} ${CLOSE_MARKER} `);
-    expect(line).toContain(` 4 ${VIEW_MARK} w3 ! PERMISSION ${CLOSE_MARKER} `);
+    expect(line).toContain(` master `);
+    expect(line).toContain(` ${VIEW_MARK} ${CJK_AGENT} ${CLOSE_MARKER} `);
+    expect(line).toContain(` ${TYPING_MARK} ${EMOJI_AGENT} ${CLOSE_MARKER} `);
+    expect(line).toContain(` ${VIEW_MARK} w3 ! PERMISSION ${CLOSE_MARKER} `);
     expect(line).not.toContain('quit'); // the quit key is in the footer
     expect(line).not.toContain('│'); // the tabs are solid blocks, no side borders
     // Each tab's edges are where the layout puts them: display widths, not string lengths; one column between tabs.
@@ -79,7 +79,7 @@ describe('drawTabBar', () => {
       expect(columnOf(line, cell.x + cell.width - 1)).toBe(' ');
       expect(columnOf(line, cell.x + cell.width)).toBe(' ');
     }
-    expect(bar.layout.cells.map((cell) => cell.width)).toEqual(bar.model.tabs.map((tab) => 2 + stringWidth(` ${tab.number} ${tab.label}`) + (tab.attention ? ' ! PERMISSION'.length : 0) + (tab.closable ? 3 : 1)));
+    expect(bar.layout.cells.map((cell) => cell.width)).toEqual(bar.model.tabs.map((tab) => 2 + stringWidth(` ${tab.label}`) + (tab.attention ? ' ! PERMISSION'.length : 0) + (tab.closable ? 3 : 1)));
     expect(layout.tabBar.rows).toBe(4);
   });
 

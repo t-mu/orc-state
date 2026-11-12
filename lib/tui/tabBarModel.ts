@@ -89,7 +89,7 @@ export interface TabBarLayout {
   rightMarker: string;
 }
 
-const tabText = (tab: TabBarTab) => ` ${tab.number} ${tab.label}`;
+const tabText = (tab: TabBarTab) => ` ${tab.label}`;
 /** ` ! KIND`: the exclamation mark keeps the badge readable without colour. */
 const tabBadge = (tab: TabBarTab) => (tab.attention ? ` ! ${ATTENTION_BADGE[tab.attention]}` : '');
 const tabTail = (tab: TabBarTab) => `${tab.closable ? ` ${CLOSE_MARKER}` : ''} `;
@@ -147,7 +147,7 @@ export function layoutTabBar(model: TabBarModel, columns: number): TabBarLayout 
     let badge = tabBadge(tab);
     if (spare < 0) {
       const room = Math.max(0, columns - stringWidth(leftMarker) - stringWidth(rightMarker) - 2 - stringWidth(tail));
-      // The badge says the agent needs a human: the name gives way first, down to its number.
+      // The badge says the agent needs a human: the name gives way first, down to a few cells.
       text = fitText(text, Math.min(stringWidth(text), Math.max(4, room - stringWidth(badge))));
       badge = fitText(badge, Math.max(0, room - stringWidth(text)));
     }
