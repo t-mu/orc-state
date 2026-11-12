@@ -70,10 +70,10 @@ A file that cannot be read or parsed, or names an unknown base, is reported and 
 │ 34 cols   ┊ █ master █ █ w1 ! Q × █ a label row capped by  │
 │ (drag the ┊ ▀▀▀▀▀▀▀▀▀▀ ▀▀▀▀▀▀▀▀▀▀▀▀ half blocks, 1-col gaps│
 │  gutter)  ┊                         a blank gap row        │
-│ Project   ┊┌─ [ W1 ] task-1 · implement ───── [QUESTION] ─┐│
-│ Other     ┊│ slot: the active tab's pane, inside          ││
-│ projects  ┊│ the pane box                                 ││
-│ Agents    ┊└──────────────────────────────────────────────┘│
+│ Projects  ┊┌─ [ W1 ] task-1 · implement ───── [QUESTION] ─┐│
+│ Project   ┊│ slot: the active tab's pane, inside          ││
+│ Agents    ┊│ the pane box                                 ││
+│ (gap rows)┊└──────────────────────────────────────────────┘│
 └ footer: 1 row, full width ─────────────────────────────────┘
 ```
 
@@ -85,4 +85,24 @@ The tab strip is four rows: one block per tab on the label row (its second row),
 
 Every shown tab owns its window: the master's, a worker's or a scout's window (and the task explorer's) is sized to the slot when its tab is shown and whenever the slot changes (a terminal resize or a dragged divider), so its screen fills the slot. A hidden tab's window keeps its last size; a window resized from outside the cockpit while shown is cropped, or padded with a dim edge marker (`┊`, `┈`), into the slot until the slot next changes.
 
-The sidebar is three cards (`lib/cockpit2/sidebarCards.ts`): Project (the active project's coordinator state, worker capacity and, only while there is one, a notice row), Other projects (one row each) and Agents (one row each, a second row for an agent needing attention; a row too narrow for the agent's role drops the role whole rather than cutting it). Space or a click on an agent's `[+]` expands it into a box with its task, phase, provider, activity or question and the open key. When rows run short, Other projects shrinks to a `+N more` line before Agents loses rows; the cursor's row (an expanded agent's whole block) stays in view.
+The sidebar is three cards (`lib/cockpit2/sidebarCards.ts`), top to bottom, with one blank row between two cards (no card's: it shows the canvas):
+
+```
+┌─ [ PROJECTS ] ───────────── 2 ┐   every registered project: state badge, `!N` when
+│ ▸ orc-state         [RUNNING] │   its agents need a human; `▸` and text.accent mark
+│   arek-on-trail        [IDLE] │   the active one
+└───────────────────────────────┘
+                                    gap
+┌─ [ ORC-STATE ] ───────────────┐   the active project: coordinator state, worker
+│ coordinator         [RUNNING] │   capacity, open task counts (`no open tasks`; no
+│ workers 2/4                   │   row without its status), the notice only while
+│ tasks 3 todo · 1 in progress  │   there is one, the settings button (`button`)
+│ [ SETTINGS ]                  │
+└───────────────────────────────┘
+                                    gap
+┌─ [ AGENTS ] ──────── 3 live ──┐   one row per agent, a second for one needing
+│ [+] grommash worker [PERMI…]  │   attention
+└───────────────────────────────┘
+```
+
+Agents: a row too narrow for the agent's role drops the role whole rather than cutting it; Space or a click on an agent's `[+]` expands it into a box with its task, phase, provider, activity or question and the open key. The keys move in three boxes, one per card, `Tab` and `Shift-Tab` cycling them: Projects (by project, `Enter` opens it), Project (only its settings button, `Enter` or a click on it asks for the active project's settings) and Agents. When rows run short, Projects shrinks to a `+N more` window around its cursor (the active project while the keys are elsewhere) before Agents loses rows; Agents keeps the cursor agent's row (an expanded agent's whole block) and a `+N more` line before the Project card loses rows; Projects goes last unless the keys are in it. The gaps count in the rows (two at 80x24) and go before the Project card loses a row, Projects goes or Agents is down to its least.

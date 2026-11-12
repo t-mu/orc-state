@@ -135,7 +135,7 @@ describe('createDispatcher: view and typing modes', () => {
     expect(modeNotice(VIEW)).toBe('[view] i: type · q/Esc: close');
     expect(modeNotice(TYPING)).toBe('[typing] Ctrl-]: stop typing');
     expect(modeNotice(MASTER)).toContain('master');
-    expect(modeNotice({ ...VIEW, sidebar: true })).toBe('↑↓ Tab · Enter: open · Space: expand · Esc: pane');
+    expect(modeNotice({ ...VIEW, sidebar: true })).toBe('Tab: card · Enter: open · Space: +/- · Esc: pane');
     for (const context of [VIEW, TYPING, MASTER]) expect(modeNotice(context).length).toBeLessThanOrEqual(32);
     // The sidebar's keys are the most: still under 50 columns, which leaves an 80-column footer its breadcrumb.
     expect(modeNotice({ ...MASTER, sidebar: true }).length).toBeLessThanOrEqual(48);
@@ -148,7 +148,7 @@ describe('createDispatcher: sidebar focus', () => {
   it('turns arrows, j/k, Tab, Shift-Tab, Enter and Esc into sidebar navigation', () => {
     expect(run(`${ESC}[A${ESC}OBkj\t${ESC}[Z\r${ESC}`, SIDEBAR)).toEqual([
       { type: 'sidebar', key: 'up' }, { type: 'sidebar', key: 'down' }, { type: 'sidebar', key: 'up' }, { type: 'sidebar', key: 'down' },
-      { type: 'sidebar', key: 'switchBox' }, { type: 'sidebar', key: 'switchBox' }, { type: 'sidebar', key: 'open' }, { type: 'sidebar', key: 'back' },
+      { type: 'sidebar', key: 'switchBox' }, { type: 'sidebar', key: 'prevBox' }, { type: 'sidebar', key: 'open' }, { type: 'sidebar', key: 'back' },
     ]);
   });
 

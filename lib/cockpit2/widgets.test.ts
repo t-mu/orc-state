@@ -447,7 +447,7 @@ describe('full-style snapshot at 80x24', () => {
   const tabAttention = new Map(KINDS.map((kind) => [`a-${kind}`, kind]));
   const BUTTONS: HeaderButton[] = [{ action: 'explorer', text: 'tasks' }, { action: 'attention', text: '! 4' }];
 
-  function draw(sidebar: SidebarModel, focus: 'projects' | 'agents' | null, nav: SidebarNav, activeTab: string, slotFocused: boolean, error: string | null, explorer = false): string[] {
+  function draw(sidebar: SidebarModel, focus: 'projects' | 'project' | 'agents' | null, nav: SidebarNav, activeTab: string, slotFocused: boolean, error: string | null, explorer = false): string[] {
     const layout = computeLayout(80, 24);
     const frame = createFrame(80, 24);
     drawSidebarCards(frame, layout.sidebar, sidebarCardsLayout(sidebar, layout.sidebar.rows, nav, layout.sidebar.cols), { focus, theme: CLASSIC });

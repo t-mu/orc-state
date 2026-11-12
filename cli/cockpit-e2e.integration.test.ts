@@ -361,7 +361,7 @@ describe.skipIf(!tmuxOk)('orc cockpit end to end, in a host tmux pane', () => {
 
     // F10 gives the sidebar the keys (the Agents card, its first agent); Space expands the worker into its block.
     send(`${ESC}[21~`);
-    await waitFor('the sidebar\'s keys in the footer', () => lines()[HOST_ROWS - 1].includes('Space: expand'));
+    await waitFor('the sidebar\'s keys in the footer', () => lines()[HOST_ROWS - 1].includes('Space: +/-'));
     send(' ');
     await waitFor('the expanded agent block', () => sidebarRow('[-] worker-a') !== '' && sidebarRow('task  orch/task-a') !== '');
 
