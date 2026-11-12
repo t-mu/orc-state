@@ -982,13 +982,26 @@ export function runApp(options: AppOptions): App {
     showActive();
   }
 
-  /** A shown shell or agent session tab whose process exited (`exit` in it) closes. */
+  /**
+   * A shell or agent session tab whose process exited (`exit` in it, the CLI quitting, the tmux session killed)
+   * closes, shown or hidden: a hidden tab's control client stays attached and reports the end like a shown one's.
+   * Worker, scout and master tabs only detach a view, so they never close here.
+   */
   function closeEndedShell(): void {
-    const tab = shownTab(tabs);
-    if (explorer || !tab || !isOwnedSessionTab(tab.agentId)) return;
-    if (sessions.get(tabKey(tab))?.state.kind !== 'ended') return;
-    const id = tab.agentId;
-    queueMicrotask(() => { if (shownTab(tabs)?.agentId === id) apply((state) => closeTab(state, id)); });
+    for (const project of tabs.projects) {
+      for (const id of project.tabs) {
+        if (!isOwnedSessionTab(id) || sessions.get(tabKey({ projectId: project.projectId, agentId: id }))?.state.kind !== 'ended') continue;
+        const projectId = project.projectId;
+        const shown = shownTab(tabs);
+        if (explorer && shown?.projectId === projectId && shown.agentId === id) continue;
+        queueMicrotask(() => apply((state) => {
+          if (!state.projects.some((entry) => entry.projectId === projectId && entry.tabs.includes(id))) return { state, ok: true, message: '' };
+          // closeTab acts on the active project: close in the tab's own project, then put the active one back.
+          const closed = closeTab({ ...state, activeProject: projectId }, id);
+          return { ...closed, state: { ...closed.state, activeProject: state.activeProject } };
+        }));
+      }
+    }
   }
 
   /**
