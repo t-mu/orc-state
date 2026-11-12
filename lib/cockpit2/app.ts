@@ -1001,13 +1001,16 @@ export function runApp(options: AppOptions): App {
     const state = watched.get(projectId);
     const open = tabs.projects.find((entry) => entry.projectId === projectId)?.tabs ?? [];
     const agentTabs = open.filter((id) => id !== MASTER_TAB && !isOwnedSessionTab(id));
-    if (state?.connection !== 'running' || !state.status) {
-      for (const id of open) { missingUpdates.delete(tabKey({ projectId, agentId: id })); goneTabs.delete(tabKey({ projectId, agentId: id })); }
-      return;
-    }
+    // Counts of tabs no longer open (closed by hand) must not carry over to a tab opened later under the same id.
+    const status = state?.connection === 'running' ? state.status : null;
+    const live = status !== null && status !== undefined;
+    const kept = new Set(live ? agentTabs.map((id) => tabKey({ projectId, agentId: id })) : []);
+    for (const key of [...missingUpdates.keys()]) if (key.startsWith(`${projectId}\0`) && !kept.has(key)) missingUpdates.delete(key);
+    for (const key of [...goneTabs.keys()]) if (key.startsWith(`${projectId}\0`) && !kept.has(key)) goneTabs.delete(key);
+    if (!status) return;
     // A connection change alone brings no status: nothing new to count.
     if (!newStatus) return;
-    const listed = new Set([...(state.status.worker_capacity?.slots ?? []), ...(state.status.scouts ?? [])].map((agent) => agent.agent_id));
+    const listed = new Set([...(status.worker_capacity?.slots ?? []), ...(status.scouts ?? [])].map((agent) => agent.agent_id));
     for (const id of agentTabs) {
       const key = tabKey({ projectId, agentId: id });
       if (listed.has(id)) { missingUpdates.delete(key); goneTabs.delete(key); continue; }

@@ -2515,6 +2515,20 @@ describe('runApp add-project and new-agent dialogs (fake hosts)', () => {
       await waitFor(() => app.tabs().projects[0].tabs.length === 0);
     });
 
+    it('does not carry a count over to a tab reopened after being closed by hand', async () => {
+      const { terminal, app, watcher } = start({ projects: [withAgents(['w1'])] });
+      await attached(terminal);
+      app.apply((state) => openAgent(state, 'demo', 'w1'));
+      await attached(terminal, 'orc-w1');
+      emitStatus(watcher, withAgents([]));
+      app.apply((state) => closeTab(state, 'w1'));
+      emitStatus(watcher, withAgents([]));
+      app.apply((state) => openAgent(state, 'demo', 'w1'));
+      emitStatus(watcher, withAgents([]));
+      await sleep(30);
+      expect(app.tabs().projects[0].tabs).toEqual(['w1']);
+    });
+
     it('never closes shell tabs or the master tab, and handles each project on its own', async () => {
       const host = new FakeExplorerHost();
       const other = projectState('other');
