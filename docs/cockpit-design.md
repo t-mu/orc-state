@@ -91,13 +91,15 @@ The sidebar is three cards (`lib/cockpit2/sidebarCards.ts`), top to bottom, with
 ```
 ┌─ [ PROJECTS ] ───────────── 2 ┐   every registered project: state badge, `!N` when
 │ ▸ orc-state         [RUNNING] │   its agents need a human; `▸` and text.accent mark
-│   arek-on-trail        [IDLE] │   the active one
+│   arek-on-trail        [IDLE] │   the active one; the add-project button
+│                               │
+│ [ + ADD PROJECT ]             │
 └───────────────────────────────┘
                                     gap
 ┌─ [ ORC-STATE ] ───────────────┐   the active project: coordinator state, worker
 │ coordinator         [RUNNING] │   capacity, open task counts (`no open tasks`; no
 │ workers 2/4                   │   row without its status), the notice only while
-│ tasks 3 todo · 1 in progress  │   there is one, the settings button (`button`)
+│ tasks 3 todo · 1 in progress  │   there is one, the settings button
 │ [ SETTINGS ]                  │
 └───────────────────────────────┘
                                     gap
@@ -107,12 +109,17 @@ The sidebar is three cards (`lib/cockpit2/sidebarCards.ts`), top to bottom, with
 ││ model  claude · opus        ││   the task, or a scout's brief, the activity
 ││ task   cockpit-style/foo    ││   when it says more than the row), or the
 ││ doing  editing app.ts       ││   question unlabelled, and two filled
-││ [ OPEN ] [ KILL ]           ││   buttons one column apart
-│└─────────────────────────────┘│
+││ [ OPEN ] [ KILL ]           ││   buttons one column apart; the new-agent
+│└─────────────────────────────┘│   button
+│ [ + NEW AGENT ]               │
 └───────────────────────────────┘
 ```
 
-Agents: a row too narrow for the agent's role drops the role whole rather than cutting it; Space or a click on an agent's `[+]` expands it into a box. Its rows carry a label in `text.muted`, padded to one width so the values (`text.primary`) line up: `model` with `provider · model` (`-` for an unknown provider, `default` for an unknown model: the provider CLI's own), `task` with the task ref when the agent has one, `brief` with a scout's brief (the first line of its objective, cut by display width), then the question or reason of an agent needing a human (unlabelled, the full width, in the attention kind's role: `? …`), else `doing` with its activity only when it says something (never the bare role, the task it falls back to, or the phase the badge shows; at most two lines, the second under the first), and the buttons: `[ OPEN ]` (`tab.active`) opens the agent's tab as `Enter` does, `[ KILL ]` (`button.danger`) kills it as `x` does, after a confirmation (Dialog layer). The keys move in three boxes, one per card, `Tab` and `Shift-Tab` cycling them: Projects (by project, `Enter` opens it), Project (only its settings button, `Enter` or a click on it opens the active project's settings dialog) and Agents. When rows run short, Projects shrinks to a `+N more` window around its cursor (the active project while the keys are elsewhere) before Agents loses rows; Agents keeps the cursor agent's row (an expanded agent's whole block) and a `+N more` line before the Project card loses rows; Projects goes last unless the keys are in it. The gaps count in the rows (two at 80x24) and go before the Project card loses a row, Projects goes or Agents is down to its least.
+Card buttons: each card's action button sits on its last body row, just above its bottom border, whatever the card's height: `[ + ADD PROJECT ]` (Projects), `[ SETTINGS ]` (Project, only with an active project) and `[ + NEW AGENT ]` (Agents, only with an active project), all in `button`. A card's list takes the rows above its button, blank rows between when it is shorter, and scrolls there (`+N more`, the cursor's row kept in view). A click on a button's columns presses it: `[ SETTINGS ]` opens the active project's settings dialog, `[ + ADD PROJECT ]` and `[ + NEW AGENT ]` ask the app to add a project or start an agent in the active project (until their dialogs land the cockpit says they are coming next).
+
+Heights: the cards share the sidebar's rows (less the gaps) equally, the remainder going to Agents; Projects and the Project card never take more than their share. While the Agents content (its rows, expanded blocks and its button) does not fit its share, Agents takes rows from the others: first what their content leaves of their shares (each shrinks to its content), then Projects down to its least (a `+N more` window around its cursor, the active project while the keys are elsewhere, and its button). A card's least is its borders, one item (the cursor's) and its button, plus the `+N more` line when it has more items.
+
+Agents: a row too narrow for the agent's role drops the role whole rather than cutting it; Space or a click on an agent's `[+]` expands it into a box. Its rows carry a label in `text.muted`, padded to one width so the values (`text.primary`) line up: `model` with `provider · model` (`-` for an unknown provider, `default` for an unknown model: the provider CLI's own), `task` with the task ref when the agent has one, `brief` with a scout's brief (the first line of its objective, cut by display width), then the question or reason of an agent needing a human (unlabelled, the full width, in the attention kind's role: `? …`), else `doing` with its activity only when it says something (never the bare role, the task it falls back to, or the phase the badge shows; at most two lines, the second under the first), and the buttons: `[ OPEN ]` (`tab.active`) opens the agent's tab as `Enter` does, `[ KILL ]` (`button.danger`) kills it as `x` does, after a confirmation (Dialog layer). The keys move in three boxes, one per card, `Tab` and `Shift-Tab` cycling them: Projects (by project, `Enter` opens it; `↓` past the last project lands on `[ + ADD PROJECT ]`), Project (only its settings button, `Enter` presses it) and Agents (by agent; `↓` past the last agent lands on `[ + NEW AGENT ]`). `Enter` on a button presses it; `↑` returns to the last item; an empty list's cursor is on its button. When rows run short, Agents keeps the cursor agent's row (an expanded agent's whole block), a `+N more` line and its button before the Project card goes down to its least (its coordinator row and its button); Projects goes last unless the keys are in it. Rows the Agents window leaves unused beside an expanded block go back to a shrunk Project card, then a shrunk Projects, up to their shares. The gaps count in the rows (two at 80x24) and go before the Project card goes below its content (or share), Projects goes or Agents is down to its least.
 
 ## Dialog layer
 

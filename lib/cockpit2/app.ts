@@ -1105,6 +1105,8 @@ export function runApp(options: AppOptions): App {
     if (!command) return;
     if (command.type === 'focusSlot') setFocus('slot');
     else if (command.type === 'openSettings') openSettings(command.projectId);
+    else if (command.type === 'addProject') { refusal = 'Adding projects is coming next.'; scheduleRender(); }
+    else if (command.type === 'newAgent') { refusal = 'New agents are coming next.'; scheduleRender(); }
     else if (command.type === 'killAgent') confirmKill(command);
     else if (command.type === 'openProject') { if (apply((state) => showProject(state, command.projectId)).ok) setFocus('slot'); }
     else if (apply((state) => openAgent(state, command.projectId, command.agentId)).ok) setFocus('slot');
