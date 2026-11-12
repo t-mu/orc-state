@@ -143,6 +143,9 @@ describe('coordinator policy e2e', () => {
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
     const coordinator = await importCoordinatorWithArgs([]);
+    // A run is treated as dead only after 2 dead probes in a row (CONSECUTIVE_DEAD_PROBES).
+    await coordinator.tick();
+    expect(readClaims().claims[0].state).toBe('in_progress');
     await coordinator.tick();
 
     const claim = readClaims().claims[0];
