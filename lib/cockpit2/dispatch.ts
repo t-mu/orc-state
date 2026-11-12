@@ -69,7 +69,7 @@ export type DispatchAction =
   | { type: 'drop'; reason: 'incomplete' | 'view' | 'prefix' | 'sidebar' };
 
 /** Sidebar navigation: move the cursor, cycle the projects, project and agents boxes (forward, back), open, expand or collapse an agent, kill an agent (asks first), back to the pane. */
-export type SidebarKey = 'up' | 'down' | 'switchBox' | 'prevBox' | 'open' | 'toggle' | 'kill' | 'back';
+export type SidebarKey = 'up' | 'down' | 'switchBox' | 'prevBox' | 'open' | 'toggle' | 'expand' | 'collapse' | 'kill' | 'back';
 
 export interface DispatchContext {
   /** The shown tab's mode; the master tab passes `typing`. */
@@ -89,6 +89,7 @@ export const STOP_TYPING_KEY = 'C-]';
 /** Sidebar navigation keys by tmux key name. */
 export const SIDEBAR_KEYS: Readonly<Record<string, SidebarKey>> = {
   Up: 'up', k: 'up', Down: 'down', j: 'down', Tab: 'switchBox', BTab: 'prevBox', Enter: 'open', Space: 'toggle', x: 'kill', Escape: 'back',
+  Right: 'expand', l: 'expand', Left: 'collapse', h: 'collapse',
 };
 
 /** The first key name bound to a sidebar key (`Enter` for open), for hints. */

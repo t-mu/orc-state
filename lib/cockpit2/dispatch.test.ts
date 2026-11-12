@@ -160,6 +160,14 @@ describe('createDispatcher: sidebar focus', () => {
     expect([sidebarKeyName('open'), sidebarKeyName('toggle')]).toEqual(['Enter', 'Space']);
   });
 
+  it('turns → and l into expand, ← and h into collapse in the sidebar; in the slot the arrows reach the pane', () => {
+    expect(run('\x1b[C', SIDEBAR)).toEqual([{ type: 'sidebar', key: 'expand' }]);
+    expect(run('l', SIDEBAR)).toEqual([{ type: 'sidebar', key: 'expand' }]);
+    expect(run('\x1b[D', SIDEBAR)).toEqual([{ type: 'sidebar', key: 'collapse' }]);
+    expect(run('h', SIDEBAR)).toEqual([{ type: 'sidebar', key: 'collapse' }]);
+    expect(forwarded(run('\x1b[C', TYPING))).toEqual(['\x1b[C']);
+  });
+
   it('turns x into the kill key while the sidebar has the focus; elsewhere it reaches the pane or is dropped', () => {
     expect(run('x', SIDEBAR)).toEqual([{ type: 'sidebar', key: 'kill' }]);
     expect(sidebarKeyName('kill')).toBe('x');
