@@ -60,6 +60,10 @@ export interface SettingsDialogState {
 
 const PROVIDERS = ['claude', 'codex', 'gemini'];
 const CLAUDE_MODELS = ['sonnet', 'opus', 'haiku'];
+/** The GPT-6 models the Codex CLI lists (its models cache, codex-cli 0.167); any other stored model stays selectable. */
+const CODEX_MODELS = ['gpt-6-sol', 'gpt-6.1-sol', 'gpt-6-astra', 'gpt-6.1-terra', 'gpt-6-luna'];
+/** The models ←/→ cycle through for `provider` (Gemini: its stored model only). */
+const modelOptions = (provider: SettingValue): SettingValue[] => (provider === 'claude' ? CLAUDE_MODELS : provider === 'codex' ? CODEX_MODELS : []);
 const MAX_WORKERS_LIMIT = 8;
 
 const asValue = (value: unknown): SettingValue => (typeof value === 'string' || typeof value === 'number' ? value : null);
@@ -72,7 +76,7 @@ export const modelKey = (provider: SettingValue) => `worker_pool.provider_models
 function modelField(settings: Record<string, unknown>, provider: SettingValue): SettingsField {
   const key = modelKey(provider);
   const value = asValue(settings[key] ?? settings['worker_pool.model']);
-  const options = withValue(provider === 'claude' ? CLAUDE_MODELS : [], value);
+  const options = withValue(modelOptions(provider), value);
   return { key, label: 'Default worker model', options, value, original: value, restart: false };
 }
 
@@ -155,7 +159,7 @@ function cycle(state: SettingsDialogState, field: SettingsField, delta: 1 | -1):
 /** The model field after the provider changed: that provider's stored model (unchanged, so nothing is written for it). */
 function modelFieldFor(state: SettingsDialogState, provider: SettingValue): SettingsField {
   const value = state.models[String(provider)] ?? null;
-  return { key: modelKey(provider), label: 'Default worker model', options: withValue(provider === 'claude' ? CLAUDE_MODELS : [], value), value, original: value, restart: false };
+  return { key: modelKey(provider), label: 'Default worker model', options: withValue(modelOptions(provider), value), value, original: value, restart: false };
 }
 
 /** What a key does: move between rows, change a field, press a button, or close. */
