@@ -39,7 +39,7 @@ Which status role a state gets is decided in `theme.ts` only:
 
 | Theme | Look |
 |---|---|
-| `orc` (default) | The moonfly palette (an iTerm2 colour preset) with sand-coloured chrome on a near-black `#080808` background. While the cockpit runs it sets the terminal's own background, text, cursor and 16 ANSI colours (OSC 11, 10, 12, 4), so the agents' panes take them too, and resets them to the terminal's profile on exit (OSC 104, 110, 111, 112), crash and signal included. Where a terminal ignores those sequences, the cockpit's own areas (not the panes) are painted in the theme background |
+| `orc` (default) | The moonfly palette (an iTerm2 colour preset) with amber `#ffb000` chrome (focus border `#ffc94d`, bold). Two surfaces: the sidebar's cards and the agent pane's box sit on a panel `#161616`, a shade above the near-black `#080808` canvas around them (header, gutter, tab bar, footer). While the cockpit runs it sets the terminal's own background to the panel, and its text, cursor and 16 ANSI colours (OSC 11, 10, 12, 4), so the agents' output sits on the panel without painting, and resets them to the terminal's profile on exit (OSC 104, 110, 111, 112), crash and signal included. The cockpit paints both surfaces itself on its own cells left at the default background (never the slot), so the elevation shows even where a terminal ignores those sequences |
 | `amber` | Amber chrome on the terminal's own background; RGB colours. Backgrounds only for badges, the cursor row and the attention badge |
 | `classic` | The cockpit's earlier look: the 16 basic colours with bold, dim and inverse |
 | `mono` | No colour at all; states differ by bold, dim, underline and inverse, and their text labels carry the meaning. `NO_COLOR` selects it |

@@ -57,12 +57,23 @@ export interface TerminalColors {
   palette?: readonly string[];
 }
 
+/**
+ * Background shades (`#rrggbb`) that lift the cards and the agent pane off the
+ * floor: `canvas` around them, `panel` inside them.
+ */
+export interface Surfaces {
+  canvas: string;
+  panel: string;
+}
+
 export interface Theme {
   /** The built-in theme it is, or is based on. */
   name: BuiltInThemeName;
   roles: Readonly<Record<ThemeRole, RoleStyle>>;
   /** Absent: the cockpit leaves the terminal's colours as they are. */
   terminal?: TerminalColors;
+  /** Absent: no backgrounds are painted. */
+  surfaces?: Surfaces;
 }
 
 // ── state → role (the only place) ─────────────────────────────────────────────
@@ -117,9 +128,12 @@ const STATUS_BG: Record<StatusRole, Color> = {
 const statusRoles = (fg: (role: StatusRole) => RoleStyle, badge: (role: StatusRole) => RoleStyle) =>
   Object.fromEntries(STATUS_ROLES.flatMap((role) => [[role, fg(role)], [badgeRole(role), badge(role)]])) as Record<StatusRole | BadgeRole, RoleStyle>;
 
-// The orc theme: the moonfly palette (an iTerm2 colour preset) with sand-coloured chrome.
+// The orc theme: the moonfly palette (an iTerm2 colour preset) with amber chrome.
+/** The floor is the preset's background; cards and the agent pane are a shade lighter. */
+const ORC_SURFACES: Surfaces = { canvas: '#080808', panel: '#161616' };
 const ORC_TERMINAL: TerminalColors = {
-  background: '#080808',
+  // The terminal's own background is the panel's: an agent's output sits on it without painting.
+  background: ORC_SURFACES.panel,
   foreground: '#bdbdbd',
   cursor: '#9e9e9e',
   palette: [
@@ -127,7 +141,8 @@ const ORC_TERMINAL: TerminalColors = {
     '#949494', '#ff5189', '#36c692', '#c6c684', '#74b2ff', '#ae81ff', '#85dc85', '#e4e4e4',
   ],
 };
-const SAND = rgb('#e3c78a');
+const ORC_AMBER = rgb('#ffb000');
+const ORC_AMBER_FOCUS = rgb('#ffc94d');
 const ORC_STATUS_FG: Record<StatusRole, Color> = {
   'status.active': rgb('#8cc85f'), 'status.attention': rgb('#cf87e8'), 'status.warn': rgb('#c6c684'),
   'status.error': rgb('#ff5454'), 'status.idle': rgb('#949494'),
@@ -138,24 +153,25 @@ const ORC_STATUS_BG: Record<StatusRole, Color> = {
   'status.error': rgb('#351616'), 'status.idle': rgb('#212121'),
 };
 
-/** The default: the moonfly palette on a near-black background the terminal itself takes on, sand-coloured chrome. */
+/** The default: the moonfly palette, amber chrome, cards and the agent pane raised a shade above a near-black floor. */
 const orc: Theme = {
   name: 'orc',
   terminal: ORC_TERMINAL,
+  surfaces: ORC_SURFACES,
   roles: {
-    'chrome.border': { fg: SAND },
-    'chrome.borderFocus': { fg: rgb('#e4e4e4'), bold: true },
-    'chrome.title': { fg: SAND, bold: true },
-    'chrome.titleFocus': { fg: SAND, bold: true, inverse: true },
+    'chrome.border': { fg: ORC_AMBER },
+    'chrome.borderFocus': { fg: ORC_AMBER_FOCUS, bold: true },
+    'chrome.title': { fg: ORC_AMBER, bold: true },
+    'chrome.titleFocus': { fg: ORC_AMBER, bold: true, inverse: true },
     'chrome.meta': { fg: rgb('#949494') },
     'text.primary': { fg: rgb('#bdbdbd') },
     'text.muted': { fg: rgb('#949494') },
-    'text.accent': { fg: SAND, bold: true },
+    'text.accent': { fg: ORC_AMBER, bold: true },
     'text.edge': { fg: rgb('#323437') },
     'row.cursor': { fg: rgb('#e4e4e4'), bg: rgb('#323437'), bold: true },
-    'button': { fg: SAND, underline: true },
+    'button': { fg: ORC_AMBER, underline: true },
     'button.attention': { fg: ORC_STATUS_FG['status.attention'], bg: ORC_STATUS_BG['status.attention'], bold: true },
-    'tab.active': { fg: rgb('#080808'), bg: SAND, bold: true },
+    'tab.active': { fg: rgb('#080808'), bg: ORC_AMBER, bold: true },
     'tab.inactive': { fg: rgb('#bdbdbd'), bg: rgb('#323437') },
     'tab.close': { fg: ORC_STATUS_FG['status.error'] },
     'error': { fg: ORC_STATUS_FG['status.error'], bold: true },

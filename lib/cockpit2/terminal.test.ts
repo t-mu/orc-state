@@ -92,7 +92,7 @@ describe('openTerminal', () => {
   });
 
   it('writes the theme colours right after entering and resets them right before restoring', () => {
-    const colors = { enter: `${ESC}]11;#080808${ESC}\\`, leave: `${ESC}]111${ESC}\\` };
+    const colors = { enter: `${ESC}]11;#161616${ESC}\\`, leave: `${ESC}]111${ESC}\\` };
     const { terminal, writes } = fakeTerminal(colors);
     expect(writes).toEqual([ENTER_SEQUENCE + colors.enter]);
     terminal.restore();
