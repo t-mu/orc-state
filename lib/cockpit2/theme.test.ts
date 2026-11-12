@@ -12,6 +12,7 @@ const ROLES: ThemeRole[] = [
   'row.cursor', 'button', 'button.attention', 'button.danger', 'tab.active', 'tab.inactive', 'tab.close', 'error',
   'status.active', 'status.active.badge', 'status.attention', 'status.attention.badge',
   'status.warn', 'status.warn.badge', 'status.error', 'status.error.badge', 'status.idle', 'status.idle.badge',
+  'status.local', 'status.local.badge',
 ];
 
 const DEFAULT: Color = { type: 'default' };
@@ -132,6 +133,9 @@ describe('built-in themes', () => {
       'status.warn.badge': cell({ bold: true, inverse: true, fg: palette(3) }),
       'status.error.badge': cell({ bold: true, inverse: true, fg: palette(1) }),
       'status.attention.badge': cell({ bold: true, inverse: true, fg: palette(3) }),
+      // the cockpit's own agent sessions (not the coordinator's): cyan, like idle
+      'status.local': cell({ fg: palette(6) }),
+      'status.local.badge': cell({ bold: true, inverse: true, fg: palette(6) }),
     };
     for (const role of ROLES) expect(styleOf(classic, role), role).toEqual(expected[role]);
   });
@@ -145,7 +149,7 @@ describe('built-in themes', () => {
 
   it('mono tells every status role and badge apart by attributes, and from the cursor row', () => {
     const mono = BUILT_IN_THEMES.mono;
-    const statuses = ['status.active', 'status.attention', 'status.warn', 'status.error', 'status.idle'] as const;
+    const statuses = ['status.active', 'status.attention', 'status.warn', 'status.error', 'status.idle', 'status.local'] as const;
     const keys = [...statuses, ...statuses.map(badgeRole), 'row.cursor' as const].map((role) => JSON.stringify(styleOf(mono, role)));
     expect(new Set(keys).size).toBe(keys.length);
     for (const role of statuses) expect(styleOf(mono, badgeRole(role))).toEqual({ ...styleOf(mono, role), inverse: true });
@@ -313,6 +317,20 @@ describe('button.danger', () => {
     expect(styleOf(BUILT_IN_THEMES.amber, 'button.danger')).toEqual(cell({ fg: parseThemeColor('#0a0e14')!, bg: parseThemeColor('#ef4444')!, bold: true }));
     expect(styleOf(BUILT_IN_THEMES.classic, 'button.danger')).toEqual(cell({ bold: true, inverse: true }));
     expect(styleOf(BUILT_IN_THEMES.mono, 'button.danger')).toEqual(cell({ bold: true, inverse: true }));
+  });
+});
+
+describe('status.local', () => {
+  it('is cyan in orc and sky blue in amber, each badge on a dark tint of it', () => {
+    expect(styleOf(BUILT_IN_THEMES.orc, 'status.local')).toEqual(cell({ fg: parseThemeColor('#79dac8')! }));
+    expect(styleOf(BUILT_IN_THEMES.orc, 'status.local.badge')).toEqual(cell({ fg: parseThemeColor('#79dac8')!, bg: parseThemeColor('#172b28')!, bold: true }));
+    expect(styleOf(BUILT_IN_THEMES.amber, 'status.local')).toEqual(cell({ fg: parseThemeColor('#38bdf8')! }));
+    expect(styleOf(BUILT_IN_THEMES.amber, 'status.local.badge')).toEqual(cell({ fg: parseThemeColor('#38bdf8')!, bg: parseThemeColor('#06283d')!, bold: true }));
+  });
+
+  it('is underlined in mono', () => {
+    expect(styleOf(BUILT_IN_THEMES.mono, 'status.local')).toEqual(cell({ bold: true, dim: true, underline: true }));
+    expect(styleOf(BUILT_IN_THEMES.mono, 'status.local.badge')).toEqual(cell({ bold: true, dim: true, underline: true, inverse: true }));
   });
 });
 

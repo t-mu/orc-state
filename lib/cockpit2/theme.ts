@@ -15,7 +15,7 @@ import type { CellStyle, Color } from './screen.ts';
 
 // ── roles ─────────────────────────────────────────────────────────────────────
 
-export const STATUS_ROLES = ['status.active', 'status.attention', 'status.warn', 'status.error', 'status.idle'] as const;
+export const STATUS_ROLES = ['status.active', 'status.attention', 'status.warn', 'status.error', 'status.idle', 'status.local'] as const;
 export type StatusRole = typeof STATUS_ROLES[number];
 export type BadgeRole = `${StatusRole}.badge`;
 
@@ -119,11 +119,11 @@ const MUTED = rgb('#8b949e');
 const EDGE = rgb('#484f58');
 const STATUS_FG: Record<StatusRole, Color> = {
   'status.active': rgb('#00ff66'), 'status.attention': rgb('#d946ef'), 'status.warn': rgb('#f59e0b'),
-  'status.error': rgb('#ef4444'), 'status.idle': rgb('#64748b'),
+  'status.error': rgb('#ef4444'), 'status.idle': rgb('#64748b'), 'status.local': rgb('#38bdf8'),
 };
 const STATUS_BG: Record<StatusRole, Color> = {
   'status.active': rgb('#003314'), 'status.attention': rgb('#2e0836'), 'status.warn': rgb('#2e1a00'),
-  'status.error': rgb('#330a0a'), 'status.idle': rgb('#181c22'),
+  'status.error': rgb('#330a0a'), 'status.idle': rgb('#181c22'), 'status.local': rgb('#06283d'),
 };
 
 const statusRoles = (fg: (role: StatusRole) => RoleStyle, badge: (role: StatusRole) => RoleStyle) =>
@@ -145,12 +145,12 @@ const ORC_TERMINAL: TerminalColors = {
 const ORC_AMBER = rgb('#ffb000');
 const ORC_STATUS_FG: Record<StatusRole, Color> = {
   'status.active': rgb('#8cc85f'), 'status.attention': rgb('#cf87e8'), 'status.warn': rgb('#c6c684'),
-  'status.error': rgb('#ff5454'), 'status.idle': rgb('#949494'),
+  'status.error': rgb('#ff5454'), 'status.idle': rgb('#949494'), 'status.local': rgb('#79dac8'),
 };
 /** Each status colour at about a fifth of its strength over the background. */
 const ORC_STATUS_BG: Record<StatusRole, Color> = {
   'status.active': rgb('#1f2b18'), 'status.attention': rgb('#2c1f30'), 'status.warn': rgb('#2a2a1e'),
-  'status.error': rgb('#351616'), 'status.idle': rgb('#212121'),
+  'status.error': rgb('#351616'), 'status.idle': rgb('#212121'), 'status.local': rgb('#172b28'),
 };
 
 /** The default: the moonfly palette, amber chrome, cards and the agent pane raised a shade above a near-black floor. */
@@ -208,6 +208,7 @@ const amber: Theme = {
 /** Today's project state colours (widgets.ts STATE_COLOR): running green, connecting cyan, stopped yellow, stale red. */
 const CLASSIC_STATUS: Record<StatusRole, Color> = {
   'status.active': palette(2), 'status.attention': palette(3), 'status.warn': palette(3), 'status.error': palette(1), 'status.idle': palette(6),
+  'status.local': palette(6),
 };
 
 /**
@@ -284,6 +285,9 @@ const mono: Theme = {
     'status.error.badge': { underline: true, inverse: true },
     'status.idle': { dim: true },
     'status.idle.badge': { dim: true, inverse: true },
+    // Underlined like status.error, told apart from it (and from attention's bold underline) by bold and dim.
+    'status.local': { bold: true, dim: true, underline: true },
+    'status.local.badge': { bold: true, dim: true, underline: true, inverse: true },
   },
 };
 
