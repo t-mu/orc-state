@@ -41,11 +41,11 @@ describe('parseViewState', () => {
   });
 
   it('round-trips agent session tabs, written only when there are some, dropping invalid entries', () => {
-    const state: ViewState = { ...DEFAULT_VIEW_STATE, agentTabs: { p1: { 'agent:1': { provider: 'claude', agent: null }, 'agent:2': { provider: 'codex', agent: 'critic' } } } };
+    const state: ViewState = { ...DEFAULT_VIEW_STATE, agentTabs: { p1: { 'agent:1': { provider: 'claude', agent: null }, 'agent:2': { provider: 'codex', agent: 'critic', openedAt: '2026-11-12T10:00:00.000Z' } } } };
     expect(parseViewState(serializeViewState(state))).toEqual(state);
     expect(serializeViewState({ ...DEFAULT_VIEW_STATE, agentTabs: { p1: {} } })).not.toContain('agentTabs');
     const raw = JSON.parse(serializeViewState(state)) as Record<string, unknown>;
-    raw.agentTabs = { p1: { 'agent:1': { provider: 'claude', agent: null }, 'agent:2': { provider: 3 } }, p2: 'x' };
+    raw.agentTabs = { p1: { 'agent:1': { provider: 'claude', agent: null, openedAt: 5 }, 'agent:2': { provider: 3 } }, p2: 'x' };
     expect(parseViewState(JSON.stringify(raw)).agentTabs).toEqual({ p1: { 'agent:1': { provider: 'claude', agent: null } } });
   });
 

@@ -80,7 +80,7 @@ import {
   type CockpitTabState, type OpenTab, type TabTransition,
 } from '../cockpitTabs.ts';
 import { keyLabel, type CockpitKeys } from '../cockpitKeys.ts';
-import { ATTENTION_BADGE, buildSidebarModel, fitText, projectState } from '../tui/sidebar.ts';
+import { ATTENTION_BADGE, buildSidebarModel, fitText, formatElapsed, projectState } from '../tui/sidebar.ts';
 import { buildProjectViews } from '../tui/status.ts';
 import { buildTabBarModel, tabAttention, tabBarClickTarget } from '../tui/tabBarModel.ts';
 import { blitScreen, createFrame, drawText, slotCursor, type Frame, type Region } from './frame.ts';
@@ -122,7 +122,7 @@ import {
 } from './widgets.ts';
 import {
   INITIAL_SIDEBAR_NAV, drawSidebarCards, navigateSidebar, pruneExpanded, sidebarCardClick, sidebarCardsLayout,
-  type SidebarBox, type SidebarCardsLayout, type SidebarCommand, type SidebarNav, type SidebarStep,
+  type LocalAgent, type SidebarBox, type SidebarCardsLayout, type SidebarCommand, type SidebarNav, type SidebarStep,
 } from './sidebarCards.ts';
 
 // ── layout ────────────────────────────────────────────────────────────────────
@@ -642,13 +642,37 @@ export function runApp(options: AppOptions): App {
   });
 
   // ── widgets ──
-  /** The sidebar's cards as drawn now: every registered project, the active one and its agents; an agent that left is no longer expanded. */
+  /**
+   * The sidebar's cards as drawn now: every registered project, the active one and its agents, the coordinator's
+   * then the cockpit's own agent sessions; an agent that left is no longer expanded.
+   */
   function currentSidebar() {
+    const nowMs = Date.now();
     const model = buildSidebarModel(buildProjectViews([...watched.values()]), {
-      stateDir: '', activeProjectId: tabs.activeProject, nowMs: Date.now(), registryError, agentDetails: true,
+      stateDir: '', activeProjectId: tabs.activeProject, nowMs, registryError, agentDetails: true,
     });
-    nav = pruneExpanded(nav, model);
-    return sidebarCardsLayout(model, layout.sidebar.rows, nav, layout.sidebar.cols);
+    const locals = localAgents(tabs.activeProject, nowMs);
+    nav = pruneExpanded(nav, model, locals);
+    return sidebarCardsLayout(model, layout.sidebar.rows, nav, layout.sidebar.cols, locals);
+  }
+
+  /**
+   * The agent session tabs (`agent:N`) open in `projectId`, in tab order, for the Agents card: what each runs, its
+   * run time since its tab was opened (when known), and whether its session ended (a tab not shown since keeps it).
+   */
+  function localAgents(projectId: string | null, nowMs: number): LocalAgent[] {
+    if (projectId === null) return [];
+    const open = tabs.projects.find((project) => project.projectId === projectId)?.tabs ?? [];
+    return open.filter((tabId) => isAgentSessionTab(tabId)).map((tabId): LocalAgent => {
+      const info = agentTabInfo(projectId, tabId);
+      const opened = info?.openedAt ? Date.parse(info.openedAt) : Number.NaN;
+      return {
+        tabId, label: agentTabLabel(projectId, tabId), provider: info?.provider ?? '-',
+        variant: info?.agent ? 'custom' : 'fresh', agentName: info?.agent ?? null,
+        alive: sessions.get(tabKey({ projectId, agentId: tabId }))?.state.kind !== 'ended',
+        elapsed: Number.isFinite(opened) ? formatElapsed((nowMs - opened) / 1000) : null,
+      };
+    });
   }
 
   /** The tab bar as drawn now: the active project's tabs, agent tabs marked with their mode and badged when they need a human. */
@@ -1090,6 +1114,7 @@ export function runApp(options: AppOptions): App {
    */
   function confirmKill(command: Extract<SidebarCommand, { type: 'killAgent' }>): void {
     const { projectId, agentId, kind, taskRef } = command;
+    if (kind === 'local') { confirmKillLocal(projectId, agentId); return; }
     const refused = !options.agents ? 'This cockpit cannot kill agents.' : kind === 'worker' && !taskRef ? `${agentId} has no task to reset.` : null;
     if (refused) {
       refusal = refused;
@@ -1103,6 +1128,21 @@ export function runApp(options: AppOptions): App {
       kind: 'confirm', projectId,
       state: openConfirmDialog({ title: `kill · ${agentId}`, message: [message], confirmLabel: 'KILL' }),
       run: () => options.agents!.kill(projectId, agentId, kind, taskRef),
+    });
+  }
+
+  /** Asks to kill one of the cockpit's own agent sessions: confirmed, its tab closes, which ends its session. */
+  function confirmKillLocal(projectId: string, tabId: string): void {
+    const label = agentTabLabel(projectId, tabId);
+    showDialog({
+      kind: 'confirm', projectId,
+      state: openConfirmDialog({ title: `kill · ${label}`, message: [`Kill ${label}? Its session ends and its tab closes.`], confirmLabel: 'KILL' }),
+      run: () => {
+        // closeTab closes in the active project: another project shown since refuses rather than closing a tab there.
+        if (tabs.activeProject !== projectId) return Promise.reject(new Error(`${label} is not in the shown project.`));
+        const result = apply((state) => closeTab(state, tabId));
+        return result.ok ? Promise.resolve() : Promise.reject(new Error(result.message));
+      },
     });
   }
 
@@ -1215,7 +1255,7 @@ export function runApp(options: AppOptions): App {
       return;
     }
     if (closed) return;
-    agentTabs[projectId] = { ...agentTabs[projectId], [id]: { provider: request.provider, agent: request.agent?.name ?? null } };
+    agentTabs[projectId] = { ...agentTabs[projectId], [id]: { provider: request.provider, agent: request.agent?.name ?? null, openedAt: new Date().toISOString() } };
     if (generation === dialogGeneration) closeDialog();
     setFocus('slot');
     apply((state) => openAgent(state, projectId, id));

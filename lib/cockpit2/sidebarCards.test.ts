@@ -6,8 +6,8 @@ import type { SidebarAgent, SidebarModel, SidebarProject } from '../tui/sidebar.
 import { computeLayout } from './app.ts';
 import { createFrame, type Frame } from './frame.ts';
 import {
-  INITIAL_SIDEBAR_NAV, agentStatusRole, drawSidebarCards, navigateSidebar, pruneExpanded, sidebarCardClick, sidebarCardTarget, sidebarCardsLayout, sidebarCursor,
-  type CardLayout, type SidebarCard, type SidebarCardsLayout, type SidebarNav,
+  INITIAL_SIDEBAR_NAV, LOCAL_NOTE, agentStatusRole, drawSidebarCards, localAgentKey, navigateSidebar, pruneExpanded, sidebarCardClick, sidebarCardTarget, sidebarCardsLayout, sidebarCursor,
+  type CardLayout, type LocalAgent, type SidebarCard, type SidebarCardsLayout, type SidebarNav,
 } from './sidebarCards.ts';
 import { BUILT_IN_THEMES, styleOf } from './theme.ts';
 
@@ -51,10 +51,10 @@ const rowsOf = (layout: SidebarCardsLayout) => layout.cards.map((each) => each.r
 const rowText = (frame: Frame, y: number, x = 0, cols = frame.cols) =>
   frame.cells.slice(y * frame.cols + x, y * frame.cols + x + cols).map((cell) => cell.text).join('');
 
-function render(sidebar: SidebarModel, options: { rows?: number; focus?: 'projects' | 'project' | 'agents' | null; nav?: SidebarNav; theme?: typeof CLASSIC } = {}) {
+function render(sidebar: SidebarModel, options: { rows?: number; focus?: 'projects' | 'project' | 'agents' | null; nav?: SidebarNav; theme?: typeof CLASSIC; locals?: LocalAgent[] } = {}) {
   const rows = options.rows ?? 22;
   const frame = createFrame(COLS, rows);
-  const layout = sidebarCardsLayout(sidebar, rows, options.nav ?? INITIAL_SIDEBAR_NAV, COLS);
+  const layout = sidebarCardsLayout(sidebar, rows, options.nav ?? INITIAL_SIDEBAR_NAV, COLS, options.locals);
   drawSidebarCards(frame, { x: 0, y: 0, cols: COLS, rows }, layout, { focus: options.focus ?? null, theme: options.theme ?? CLASSIC });
   const lines = Array.from({ length: rows }, (_, y) => rowText(frame, y));
   return { frame, layout, lines };
@@ -940,5 +940,128 @@ describe('no rounded corners in lib/cockpit2', () => {
     const files = readdirSync(dir, { recursive: true, encoding: 'utf8' }).filter((name) => /\.(ts|snap)$/.test(name));
     const rounded = files.filter((name) => /[\u256D\u256E\u256F\u2570]/.test(readFileSync(join(dir, name), 'utf8')));
     expect(rounded).toEqual([]);
+  });
+});
+
+describe('local agent sessions (the cockpit\'s own, not the coordinator\'s)', () => {
+  const fresh: LocalAgent = { tabId: 'agent:1', label: 'claude 1', provider: 'claude', variant: 'fresh', agentName: null, alive: true, elapsed: '2m' };
+  const custom: LocalAgent = { tabId: 'agent:2', label: 'critic · claude', provider: 'claude', variant: 'custom', agentName: 'critic', alive: true };
+  const LOCALS = [fresh, custom];
+  const navAt = (agentKey: string | null, expanded: string[] = [], box: SidebarNav['box'] = 'agents'): SidebarNav => ({ box, projectKey: null, agentKey, expanded: new Set(expanded) });
+  const K1 = localAgentKey('p1', 'agent:1');
+  const K2 = localAgentKey('p1', 'agent:2');
+  const blockRows = (layout: SidebarCardsLayout, index: number) =>
+    card(layout, 'agents')!.lines.slice(0, card(layout, 'agents')!.rows - 2).filter((line) => line.kind === 'block' && line.index === index);
+
+  it('keys a session apart from every coordinator agent', () => {
+    expect(K1).toBe('local:p1/agent:1');
+    expect(K1).not.toBe(agent('agent:1').key);
+  });
+
+  it('lists the sessions after the coordinator\'s agents, the card\'s count telling them apart', () => {
+    const { layout, lines } = render(model(0, 2), { locals: LOCALS, rows: 30 });
+    expect(card(layout, 'agents')!.lines.filter((line) => line.kind === 'agent').map((line) => (line.kind === 'agent' ? line.index : -1))).toEqual([0, 1, 2, 3]);
+    const at = (part: string) => lines.findIndex((line) => line.includes(part));
+    expect(at('[+] a2 ')).toBeLessThan(at('[+] ◇ claude 1'));
+    expect(at('[+] ◇ claude 1')).toBeLessThan(at('[+] ◇ critic · claude'));
+    expect(lines[at('◇ claude 1')]).toMatch(/│ \[\+\] ◇ claude 1 +2m \[LOCAL\] │/);
+    expect(lines[at('◇ critic')]).toMatch(/│ \[\+\] ◇ critic · claude +\[LOCAL\] │/);
+    expect(lines.find((line) => line.includes('[ AGENTS ]'))).toContain('2 live · 2 local');
+    // Only sessions: the count names them alone, and no empty-state line.
+    const only = render(model(0, 0), { locals: [fresh] });
+    expect(only.lines.find((line) => line.includes('[ AGENTS ]'))).toMatch(/─ 1 local ┐$/);
+    expect(only.lines.some((line) => line.includes('(no live agents)'))).toBe(false);
+  });
+
+  it('draws the marker muted, the label in text.accent, [LOCAL] in status.local.badge and [ENDED] in status.idle.badge', () => {
+    for (const theme of [AMBER, BUILT_IN_THEMES.orc, CLASSIC, BUILT_IN_THEMES.mono]) {
+      const { frame, lines } = render(model(0, 1), { locals: [fresh, { ...custom, alive: false }], theme, rows: 30 });
+      const cell = (part: string, offset = 0) => {
+        const y = lines.findIndex((line) => line.includes(part));
+        return frame.cells[y * COLS + lines[y].indexOf(part) + offset].style;
+      };
+      expect(cell('◇ claude')).toEqual(styleOf(theme, 'text.muted'));
+      expect(cell('claude 1')).toEqual(styleOf(theme, 'text.accent'));
+      expect(cell('[LOCAL]')).toEqual(styleOf(theme, 'status.local.badge'));
+      expect(cell('[ENDED]')).toEqual(styleOf(theme, 'status.idle.badge'));
+    }
+  });
+
+  it('moves the cursor into the sessions; Enter opens a session\'s tab, Space expands it, the kill key asks to close it', () => {
+    const sidebar = model(0, 1);
+    const step = (nav: SidebarNav, key: Parameters<typeof navigateSidebar>[2]) => navigateSidebar(sidebarCursor(sidebar, nav, LOCALS), nav, key);
+    expect(step(navAt('p1/a1'), 'down').nav.agentKey).toBe(K1);
+    expect(step(navAt(K1), 'down').nav.agentKey).toBe(K2);
+    expect(step(navAt(K2), 'down').nav.onButton).toBe(true);
+    expect(step(navAt(K2), 'open').command).toEqual({ type: 'openAgent', projectId: 'p1', agentId: 'agent:2' });
+    expect([...step(navAt(K1), 'toggle').nav.expanded]).toEqual([K1]);
+    expect(step(navAt(K1), 'kill').command).toEqual({ type: 'killAgent', projectId: 'p1', agentId: 'agent:1', kind: 'local', taskRef: null });
+    // With no coordinator agents the cursor starts on the first session, not the button.
+    const none = navigateSidebar(sidebarCursor(model(0, 0), INITIAL_SIDEBAR_NAV, [fresh]), INITIAL_SIDEBAR_NAV, 'open');
+    expect(none.command).toEqual({ type: 'openAgent', projectId: 'p1', agentId: 'agent:1' });
+  });
+
+  it('expands into its block: provider · default, type or agent, the note (wrapped), the buttons, framed in status.local', () => {
+    const nav = navAt(K1, [K1, K2]);
+    const { frame, layout, lines } = render(model(0, 0), { locals: LOCALS, nav, theme: AMBER, rows: 40 });
+    expect(blockRows(layout, 0).map((line) => (line.kind === 'block' ? line.part : ''))).toEqual(['top', 'model', 'type', 'note', 'note', 'buttons', 'bottom']);
+    const top = lines.findIndex((line) => line.includes('[-] ◇ claude 1'));
+    expect(lines.slice(top, top + 7)).toEqual([
+      '│┌ [-] ◇ claude 1    2m [LOCAL] ┐│',
+      '││ model  claude · default      ││',
+      '││ type   fresh session         ││',
+      '││ not managed by the           ││',
+      '││ coordinator                  ││',
+      '││ [ OPEN ] [ KILL ]            ││',
+      '│└──────────────────────────────┘│',
+    ]);
+    expect(LOCAL_NOTE).toBe('not managed by the coordinator');
+    expect(lines.find((line) => line.includes('agent  critic'))).toBe('││ agent  critic                ││');
+    for (const [x, y] of [[1, top], [COLS - 2, top + 1], [1, top + 6]]) expect(frame.cells[y * COLS + x].style).toEqual(styleOf(AMBER, 'status.local'));
+    expect(frame.cells[(top + 1) * COLS + 3].style).toEqual(styleOf(AMBER, 'text.muted'));
+    expect(frame.cells[(top + 1) * COLS + 10].style).toEqual(styleOf(AMBER, 'text.primary'));
+    expect(frame.cells[(top + 3) * COLS + 3].style).toEqual(styleOf(AMBER, 'text.muted'));
+    expect(frame.cells[(top + 5) * COLS + 3].style).toEqual(styleOf(AMBER, 'tab.active'));
+    expect(frame.cells[(top + 5) * COLS + 12].style).toEqual(styleOf(AMBER, 'button.danger'));
+    // A wide card keeps the note on one row.
+    const wide = sidebarCardsLayout(model(0, 0), 40, nav, 40, LOCALS);
+    expect(blockRows(wide, 0).filter((line) => line.kind === 'block' && line.part === 'note')).toHaveLength(1);
+    // An ended session's block is framed in status.idle.
+    const ended = render(model(0, 0), { locals: [{ ...fresh, alive: false }], nav, theme: AMBER, rows: 40 });
+    const endedTop = ended.lines.findIndex((line) => line.includes('[ENDED]'));
+    expect(ended.frame.cells[endedTop * COLS + 1].style).toEqual(styleOf(AMBER, 'status.idle'));
+  });
+
+  it('hits a session\'s rows: the marker toggles it, the row opens its tab, OPEN opens it, KILL asks to close it', () => {
+    const nav = navAt('p1/a1', [K2]);
+    const { layout, lines } = render(model(0, 1), { locals: LOCALS, nav, rows: 40 });
+    const row = lines.findIndex((line) => line.includes('[+] ◇ claude 1'));
+    expect(sidebarCardClick(layout, nav, 3, row)).toEqual({ nav: { ...nav, agentKey: K1, expanded: new Set([K2, K1]) }, command: null });
+    expect(sidebarCardClick(layout, nav, 12, row)).toEqual({ nav: { ...nav, agentKey: K1 }, command: { type: 'openAgent', projectId: 'p1', agentId: 'agent:1' } });
+    const top = lines.findIndex((line) => line.includes('[-] ◇ critic'));
+    expect(sidebarCardClick(layout, nav, 3, top)?.nav.expanded).toEqual(new Set());
+    const buttons = lines.findIndex((line, index) => index > top && line.includes('[ OPEN ]'));
+    expect(sidebarCardClick(layout, nav, 5, buttons)?.command).toEqual({ type: 'openAgent', projectId: 'p1', agentId: 'agent:2' });
+    expect(sidebarCardClick(layout, nav, 14, buttons)?.command).toEqual({ type: 'killAgent', projectId: 'p1', agentId: 'agent:2', kind: 'local', taskRef: null });
+  });
+
+  it('keeps the cursor session\'s whole block in view in a short sidebar, the other agents behind `+N more`', () => {
+    // 15: the block (7), a `+N more` line, the button and the borders, and the Project card at its least (4).
+    for (const rows of [22, 16, 15]) {
+      const layout = sidebarCardsLayout(model(0, 3), rows, navAt(K2, [K2]), COLS, LOCALS);
+      const agents = card(layout, 'agents')!;
+      expect(agents.y + agents.rows, `${rows}`).toBe(rows);
+      expect(blockRows(layout, 4).map((line) => (line.kind === 'block' ? line.part : '')), `${rows}`).toEqual(['top', 'model', 'type', 'note', 'note', 'buttons', 'bottom']);
+      expect(agents.lines.some((line) => line.kind === 'more'), `${rows}`).toBe(true);
+      expect(agents.lines.at(-1)).toEqual({ kind: 'newAgent' });
+    }
+  });
+
+  it('prunes the expanded key of a session whose tab closed, even before the project\'s status loaded', () => {
+    const nav = navAt(K1, [K1, K2, 'p1/a1']);
+    expect(pruneExpanded(nav, model(0, 1), [fresh]).expanded).toEqual(new Set([K1, 'p1/a1']));
+    const unloaded = model(0, 0, { status: { coordinator: null, workers: null, attention: 0 } });
+    expect(pruneExpanded(nav, unloaded, []).expanded).toEqual(new Set(['p1/a1']));
+    expect(pruneExpanded(nav, model(0, 1), LOCALS)).toBe(nav);
   });
 });

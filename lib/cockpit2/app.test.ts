@@ -2176,7 +2176,8 @@ describe('runApp add-project and new-agent dialogs (fake hosts)', () => {
     await waitForTabBar(terminal, 1, 'codex 1 ×');
     expect(text(await shown(terminal), 5, 35)).toContain('[ CODEX 1 ]');
     expect(text(await shown(terminal), 5, 35)).toContain('fresh session');
-    await waitFor(() => JSON.stringify(store.state.agentTabs) === JSON.stringify({ demo: { 'agent:1': { provider: 'codex', agent: null } } }));
+    await waitFor(() => store.state.agentTabs?.demo?.['agent:1'] !== undefined);
+    expect(store.state.agentTabs).toEqual({ demo: { 'agent:1': { provider: 'codex', agent: null, openedAt: expect.any(String) } } });
     // It types at once.
     const fake = clients.find((candidate) => candidate.target.session === 'agent-demo-1')!;
     terminal.type('hi');
@@ -2187,6 +2188,68 @@ describe('runApp add-project and new-agent dialogs (fake hosts)', () => {
     await waitFor(() => !app.tabs().projects[0].tabs.includes('agent:1'));
     expect(host.stopped).toContainEqual({ socket: 'orc-explorer', session: 'agent-demo-1' });
     await waitFor(() => store.state.agentTabs === undefined);
+  });
+
+  describe('in the Agents card', () => {
+    const OPEN_X = 5;
+    const KILL_X = 14;
+    const sidebarHas = async (terminal: FakeTerminal, part: string) => (await sidebarRows(terminal)).some((row) => row.includes(part));
+    /** demo with a worker w1 needing attention, and a fresh claude session started from the new-agent dialog in agent:1. */
+    async function withSession() {
+      const host = new FakeExplorerHost();
+      const demo = projectState('demo', { workers: [{ agent_id: 'w1', ...W1_TARGET, attention: { kind: 'question', detail: null } }] });
+      const started = start({ explorer: host, projects: [demo] });
+      await attached(started.terminal);
+      started.app.openNewAgent('demo');
+      await waitForScreen(started.terminal, 'NEW AGENT · DEMO');
+      started.terminal.type('\r');
+      await attached(started.terminal, 'agent-demo-1');
+      await waitForSidebar(started.terminal, '◇ claude 1');
+      return { ...started, host };
+    }
+
+    it('lists the session after the coordinator\'s agents with [LOCAL], counted apart and not in the header\'s attention', async () => {
+      const { terminal } = await withSession();
+      const rows = await sidebarRows(terminal);
+      const worker = rows.findIndex((row) => row.includes('[+] w1 '));
+      const local = rows.findIndex((row) => row.includes('[+] ◇ claude 1'));
+      expect(worker).toBeGreaterThan(-1);
+      expect(local).toBeGreaterThan(worker);
+      expect(rows[local]).toMatch(/0m \[LOCAL\]/);
+      expect(rows.some((row) => /\[ AGENTS \].*1 live · 1 local/.test(row))).toBe(true);
+      // The header counts w1 only.
+      expect(text(await shown(terminal), 0)).toMatch(/! 1$/);
+    });
+
+    it('expands into its block; OPEN shows its tab; KILL asks, then closes the tab and ends the session', async () => {
+      const { terminal, app, host } = await withSession();
+      expect(app.apply((state) => openAgent(state, 'demo', 'w1')).ok).toBe(true);
+      await waitFor(() => app.tabs().projects[0].active === 'w1');
+      terminal.type(click(3, await sidebarRow(terminal, '[+] ◇ claude 1')));
+      await waitForSidebar(terminal, '[-] ◇ claude 1');
+      for (const part of ['model  claude · default', 'type   fresh session', 'not managed by the', '[ OPEN ] [ KILL ]']) await waitForSidebar(terminal, part);
+      const buttons = await sidebarRow(terminal, '[ OPEN ] [ KILL ]');
+      terminal.type(click(OPEN_X, buttons));
+      await waitFor(() => app.tabs().projects[0].active === 'agent:1');
+      terminal.type(click(KILL_X, await sidebarRow(terminal, '[ OPEN ] [ KILL ]')));
+      await waitForScreen(terminal, 'KILL · CLAUDE 1');
+      await waitForScreen(terminal, 'Kill claude 1? Its session ends and its tab');
+      expect(app.tabs().projects[0].tabs).toContain('agent:1');
+      terminal.type('\r');
+      await waitFor(() => !app.tabs().projects[0].tabs.includes('agent:1'));
+      expect(host.stopped).toContainEqual({ socket: 'orc-explorer', session: 'agent-demo-1' });
+      await waitFor(async () => !(await sidebarHas(terminal, '◇')));
+      expect(await sidebarHas(terminal, '1 local')).toBe(false);
+    });
+
+    it('drops the session when its tab is closed, and shows [ENDED] for one whose session ended in a tab not shown', async () => {
+      const { terminal, app, clients } = await withSession();
+      expect(app.apply((state) => openAgent(state, 'demo', 'w1')).ok).toBe(true);
+      clients.find((candidate) => candidate.target.session === 'agent-demo-1')!.emit('exit', 'session closed');
+      await waitFor(async () => (await sidebarRows(terminal)).some((row) => row.includes('◇ claude 1') && row.includes('[ENDED]')));
+      expect(app.apply((state) => closeTab(state, 'agent:1')).ok).toBe(true);
+      await waitFor(async () => !(await sidebarHas(terminal, '◇')));
+    });
   });
 
   it('starts a custom agent with its prompt as the first message; its session ending closes the tab', async () => {
