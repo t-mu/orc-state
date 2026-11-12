@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { CellStyle, Color } from './screen.ts';
 import {
   BUILT_IN_THEMES, DEFAULT_THEME, THEME_ROLES, attentionRole, badgeRole, parseThemeColor, phaseRole, projectStateRole,
-  resolveTheme, styleOf, themeFromEnv, type ThemeRole,
+  resolveTheme, styleOf, terminalColorsEnter, terminalColorsLeave, themeFromEnv, type ThemeRole,
 } from './theme.ts';
 
 const ROLES: ThemeRole[] = [
@@ -32,8 +32,12 @@ describe('roles', () => {
     expect(Object.keys(theme.roles).sort()).toEqual([...ROLES].sort());
   });
 
-  it('defaults to amber', () => {
-    expect(DEFAULT_THEME).toBe(BUILT_IN_THEMES.amber);
+  it('defaults to orc', () => {
+    expect(DEFAULT_THEME).toBe(BUILT_IN_THEMES.orc);
+  });
+
+  it('has the built-in themes orc, amber, classic and mono', () => {
+    expect(Object.keys(BUILT_IN_THEMES)).toEqual(['orc', 'amber', 'classic', 'mono']);
   });
 });
 
@@ -202,9 +206,9 @@ describe('resolveTheme', () => {
 describe('themeFromEnv', () => {
   const files = (contents: Record<string, string>) => (path: string) => contents[path] ?? null;
 
-  it('gives amber when unset or empty', () => {
-    expect(themeFromEnv({}, noFile)).toEqual({ theme: BUILT_IN_THEMES.amber, problems: [] });
-    expect(themeFromEnv({ ORC_COCKPIT_THEME: '  ' }, noFile)).toEqual({ theme: BUILT_IN_THEMES.amber, problems: [] });
+  it('gives orc when unset or empty', () => {
+    expect(themeFromEnv({}, noFile)).toEqual({ theme: BUILT_IN_THEMES.orc, problems: [] });
+    expect(themeFromEnv({ ORC_COCKPIT_THEME: '  ' }, noFile)).toEqual({ theme: BUILT_IN_THEMES.orc, problems: [] });
   });
 
   it('gives mono for a non-empty NO_COLOR, over ORC_COCKPIT_THEME', () => {
@@ -215,7 +219,7 @@ describe('themeFromEnv', () => {
     expect(themeFromEnv({ NO_COLOR: '', ORC_COCKPIT_THEME: 'classic' }, noFile).theme).toBe(BUILT_IN_THEMES.classic);
   });
 
-  it.each(['amber', 'classic', 'mono'] as const)('takes the built-in name %s', (name) => {
+  it.each(['orc', 'amber', 'classic', 'mono'] as const)('takes the built-in name %s', (name) => {
     expect(themeFromEnv({ ORC_COCKPIT_THEME: name }, noFile)).toEqual({ theme: BUILT_IN_THEMES[name], problems: [] });
   });
 
@@ -227,10 +231,11 @@ describe('themeFromEnv', () => {
     expect(theme.roles['text.accent']).toEqual({ bold: true, underline: true });
   });
 
-  it('bases a theme file on amber by default', () => {
+  it('bases a theme file on orc by default, keeping its terminal colours', () => {
     const { theme, problems } = themeFromEnv({ ORC_COCKPIT_THEME: '/t.json' }, files({ '/t.json': '{}' }));
     expect(problems).toEqual([]);
-    expect(theme).toEqual(BUILT_IN_THEMES.amber);
+    expect(theme).toEqual(BUILT_IN_THEMES.orc);
+    expect(theme.terminal).toEqual(BUILT_IN_THEMES.orc.terminal);
   });
 
   it('reports role problems from the file and keeps the rest', () => {
@@ -256,11 +261,39 @@ describe('themeFromEnv', () => {
     ['a non-object', files({ '/t.json': '[1]' }), /JSON object/],
     ['an unknown base', files({ '/t.json': '{"base":"neon"}' }), /unknown base "neon"/],
     ['a null base', files({ '/t.json': '{"base":null}' }), /unknown base null/],
-  ])('gives amber and a problem for %s', (_case, read, message) => {
+  ])('gives orc and a problem for %s', (_case, read, message) => {
     const { theme, problems } = themeFromEnv({ ORC_COCKPIT_THEME: '/t.json' }, read);
-    expect(theme).toBe(BUILT_IN_THEMES.amber);
+    expect(theme).toBe(BUILT_IN_THEMES.orc);
     expect(problems).toHaveLength(1);
     expect(problems[0]).toMatch(message);
+    expect(problems[0]).toMatch(/; using orc$/);
+  });
+});
+
+describe('terminal colours', () => {
+  const ST = '\x1b\\';
+  it('sets the orc background, text, cursor and 16 ANSI colours on enter', () => {
+    const palette = [
+      '#323437', '#ff5454', '#8cc85f', '#e3c78a', '#80a0ff', '#cf87e8', '#79dac8', '#c6c6c6',
+      '#949494', '#ff5189', '#36c692', '#c6c684', '#74b2ff', '#ae81ff', '#85dc85', '#e4e4e4',
+    ];
+    expect(terminalColorsEnter(BUILT_IN_THEMES.orc)).toBe(
+      `\x1b]11;#080808${ST}\x1b]10;#bdbdbd${ST}\x1b]12;#9e9e9e${ST}`
+      + palette.map((color, index) => `\x1b]4;${index};${color}${ST}`).join(''),
+    );
+  });
+
+  it('resets them to the terminal profile on leave', () => {
+    expect(terminalColorsLeave(BUILT_IN_THEMES.orc)).toBe(`\x1b]104${ST}\x1b]110${ST}\x1b]111${ST}\x1b]112${ST}`);
+  });
+
+  it('keeps them through role overrides', () => {
+    expect(resolveTheme(BUILT_IN_THEMES.orc, { button: { bold: true } }).theme.terminal).toBe(BUILT_IN_THEMES.orc.terminal);
+  });
+
+  it.each(['amber', 'classic', 'mono'] as const)('writes nothing for %s', (name) => {
+    expect(terminalColorsEnter(BUILT_IN_THEMES[name])).toBe('');
+    expect(terminalColorsLeave(BUILT_IN_THEMES[name])).toBe('');
   });
 });
 

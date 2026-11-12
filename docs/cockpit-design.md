@@ -39,7 +39,8 @@ Which status role a state gets is decided in `theme.ts` only:
 
 | Theme | Look |
 |---|---|
-| `amber` (default) | Amber chrome on the terminal's own background; RGB colours. Backgrounds only for badges, the cursor row and the attention badge |
+| `orc` (default) | The moonfly palette (an iTerm2 colour preset) with sand-coloured chrome on a near-black `#080808` background. While the cockpit runs it sets the terminal's own background, text, cursor and 16 ANSI colours (OSC 11, 10, 12, 4), so the agents' panes take them too, and resets them to the terminal's profile on exit (OSC 104, 110, 111, 112), crash and signal included. Where a terminal ignores those sequences, the cockpit's own areas (not the panes) are painted in the theme background |
+| `amber` | Amber chrome on the terminal's own background; RGB colours. Backgrounds only for badges, the cursor row and the attention badge |
 | `classic` | The cockpit's earlier look: the 16 basic colours with bold, dim and inverse |
 | `mono` | No colour at all; states differ by bold, dim, underline and inverse, and their text labels carry the meaning. `NO_COLOR` selects it |
 
@@ -47,7 +48,7 @@ Without true colour (`COLORTERM` other than `truecolor`/`24bit`) RGB colours are
 
 ## Theme files
 
-`ORC_COCKPIT_THEME` names a built-in theme or a JSON file: `base` (a built-in theme, default `amber`) and `roles`, each role's fields merged over the base's. A colour is `"#rrggbb"`, a palette index 0–255 or `"default"`.
+`ORC_COCKPIT_THEME` names a built-in theme or a JSON file: `base` (a built-in theme, default `orc`) and `roles`, each role's fields merged over the base's; a file based on `orc` keeps its terminal colours. A colour is `"#rrggbb"`, a palette index 0–255 or `"default"`.
 
 ```json
 {
@@ -59,7 +60,7 @@ Without true colour (`COLORTERM` other than `truecolor`/`24bit`) RGB colours are
 }
 ```
 
-A file that cannot be read or parsed, or names an unknown base, is reported and the cockpit draws in `amber`. An unknown role, field or bad value is reported and that role keeps its base style.
+A file that cannot be read or parsed, or names an unknown base, is reported and the cockpit draws in `orc`. An unknown role, field or bad value is reported and that role keeps its base style.
 
 ## Layout
 

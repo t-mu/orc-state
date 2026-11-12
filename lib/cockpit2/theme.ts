@@ -43,10 +43,26 @@ export interface RoleStyle {
 
 const ATTRIBUTES = ['bold', 'dim', 'inverse', 'underline'] as const;
 
+/**
+ * The terminal's own colours while the cockpit runs (`#rrggbb`), set with
+ * OSC 10/11/12/4 at start and reset to the terminal's profile on exit: the
+ * background and text colour of every cell the cockpit and its agents leave
+ * at the default, the cursor, and the 16 ANSI colours agents draw with.
+ */
+export interface TerminalColors {
+  background: string;
+  foreground: string;
+  cursor?: string;
+  /** ANSI colours 0-15. */
+  palette?: readonly string[];
+}
+
 export interface Theme {
   /** The built-in theme it is, or is based on. */
   name: BuiltInThemeName;
   roles: Readonly<Record<ThemeRole, RoleStyle>>;
+  /** Absent: the cockpit leaves the terminal's colours as they are. */
+  terminal?: TerminalColors;
 }
 
 // ── state → role (the only place) ─────────────────────────────────────────────
@@ -101,7 +117,53 @@ const STATUS_BG: Record<StatusRole, Color> = {
 const statusRoles = (fg: (role: StatusRole) => RoleStyle, badge: (role: StatusRole) => RoleStyle) =>
   Object.fromEntries(STATUS_ROLES.flatMap((role) => [[role, fg(role)], [badgeRole(role), badge(role)]])) as Record<StatusRole | BadgeRole, RoleStyle>;
 
-/** The default: amber chrome on the terminal's own background; backgrounds only for badges, the cursor row and attention. */
+// The orc theme: the moonfly palette (an iTerm2 colour preset) with sand-coloured chrome.
+const ORC_TERMINAL: TerminalColors = {
+  background: '#080808',
+  foreground: '#bdbdbd',
+  cursor: '#9e9e9e',
+  palette: [
+    '#323437', '#ff5454', '#8cc85f', '#e3c78a', '#80a0ff', '#cf87e8', '#79dac8', '#c6c6c6',
+    '#949494', '#ff5189', '#36c692', '#c6c684', '#74b2ff', '#ae81ff', '#85dc85', '#e4e4e4',
+  ],
+};
+const SAND = rgb('#e3c78a');
+const ORC_STATUS_FG: Record<StatusRole, Color> = {
+  'status.active': rgb('#8cc85f'), 'status.attention': rgb('#cf87e8'), 'status.warn': rgb('#c6c684'),
+  'status.error': rgb('#ff5454'), 'status.idle': rgb('#949494'),
+};
+/** Each status colour at about a fifth of its strength over the background. */
+const ORC_STATUS_BG: Record<StatusRole, Color> = {
+  'status.active': rgb('#1f2b18'), 'status.attention': rgb('#2c1f30'), 'status.warn': rgb('#2a2a1e'),
+  'status.error': rgb('#351616'), 'status.idle': rgb('#212121'),
+};
+
+/** The default: the moonfly palette on a near-black background the terminal itself takes on, sand-coloured chrome. */
+const orc: Theme = {
+  name: 'orc',
+  terminal: ORC_TERMINAL,
+  roles: {
+    'chrome.border': { fg: SAND },
+    'chrome.borderFocus': { fg: rgb('#e4e4e4'), bold: true },
+    'chrome.title': { fg: SAND, bold: true },
+    'chrome.titleFocus': { fg: SAND, bold: true, inverse: true },
+    'chrome.meta': { fg: rgb('#949494') },
+    'text.primary': { fg: rgb('#bdbdbd') },
+    'text.muted': { fg: rgb('#949494') },
+    'text.accent': { fg: SAND, bold: true },
+    'text.edge': { fg: rgb('#323437') },
+    'row.cursor': { fg: rgb('#e4e4e4'), bg: rgb('#323437'), bold: true },
+    'button': { fg: SAND, underline: true },
+    'button.attention': { fg: ORC_STATUS_FG['status.attention'], bg: ORC_STATUS_BG['status.attention'], bold: true },
+    'tab.active': { fg: rgb('#080808'), bg: SAND, bold: true },
+    'tab.inactive': { fg: rgb('#bdbdbd'), bg: rgb('#323437') },
+    'tab.close': { fg: ORC_STATUS_FG['status.error'] },
+    'error': { fg: ORC_STATUS_FG['status.error'], bold: true },
+    ...statusRoles((role) => ({ fg: ORC_STATUS_FG[role] }), (role) => ({ fg: ORC_STATUS_FG[role], bg: ORC_STATUS_BG[role], bold: true })),
+  },
+};
+
+/** Amber chrome on the terminal's own background; backgrounds only for badges, the cursor row and attention. */
 const amber: Theme = {
   name: 'amber',
   roles: {
@@ -205,9 +267,9 @@ const mono: Theme = {
   },
 };
 
-export const BUILT_IN_THEMES = { amber, classic, mono } as const;
-export type BuiltInThemeName = 'amber' | 'classic' | 'mono';
-export const DEFAULT_THEME = amber;
+export const BUILT_IN_THEMES = { orc, amber, classic, mono } as const;
+export type BuiltInThemeName = 'orc' | 'amber' | 'classic' | 'mono';
+export const DEFAULT_THEME = orc;
 
 const isBuiltInName = (name: unknown): name is BuiltInThemeName => typeof name === 'string' && Object.hasOwn(BUILT_IN_THEMES, name);
 
@@ -255,7 +317,7 @@ export function resolveTheme(base: Theme, overrides: unknown): { theme: Theme; p
     if (parsed.problems.length > 0) problems.push(...parsed.problems);
     else roles[role] = { ...base.roles[role], ...parsed.style };
   }
-  return { theme: { name: base.name, roles }, problems };
+  return { theme: { ...base, roles }, problems };
 }
 
 /**
@@ -263,8 +325,8 @@ export function resolveTheme(base: Theme, overrides: unknown): { theme: Theme; p
  * `ORC_COCKPIT_THEME` is a built-in name, or the path of a JSON file
  * `{ "base"?: "<built-in>", "roles"?: { "<role>": { ... } } }` read with
  * `readText` (null when it cannot be read); a file that cannot be read, is not
- * JSON or names an unknown base is a problem and gives `amber`. Any other field
- * of the file is a problem and is skipped. Unset gives `amber`.
+ * JSON or names an unknown base is a problem and gives the default (`orc`). Any
+ * other field of the file is a problem and is skipped. Unset gives `orc`.
  */
 export function themeFromEnv(
   env: Record<string, string | undefined>,
@@ -272,9 +334,9 @@ export function themeFromEnv(
 ): { theme: Theme; problems: string[] } {
   if (env.NO_COLOR) return { theme: mono, problems: [] };
   const value = env.ORC_COCKPIT_THEME?.trim();
-  if (!value) return { theme: amber, problems: [] };
+  if (!value) return { theme: DEFAULT_THEME, problems: [] };
   if (isBuiltInName(value)) return { theme: BUILT_IN_THEMES[value], problems: [] };
-  const fail = (why: string) => ({ theme: amber, problems: [`ORC_COCKPIT_THEME: ${why}; using amber`] });
+  const fail = (why: string) => ({ theme: DEFAULT_THEME, problems: [`ORC_COCKPIT_THEME: ${why}; using ${DEFAULT_THEME.name}`] });
   const text = readText(value);
   if (text === null) return fail(`'${value}' is not a built-in theme (${Object.keys(BUILT_IN_THEMES).join(', ')}) or a readable file`);
   let parsed: unknown;
@@ -284,7 +346,7 @@ export function themeFromEnv(
     return fail(`${value} is not valid JSON (${(error as Error).message})`);
   }
   if (!isRecord(parsed)) return fail(`${value} must hold a JSON object with optional "base" and "roles"`);
-  const base = parsed.base === undefined ? 'amber' : parsed.base;
+  const base = parsed.base === undefined ? DEFAULT_THEME.name : parsed.base;
   if (!isBuiltInName(base)) return fail(`${value}: unknown base ${JSON.stringify(base)} (built-in themes: ${Object.keys(BUILT_IN_THEMES).join(', ')})`);
   const unknownFields = Object.keys(parsed).filter((key) => key !== 'base' && key !== 'roles').map((key) => `unknown field '${key}' (fields: base, roles)`);
   const { theme, problems } = resolveTheme(BUILT_IN_THEMES[base], parsed.roles);
@@ -301,4 +363,21 @@ export function styleOf(theme: Theme, role: ThemeRole): CellStyle {
     inverse: style.inverse ?? false, invisible: false, strikethrough: false,
     fg: style.fg ?? DEFAULT_COLOR, bg: style.bg ?? DEFAULT_COLOR,
   };
+}
+
+const ST = '\x1b\\';
+
+/** What sets the terminal's colours to `theme`'s at start (OSC 11 background, 10 text, 12 cursor, 4 the ANSI colours); '' without terminal colours. */
+export function terminalColorsEnter(theme: Theme): string {
+  const colors = theme.terminal;
+  if (!colors) return '';
+  let out = `\x1b]11;${colors.background}${ST}\x1b]10;${colors.foreground}${ST}`;
+  if (colors.cursor) out += `\x1b]12;${colors.cursor}${ST}`;
+  colors.palette?.forEach((color, index) => { out += `\x1b]4;${index};${color}${ST}`; });
+  return out;
+}
+
+/** What puts the terminal's colours back to its profile's (OSC 104, 110, 111, 112); '' when `theme` did not change them. */
+export function terminalColorsLeave(theme: Theme): string {
+  return theme.terminal ? `\x1b]104${ST}\x1b]110${ST}\x1b]111${ST}\x1b]112${ST}` : '';
 }

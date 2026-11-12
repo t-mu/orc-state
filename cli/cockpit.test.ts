@@ -110,8 +110,8 @@ describe('cockpitTheme', () => {
     return { theme, warnings: problems, read };
   };
 
-  it('draws in amber with no setting, in a named built-in theme, and in mono under NO_COLOR', () => {
-    expect(resolve({})).toEqual({ theme: BUILT_IN_THEMES.amber, warnings: [], read: [] });
+  it('draws in orc with no setting, in a named built-in theme, and in mono under NO_COLOR', () => {
+    expect(resolve({})).toEqual({ theme: BUILT_IN_THEMES.orc, warnings: [], read: [] });
     expect(resolve({ ORC_COCKPIT_THEME: 'classic' })).toEqual({ theme: BUILT_IN_THEMES.classic, warnings: [], read: [] });
     expect(resolve({ NO_COLOR: '1', ORC_COCKPIT_THEME: 'classic' })).toEqual({ theme: BUILT_IN_THEMES.mono, warnings: [], read: [] });
   });
@@ -127,12 +127,12 @@ describe('cockpitTheme', () => {
     expect(theme.roles['chrome.title']).toEqual(BUILT_IN_THEMES.amber.roles['chrome.title']);
   });
 
-  it('warns about an unreadable or invalid theme file and draws in amber', () => {
+  it('warns about an unreadable or invalid theme file and draws in orc', () => {
     const missing = resolve({ ORC_COCKPIT_THEME: '/no/such.json' });
-    expect(missing.theme).toBe(BUILT_IN_THEMES.amber);
-    expect(missing.warnings).toEqual([expect.stringMatching(/^ORC_COCKPIT_THEME: '\/no\/such\.json' is not a built-in theme .* or a readable file; using amber$/)]);
+    expect(missing.theme).toBe(BUILT_IN_THEMES.orc);
+    expect(missing.warnings).toEqual([expect.stringMatching(/^ORC_COCKPIT_THEME: '\/no\/such\.json' is not a built-in theme .* or a readable file; using orc$/)]);
     const broken = resolve({ ORC_COCKPIT_THEME: '/t.json' }, { '/t.json': '{ nope' });
-    expect(broken.theme).toBe(BUILT_IN_THEMES.amber);
+    expect(broken.theme).toBe(BUILT_IN_THEMES.orc);
     expect(broken.warnings).toEqual([expect.stringMatching(/^ORC_COCKPIT_THEME: \/t\.json is not valid JSON/)]);
   });
 
@@ -143,8 +143,8 @@ describe('cockpitTheme', () => {
     );
     expect(warnings).toHaveLength(2);
     for (const warning of warnings) expect(warning).toMatch(/^ORC_COCKPIT_THEME \/t\.json: /);
-    expect(theme.roles['chrome.border']).toEqual(BUILT_IN_THEMES.amber.roles['chrome.border']);
-    expect(theme.roles['text.muted']).toEqual({ ...BUILT_IN_THEMES.amber.roles['text.muted'], bold: true });
+    expect(theme.roles['chrome.border']).toEqual(BUILT_IN_THEMES.orc.roles['chrome.border']);
+    expect(theme.roles['text.muted']).toEqual({ ...BUILT_IN_THEMES.orc.roles['text.muted'], bold: true });
   });
 
   it('reads a missing file as null', () => {

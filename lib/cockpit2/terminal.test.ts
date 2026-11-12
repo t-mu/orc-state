@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { ENTER_SEQUENCE, RESTORE_SEQUENCE, fdWriter, openTerminal, type ExitHooks } from './terminal.ts';
 
 /** A fake TTY pair, process and synchronous output that records everything. */
-function fakeTerminal() {
+function fakeTerminal(colors: { enter?: string; leave?: string } = {}) {
   const writes: string[] = [];
   const raw: boolean[] = [];
   const input = Object.assign(new EventEmitter(), {
@@ -17,7 +17,7 @@ function fakeTerminal() {
   const hooks = Object.assign(new EventEmitter(), { exit(code: number) { exits.push(code); } }) as EventEmitter & ExitHooks;
   const reports: string[] = [];
   const terminal = openTerminal({
-    input, output, hooks, write: (data) => writes.push(data), report: (text) => reports.push(text),
+    input, output, hooks, write: (data) => writes.push(data), report: (text) => reports.push(text), ...colors,
   });
   return { terminal, writes, raw, input, output, hooks, exits, reports };
 }
@@ -89,6 +89,24 @@ describe('openTerminal', () => {
       expect(reports.join('')).toContain('boom');
       expect(exits).toEqual([1]);
     }
+  });
+
+  it('writes the theme colours right after entering and resets them right before restoring', () => {
+    const colors = { enter: `${ESC}]11;#080808${ESC}\\`, leave: `${ESC}]111${ESC}\\` };
+    const { terminal, writes } = fakeTerminal(colors);
+    expect(writes).toEqual([ENTER_SEQUENCE + colors.enter]);
+    terminal.restore();
+    terminal.restore();
+    expect(writes).toEqual([ENTER_SEQUENCE + colors.enter, colors.leave + RESTORE_SEQUENCE]);
+
+    const crashed = fakeTerminal(colors);
+    crashed.hooks.emit('uncaughtException', new Error('boom'));
+    expect(crashed.writes.at(-1)).toBe(colors.leave + RESTORE_SEQUENCE);
+    expect(crashed.exits).toEqual([1]);
+
+    const signalled = fakeTerminal(colors);
+    signalled.hooks.emit('SIGTERM');
+    expect(signalled.writes.at(-1)).toBe(colors.leave + RESTORE_SEQUENCE);
   });
 
   it('restores on process exit', () => {
