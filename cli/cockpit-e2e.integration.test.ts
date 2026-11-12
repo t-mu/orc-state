@@ -113,6 +113,16 @@ function clickSidebar(text: string): void {
 }
 
 /**
+ * Opens an agent's tab from the sidebar as a user does: a click on its row
+ * expands it (unless it already is), a click on its `[ OPEN ]` opens it.
+ */
+async function openFromSidebar(agent: string): Promise<void> {
+  if (sidebarRow(`[-] ${agent}`) === '') clickSidebar(agent);
+  await waitFor(`${agent}'s [ OPEN ]`, () => sidebarRow(`[-] ${agent}`) !== '' && sidebarRow('[ OPEN ]') !== '');
+  clickSidebar('[ OPEN ]');
+}
+
+/**
  * The user's terminal, with the cockpit started in alpha under `extraEnv`
  * (replacing a terminal left by an earlier test); its exit status stays on the screen.
  */
@@ -293,8 +303,8 @@ describe.skipIf(!tmuxOk)('orc cockpit end to end, in a host tmux pane', () => {
     asking = spawn(orc[0], ask, { cwd: repoRoot, stdio: 'ignore', env: { ...process.env, ORC_STATE_DIR: dir, ORC_PROJECT_ID: alpha.id, ORC_SESSION_SECRET: 'session-a' } });
     await waitFor('the QUESTION badge on the worker\'s row', () => sidebarRow('worker-a').includes('QUESTION'));
 
-    // A click on the worker's row shows its screen in a view-only tab: nothing typed reaches it, q closes it.
-    clickSidebar('worker-a');
+    // A click on the worker's row expands it, one on its [ OPEN ] shows its screen in a view-only tab: nothing typed reaches it, q closes it.
+    await openFromSidebar('worker-a');
     await waitFor('the worker\'s screen', () => screen().includes('AGENT worker-a READY'));
     await waitFor('the worker\'s header on the pane box', () => screen().includes('[ WORKER-A ]') && screen().includes('[QUESTION]'));
     await waitFor('the view-only notice', () => screen().includes('[view] i: type'));
@@ -302,7 +312,7 @@ describe.skipIf(!tmuxOk)('orc cockpit end to end, in a host tmux pane', () => {
     send('q');
     await waitFor('the master back in the slot', () => screen().includes('AGENT master READY') && !screen().includes('AGENT worker-a READY'));
     // Ctrl-D closes it too.
-    clickSidebar('worker-a');
+    await openFromSidebar('worker-a');
     await waitFor('the worker\'s screen again', () => screen().includes('AGENT worker-a READY'));
     send('\x04');
     await waitFor('the master back again', () => !screen().includes('AGENT worker-a READY'));
@@ -311,7 +321,7 @@ describe.skipIf(!tmuxOk)('orc cockpit end to end, in a host tmux pane', () => {
     expect(received('master')).toBe('');
 
     // i starts typing: the keys reach the worker.
-    clickSidebar('worker-a');
+    await openFromSidebar('worker-a');
     await waitFor('the worker\'s screen once more', () => screen().includes('AGENT worker-a READY'));
     send('i');
     await waitFor('the typing notice', () => screen().includes('[typing]'));
@@ -361,7 +371,7 @@ describe.skipIf(!tmuxOk)('orc cockpit end to end, in a host tmux pane', () => {
 
     // F10 gives the sidebar the keys (the Agents card, its first agent); Space expands the worker into its block.
     send(`${ESC}[21~`);
-    await waitFor('the sidebar\'s keys in the footer', () => lines()[HOST_ROWS - 1].includes('Space: +/-'));
+    await waitFor('the sidebar\'s keys in the footer', () => lines()[HOST_ROWS - 1].includes('Enter: open/expand'));
     send(' ');
     await waitFor('the expanded agent block', () => sidebarRow('[-] worker-a') !== '' && sidebarRow('orch/task-a') !== '' && sidebarRow('[ OPEN ] [ KILL ]') !== '');
 

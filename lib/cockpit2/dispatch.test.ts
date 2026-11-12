@@ -135,7 +135,7 @@ describe('createDispatcher: view and typing modes', () => {
     expect(modeNotice(VIEW)).toBe('[view] i: type · q/Esc: close');
     expect(modeNotice(TYPING)).toBe('[typing] Ctrl-]: stop typing');
     expect(modeNotice(MASTER)).toContain('master');
-    expect(modeNotice({ ...VIEW, sidebar: true })).toBe('Tab: card · Enter: open · Space: +/- · Esc: pane');
+    expect(modeNotice({ ...VIEW, sidebar: true })).toBe('Tab: card · Enter: open/expand · Esc: pane');
     for (const context of [VIEW, TYPING, MASTER]) expect(modeNotice(context).length).toBeLessThanOrEqual(32);
     // The sidebar's keys are the most: still under 50 columns, which leaves an 80-column footer its breadcrumb.
     expect(modeNotice({ ...MASTER, sidebar: true }).length).toBeLessThanOrEqual(48);
