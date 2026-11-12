@@ -221,7 +221,7 @@ describe('slotMessage', () => {
 
   it('shows a stopped project\'s message with its start command when its master session is gone', () => {
     expect(slotMessage({ tab: master, keys, target, session: ended, project: { name: 'demo', repoRoot: '/repo/demo', connection: 'stopped' } })).toEqual([
-      'Project demo is not running.', 'Start it with: cd /repo/demo && orc start-session', 'tmux: can\'t find session: orc-master', quitHint(keys),
+      'Campaign demo is not running.', 'Start it with: cd /repo/demo && orc start-session', 'tmux: can\'t find session: orc-master', quitHint(keys),
     ]);
   });
 
@@ -236,9 +236,9 @@ describe('slotMessage', () => {
     const worker = { projectId: 'p1', agentId: 'w1' };
     const project = { name: 'demo', repoRoot: '/repo/demo', connection: 'running' as const };
     expect(slotMessage({ tab: worker, keys, target, session: ended, project })?.[0]).toBe('w1\'s tmux session is not running.');
-    expect(slotMessage({ tab: worker, keys, target: null, session: null, project })?.[0]).toBe('w1 does not run in tmux, so the cockpit cannot show it.');
-    expect(slotMessage({ tab: master, keys, target: null, session: null, project: null })?.[0]).toBe('Project p1 is not registered.');
-    expect(slotMessage({ tab: null, keys, target: null, session: null, project: null })?.[0]).toBe('No project is open.');
+    expect(slotMessage({ tab: worker, keys, target: null, session: null, project })?.[0]).toBe('w1 does not run in tmux, so the war room cannot show it.');
+    expect(slotMessage({ tab: master, keys, target: null, session: null, project: null })?.[0]).toBe('Campaign p1 is not registered.');
+    expect(slotMessage({ tab: null, keys, target: null, session: null, project: null })?.[0]).toBe('No campaign is open.');
     expect(slotMessage({ tab: master, keys, target, session: null, project })?.[0]).toContain('Attaching to the master (tmux -L orc-sock');
     expect(slotMessage({ tab: master, keys, target, session: { state: { kind: 'live' }, error: 'capture failed', screen: null }, project }))
       .toEqual(['The master is not shown.', 'capture failed', quitHint(keys)]);
@@ -440,7 +440,7 @@ describe('runApp (fake tmux client)', () => {
     expect(text(screen, 6, 36, 43)).toBe('$ hello from orc-master');
     // The pane's box: around the slot, its top row (the master's header) under the tab bar, its bottom row above the footer.
     // At 45 columns the badge fits and the parts do not: whole parts only.
-    expect(text(screen, 5, 35)).toBe(`┌─ [ MASTER ] ${'─'.repeat(6)} [COORDINATOR RUNNING] ─┐`);
+    expect(text(screen, 5, 35)).toBe(`┌─ [ MASTER ] ${'─'.repeat(7)} [COORDINATOR ACTIVE] ─┐`);
     expect(screen.row(6)[35].text).toBe('│');
     expect(screen.row(6)[79].text).toBe('│');
     expect(text(screen, 22, 35)).toBe(`└${'─'.repeat(43)}┘`);
@@ -936,7 +936,7 @@ describe('runApp tabs and projects (fake tmux clients)', () => {
     await attached(terminal, tmuxSessionTarget('/state/demo', 'master').session);
     terminal.resizeTo(120, 30);
     client().emit('exit', 'can\'t find session: orc-master');
-    await waitForSlotText(terminal, 'Project demo-project is not running.');
+    await waitForSlotText(terminal, 'Campaign demo-project is not running.');
     await waitForSlotText(terminal, 'Start it with: cd /repo/demo && orc start-session');
   });
 
@@ -1017,7 +1017,7 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: [], active: null });
     await waitForFooter(terminal, '[master]');
     // Only its [ OPEN ] opens it.
-    terminal.type(click(5, await sidebarRow(terminal, '[ OPEN ]')));
+    terminal.type(click(5, await sidebarRow(terminal, '[ INSPECT ]')));
     expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: ['w1'], active: 'w1' });
     // The opened tab takes the keys, as after a tab click: its view mode's keys work at once.
     await waitForFooter(terminal, '[view] i: type');
@@ -1026,7 +1026,7 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     terminal.type(click(3, (await sidebarRow(terminal, WIDE_AGENT)) + 1));
     await waitForSidebar(terminal, `[-] ${WIDE_AGENT}`);
     expect(app.tabs().projects[0].tabs).toEqual(['w1']);
-    terminal.type(click(5, await sidebarRow(terminal, '[ OPEN ]')));
+    terminal.type(click(5, await sidebarRow(terminal, '[ INSPECT ]')));
     expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: ['w1', WIDE_AGENT], active: WIDE_AGENT });
     await waitForSlotText(terminal, '$ hello from orc-wide');
     await waitForTabBar(terminal, 1, `○ ${WIDE_AGENT} ! QUESTION ×`);
@@ -1082,7 +1082,7 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     expect(app.tabs().projects[0].tabs).toEqual([]);
     // Down goes onto its [ OPEN ], marked; Enter presses it.
     terminal.type(`${ESC}[B`);
-    await waitForSidebar(terminal, '▸[ OPEN ] [ KILL ]');
+    await waitForSidebar(terminal, '▸[ INSPECT ] [ KILL ]');
     terminal.type('\r');
     expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: ['w1'], active: 'w1' });
     // The opened tab has the keys, as after a click: view mode, so i then a key reach the worker, and nothing the master.
@@ -1104,9 +1104,9 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     terminal.type(F10);
     await waitForFooter(terminal, 'Enter: open');
     terminal.type('kk\rj');
-    await waitForSidebar(terminal, '▸[ OPEN ] [ KILL ]');
+    await waitForSidebar(terminal, '▸[ INSPECT ] [ KILL ]');
     terminal.type('l');
-    await waitForSidebar(terminal, ' [ OPEN ]▸[ KILL ]');
+    await waitForSidebar(terminal, ' [ INSPECT ]▸[ KILL ]');
     terminal.type('h\r');
     expect(app.tabs().projects[0].active).toBe(WIDE_AGENT);
     await waitForFooter(terminal, '[view] i: type');
@@ -1139,13 +1139,13 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     await waitForFooter(terminal, 'Tab: card');
     // From the Agents card Shift-Tab goes to the Project card, whose only target is the settings button.
     terminal.type(`${ESC}[Z\r`);
-    await waitForTabBar(terminal, 1, 'This cockpit cannot change settings.');
+    await waitForTabBar(terminal, 1, 'This war room cannot change settings.');
     expect(app.tabs().projects[0]).toMatchObject({ tabs: [], active: null }); // nothing opened
     // Any key clears the notice; a click on the button asks again.
     terminal.type(ESC);
-    await waitFor(async () => !text(await shown(terminal), 2).includes('This cockpit cannot change settings.'));
+    await waitFor(async () => !text(await shown(terminal), 2).includes('This war room cannot change settings.'));
     terminal.type(click(4, await sidebarRow(terminal, '[ SETTINGS ]')));
-    await waitForTabBar(terminal, 1, 'This cockpit cannot change settings.');
+    await waitForTabBar(terminal, 1, 'This war room cannot change settings.');
   });
 
   it('expands and collapses the cursor agent with Space in the sidebar and an agent with a click on its marker; Space in the slot reaches the pane', async () => {
@@ -1162,7 +1162,7 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     await waitForFooter(terminal, 'Enter: open/expand');
     terminal.type(' ');
     await waitForSidebar(terminal, `[-] ${WIDE_AGENT}`);
-    await waitForSidebar(terminal, '[ OPEN ] [ KILL ]');
+    await waitForSidebar(terminal, '[ INSPECT ] [ KILL ]');
     await waitForSidebar(terminal, 'Which one?');
     expect(app.tabs().projects[0].tabs).toEqual([]);
     terminal.type(' ');
@@ -1176,7 +1176,7 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     expect(app.tabs().projects[0].tabs).toEqual([]);
     await waitForFooter(terminal, '[master]');
     const top = await sidebarRow(terminal, '[-] w1 ');
-    terminal.type(click(5, await sidebarRow(terminal, '[ OPEN ]')));
+    terminal.type(click(5, await sidebarRow(terminal, '[ INSPECT ]')));
     expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: ['w1'], active: 'w1' });
     // A click elsewhere on the block's title row collapses it, as one on its marker (one column further in, after the block's side) does.
     terminal.type(click(10, top));
@@ -1308,7 +1308,7 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     await waitFor(async () => (await screenText()).includes('Leader: Ctrl-Space, then'));
     const before = await screenText();
     expect(before).toContain('HELP');
-    expect(before).toContain('quit the cockpit');
+    expect(before).toContain('quit the war room');
     terminal.type('jjjj');
     await waitFor(async () => !(await screenText()).includes('Leader: Ctrl-Space, then'));
     terminal.type('a');
@@ -1684,7 +1684,7 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     await attached(terminal);
     expect(text(await shown(terminal), 0)).not.toContain('tasks');
     terminal.type(`${LEADER}e`);
-    await waitForTabBar(terminal, 1, 'This cockpit has no task explorer.');
+    await waitForTabBar(terminal, 1, 'This war room has no task explorer.');
   });
 
   it('jumps to the next agent needing attention across projects on F11 and on a click on the header badge', async () => {
@@ -2146,11 +2146,11 @@ describe('runApp agent block buttons and kill (fake tmux clients, fake agents ho
   async function expand(terminal: FakeTerminal, agent: string): Promise<number> {
     terminal.type(click(3, await sidebarRow(terminal, `[+] ${agent} `)));
     const top = await sidebarRow(terminal, `[-] ${agent} `);
-    await waitFor(async () => (await sidebarRows(terminal)).slice(top - 1).some((row) => row.includes('[ OPEN ] [ KILL ]')));
+    await waitFor(async () => (await sidebarRows(terminal)).slice(top - 1).some((row) => row.includes('[ INSPECT ] [ KILL ]')));
     const rows = await sidebarRows(terminal);
-    return computeLayout(terminal.cols, terminal.rows).sidebar.y + rows.findIndex((row, index) => index >= top - 1 && row.includes('[ OPEN ] [ KILL ]'));
+    return computeLayout(terminal.cols, terminal.rows).sidebar.y + rows.findIndex((row, index) => index >= top - 1 && row.includes('[ INSPECT ] [ KILL ]'));
   }
-  const KILL_X = 14;
+  const KILL_X = 17;
   const OPEN_X = 5;
 
   it('opens the agent\'s tab on a click on OPEN; its pane header shows the task, phase and provider · model', async () => {
@@ -2246,7 +2246,7 @@ describe('runApp agent block buttons and kill (fake tmux clients, fake agents ho
     const { terminal } = start({ projects: [demo()] });
     await attached(terminal);
     terminal.type(click(KILL_X, await expand(terminal, 'w1')));
-    await waitForTabBar(terminal, 1, 'This cockpit cannot kill agents.');
+    await waitForTabBar(terminal, 1, 'This war room cannot kill grunts.');
     expect(await screenHas(terminal, 'KILL · W1')).toBe(false);
   });
 });
@@ -2277,7 +2277,7 @@ describe('runApp add-project and new-agent dialogs (fake hosts)', () => {
     const { terminal, client, app, watcher } = start({ projectHost });
     await attached(terminal);
     app.openAddProject();
-    await waitForScreen(terminal, '[ ADD PROJECT ]');
+    await waitForScreen(terminal, '[ NEW CAMPAIGN ]');
     // Enter with no path: refused in the dialog.
     terminal.type('\r');
     await waitForScreen(terminal, 'Path is required');
@@ -2294,7 +2294,7 @@ describe('runApp add-project and new-agent dialogs (fake hosts)', () => {
     terminal.type('\r');
     await waitFor(() => projectHost.added.length === 1);
     expect(projectHost.added).toEqual([['/work/app', 'My App', 'codex']]);
-    await waitForGone(terminal, '[ ADD PROJECT ]');
+    await waitForGone(terminal, '[ NEW CAMPAIGN ]');
     expect(client().sent).toEqual([]);
     expect(app.tabs().activeProject).toBe('demo');
     // The watcher reports the project: it is shown.
@@ -2309,19 +2309,19 @@ describe('runApp add-project and new-agent dialogs (fake hosts)', () => {
     await attached(terminal);
     const app = apps.at(-1)!;
     app.openAddProject();
-    await waitForScreen(terminal, '[ ADD PROJECT ]');
+    await waitForScreen(terminal, '[ NEW CAMPAIGN ]');
     terminal.type('/nope\r');
     await waitForScreen(terminal, 'Not a git repository: /nope');
     expect(await screenText(terminal)).not.toContain('more detail');
     terminal.type(ESC);
-    await waitForGone(terminal, '[ ADD PROJECT ]');
+    await waitForGone(terminal, '[ NEW CAMPAIGN ]');
   });
 
   it('refuses the add-project dialog without a project host', async () => {
     const { terminal, app } = start();
     await attached(terminal);
     app.openAddProject();
-    await waitForTabBar(terminal, 1, 'cannot add projects');
+    await waitForTabBar(terminal, 1, 'cannot start new campaigns');
   });
 
   it('keeps the provider\'s permission prompts under a sandbox execution mode, and runs and records the project\'s model', async () => {
@@ -2347,7 +2347,7 @@ describe('runApp add-project and new-agent dialogs (fake hosts)', () => {
     const { terminal, clients, app, store } = start({ explorer: host, settings, agentDefinitions: () => [critic], projects: [projectState('demo', { name: 'demo' })] });
     await attached(terminal);
     app.openNewAgent('demo');
-    await waitForScreen(terminal, 'NEW AGENT · DEMO');
+    await waitForScreen(terminal, 'SPAWN GRUNT · DEMO');
     await waitForScreen(terminal, '‹ codex ›');
     expect(await screenText(terminal)).not.toContain('Agent');
     terminal.type('\r');
@@ -2376,7 +2376,7 @@ describe('runApp add-project and new-agent dialogs (fake hosts)', () => {
 
   describe('in the Agents card', () => {
     const OPEN_X = 5;
-    const KILL_X = 14;
+    const KILL_X = 17;
     const sidebarHas = async (terminal: FakeTerminal, part: string) => (await sidebarRows(terminal)).some((row) => row.includes(part));
     /** demo with a worker w1 needing attention, and a fresh claude session started from the new-agent dialog in agent:1. */
     async function withSession() {
@@ -2385,7 +2385,7 @@ describe('runApp add-project and new-agent dialogs (fake hosts)', () => {
       const started = start({ explorer: host, projects: [demo] });
       await attached(started.terminal);
       started.app.openNewAgent('demo');
-      await waitForScreen(started.terminal, 'NEW AGENT · DEMO');
+      await waitForScreen(started.terminal, 'SPAWN GRUNT · DEMO');
       started.terminal.type('\r');
       await attached(started.terminal, 'agent-demo-1');
       await waitForSidebar(started.terminal, '◇ claude 1');
@@ -2400,7 +2400,7 @@ describe('runApp add-project and new-agent dialogs (fake hosts)', () => {
       expect(worker).toBeGreaterThan(-1);
       expect(local).toBeGreaterThan(worker);
       expect(rows[local]).toMatch(/0m \[LOCAL\]/);
-      expect(rows.some((row) => /\[ AGENTS \].*1 live · 1 local/.test(row))).toBe(true);
+      expect(rows.some((row) => /\[ GRUNTS \].*1 live · 1 local/.test(row))).toBe(true);
       // The header counts w1 only.
       expect(text(await shown(terminal), 0)).toMatch(/! 1$/);
     });
@@ -2411,11 +2411,11 @@ describe('runApp add-project and new-agent dialogs (fake hosts)', () => {
       await waitFor(() => app.tabs().projects[0].active === 'w1');
       terminal.type(click(3, await sidebarRow(terminal, '[+] ◇ claude 1')));
       await waitForSidebar(terminal, '[-] ◇ claude 1');
-      for (const part of ['model  claude · default', 'type   fresh session', 'not managed by the', '[ OPEN ] [ KILL ]']) await waitForSidebar(terminal, part);
-      const buttons = await sidebarRow(terminal, '[ OPEN ] [ KILL ]');
+      for (const part of ['model  claude · default', 'type   fresh session', 'not managed by the', '[ INSPECT ] [ KILL ]']) await waitForSidebar(terminal, part);
+      const buttons = await sidebarRow(terminal, '[ INSPECT ] [ KILL ]');
       terminal.type(click(OPEN_X, buttons));
       await waitFor(() => app.tabs().projects[0].active === 'agent:1');
-      terminal.type(click(KILL_X, await sidebarRow(terminal, '[ OPEN ] [ KILL ]')));
+      terminal.type(click(KILL_X, await sidebarRow(terminal, '[ INSPECT ] [ KILL ]')));
       await waitForScreen(terminal, 'KILL · CLAUDE 1');
       await waitForScreen(terminal, 'Kill claude 1? Its session ends and its tab');
       expect(app.tabs().projects[0].tabs).toContain('agent:1');
@@ -2553,7 +2553,7 @@ describe('runApp add-project and new-agent dialogs (fake hosts)', () => {
     const { terminal, clients, app } = start({ explorer: host, agentDefinitions: (root) => (root === '/repo/demo' ? [critic] : []) });
     await attached(terminal);
     app.openNewAgent('demo');
-    await waitForScreen(terminal, 'NEW AGENT');
+    await waitForScreen(terminal, 'SPAWN GRUNT');
     // Down to the variant, → to custom agent: the Agent row appears.
     terminal.type(`j${ESC}[C`);
     await waitForScreen(terminal, 'Agent       critic');
@@ -2573,7 +2573,7 @@ describe('runApp add-project and new-agent dialogs (fake hosts)', () => {
     const { terminal, app } = start({ explorer: host });
     await attached(terminal);
     app.openNewAgent('demo');
-    await waitForScreen(terminal, 'NEW AGENT');
+    await waitForScreen(terminal, 'SPAWN GRUNT');
     terminal.type(`j${ESC}[C`);
     await waitForScreen(terminal, 'no custom agents in .claude/agents');
     terminal.type('\r');
@@ -2591,6 +2591,6 @@ describe('runApp add-project and new-agent dialogs (fake hosts)', () => {
     const { terminal, app } = start();
     await attached(terminal);
     app.openNewAgent('demo');
-    await waitForTabBar(terminal, 1, 'cannot start agent sessions');
+    await waitForTabBar(terminal, 1, 'cannot spawn grunts');
   });
 });

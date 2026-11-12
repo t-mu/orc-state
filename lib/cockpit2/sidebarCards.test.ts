@@ -98,7 +98,7 @@ describe('sidebarCardsLayout', () => {
     for (const [rows, sizes] of [[22, [6, 6, 8]], [30, [9, 9, 10]], [40, [12, 12, 14]]] as const) {
       const { layout, lines } = render(model(1, 1), { rows });
       expect(rowsOf(layout), `${rows}`).toEqual(sizes);
-      for (const [name, label] of [['projects', '[ + ADD PROJECT ]'], ['project', '[ SETTINGS ]'], ['agents', '[ + NEW AGENT ]']] as const) {
+      for (const [name, label] of [['projects', '[ + NEW CAMPAIGN ]'], ['project', '[ SETTINGS ]'], ['agents', '[ + SPAWN GRUNT ]']] as const) {
         const each = card(layout, name)!;
         const last = each.y + each.rows - 2; // the row above the bottom border
         expect(lines[last].slice(2, 2 + label.length), `${rows} ${name}`).toBe(label);
@@ -111,7 +111,7 @@ describe('sidebarCardsLayout', () => {
   it('pins the buttons to the last body rows at 22, 30 and 40 rows when Agents needs more room, its list scrolling above its button', () => {
     for (const rows of [22, 30, 40]) {
       const { layout, lines } = render(model(5, 20), { rows });
-      for (const [name, label] of [['projects', '[ + ADD PROJECT ]'], ['project', '[ SETTINGS ]'], ['agents', '[ + NEW AGENT ]']] as const) {
+      for (const [name, label] of [['projects', '[ + NEW CAMPAIGN ]'], ['project', '[ SETTINGS ]'], ['agents', '[ + SPAWN GRUNT ]']] as const) {
         const each = card(layout, name)!;
         expect(lines[each.y + each.rows - 2].slice(2, 2 + label.length), `${rows} ${name}`).toBe(label);
       }
@@ -142,15 +142,15 @@ describe('sidebarCardsLayout', () => {
     const { layout, lines } = render(model(2, 1, { status: { coordinator: 'running', workers: { used: 2, total: 4 }, attention: 2 } }));
     expect(card(layout, 'projects')?.lines).toEqual([{ kind: 'project', index: 0 }, { kind: 'project', index: 1 }, { kind: 'project', index: 2 }, { kind: 'addProject' }]);
     expect(lines.slice(0, 14)).toEqual([
-      '┌─ [ PROJECTS ] ────────────── 3 ┐',
-      '│ ▸ orc-state          [RUNNING] │',
+      '┌─ [ CAMPAIGNS ] ───────────── 3 ┐',
+      '│ ▸ orc-state           [ACTIVE] │',
       '│   o1              [STOPPED] !2 │',
       '│   o2                 [STOPPED] │',
-      '│ [ + ADD PROJECT ]              │',
+      '│ [ + NEW CAMPAIGN ]             │',
       '└────────────────────────────────┘',
       ' '.repeat(COLS),
       '┌─ [ ORC-STATE ] ────────────────┐',
-      '│ coordinator          [RUNNING] │',
+      '│ coordinator           [ACTIVE] │',
       '│                                │',
       '│ workers 2/4                    │',
       '│ [ SETTINGS ]                   │',
@@ -166,13 +166,13 @@ describe('sidebarCardsLayout', () => {
       // The card's body rows without the blank ones between its rows and its button.
       return lines.slice(project.y + 1, project.y + project.rows - 1).map((line) => line.slice(2, -2).trimEnd()).filter((line) => line !== '');
     };
-    expect(projectRows({})).toEqual(['coordinator          [RUNNING]', 'workers 2/4', '[ SETTINGS ]']);
-    expect(projectRows({ tasks: { todo: 3, in_progress: 1, done: 9 } })).toEqual(['coordinator          [RUNNING]', 'workers 2/4', 'tasks 3 todo · 1 in progress', '[ SETTINGS ]']);
+    expect(projectRows({})).toEqual(['coordinator           [ACTIVE]', 'workers 2/4', '[ SETTINGS ]']);
+    expect(projectRows({ tasks: { todo: 3, in_progress: 1, done: 9 } })).toEqual(['coordinator           [ACTIVE]', 'workers 2/4', 'tasks 3 todo · 1 in progress', '[ SETTINGS ]']);
     expect(projectRows({ tasks: { todo: 0, in_progress: 2 } })[2]).toBe('tasks 2 in progress');
     expect(projectRows({ tasks: { todo: 4 } })[2]).toBe('tasks 4 todo');
     expect(projectRows({ tasks: { done: 5 } })[2]).toBe('no open tasks');
     expect(projectRows({ tasks: null })).not.toContain('no open tasks');
-    expect(projectRows({ notice: 'coordinator not running' })).toEqual(['coordinator          [RUNNING]', 'workers 2/4', 'coordinator not running', '[ SETTINGS ]']);
+    expect(projectRows({ notice: 'coordinator not running' })).toEqual(['coordinator           [ACTIVE]', 'workers 2/4', 'coordinator not running', '[ SETTINGS ]']);
   });
 
   it('shrinks Projects to a `+N more` window before Agents loses rows, keeping the active project in view', () => {
@@ -359,18 +359,18 @@ describe('sidebarCardsLayout', () => {
       const { lines } = render(few(), { rows: 40 });
       const empty = (count: number) => Array.from({ length: count }, () => '│                                │');
       expect(lines.slice(0, 13)).toEqual([
-        '┌─ [ PROJECTS ] ────────────── 2 ┐',
-        '│ ▸ orc-state          [RUNNING] │', // no blank row above the first item
+        '┌─ [ CAMPAIGNS ] ───────────── 2 ┐',
+        '│ ▸ orc-state           [ACTIVE] │', // no blank row above the first item
         ...empty(1), // the spacing
         '│   o1              [STOPPED] !2 │',
         ...empty(6), // the rows the list leaves, below it
-        '│ [ + ADD PROJECT ]              │',
+        '│ [ + NEW CAMPAIGN ]             │',
         '└────────────────────────────────┘',
         ' '.repeat(COLS),
       ]);
       expect(lines.slice(13, 26)).toEqual([
         '┌─ [ ORC-STATE ] ────────────────┐',
-        '│ coordinator          [RUNNING] │',
+        '│ coordinator           [ACTIVE] │',
         ...empty(1),
         '│ workers 2/4                    │',
         ...empty(1),
@@ -557,7 +557,7 @@ describe('sidebar navigation (keys move in the projects, project and agents boxe
     expect(card(sidebarCardsLayout(none, 22, INITIAL_SIDEBAR_NAV, COLS), 'agents')!.lines.some((line) => line.kind === 'newAgent')).toBe(false);
   });
 
-  it('moves down past the last project onto [ + ADD PROJECT ] and past the last agent onto [ + NEW AGENT ]; Enter presses them', () => {
+  it('moves down past the last project onto [ + NEW CAMPAIGN ]and past the last agent onto [ + SPAWN GRUNT ]; Enter presses them', () => {
     let nav: SidebarNav = { ...INITIAL_SIDEBAR_NAV, box: 'projects' };
     for (let i = 0; i < 2; i += 1) nav = navigateSidebar(view(nav), nav, 'down').nav;
     expect(nav).toMatchObject({ box: 'projects', projectKey: 'o1', onButton: true });
@@ -586,7 +586,7 @@ describe('sidebar navigation (keys move in the projects, project and agents boxe
   it('draws the cursor bar on the button the cursor is on, not on the item before it', () => {
     const nav: SidebarNav = { ...INITIAL_SIDEBAR_NAV, agentKey: 'p1/a3', onButton: true };
     const { frame, layout, lines } = render(model(1, 3), { focus: 'agents', nav, theme: AMBER });
-    const button = lines.findIndex((line) => line.includes('[ + NEW AGENT ]'));
+    const button = lines.findIndex((line) => line.includes('[ + SPAWN GRUNT ]'));
     const a3 = lines.findIndex((line) => line.includes('a3 '));
     expect(button).toBe(card(layout, 'agents')!.y + card(layout, 'agents')!.rows - 2);
     expect(frame.cells[button * COLS + 25].style.bg).toEqual(styleOf(AMBER, 'row.cursor').bg);
@@ -623,10 +623,10 @@ describe('sidebarCardTarget and sidebarCardClick', () => {
     expect(sidebarCardClick(layout, INITIAL_SIDEBAR_NAV, 20, y)).toBeNull();
   });
 
-  it('hits [ + ADD PROJECT ] and [ + NEW AGENT ] on their columns only; a click asks for a new project or a new agent of the active project', () => {
+  it('hits [ + NEW CAMPAIGN ]and [ + SPAWN GRUNT ] on their columns only; a click asks for a new project or a new agent of the active project', () => {
     for (const [label, action, box, command] of [
-      ['[ + ADD PROJECT ]', 'addProject', 'projects', { type: 'addProject' }],
-      ['[ + NEW AGENT ]', 'newAgent', 'agents', { type: 'newAgent', projectId: 'p1' }],
+      ['[ + NEW CAMPAIGN ]', 'addProject', 'projects', { type: 'addProject' }],
+      ['[ + SPAWN GRUNT ]', 'newAgent', 'agents', { type: 'newAgent', projectId: 'p1' }],
     ] as const) {
       const y = rowOf(label);
       const each = card(layout, box)!;
@@ -660,7 +660,7 @@ describe('sidebarCardTarget and sidebarCardClick', () => {
       expect(sidebarCardClick(layout, INITIAL_SIDEBAR_NAV, 5, y)).toBeNull();
     }
     expect(gapRows(layout)).toHaveLength(2);
-    expect(sidebarCardTarget(layout, 5, rowOf('[ PROJECTS ]'))).toBeNull();
+    expect(sidebarCardTarget(layout, 5, rowOf('[ CAMPAIGNS ]'))).toBeNull();
     expect(sidebarCardTarget(layout, 5, rowOfLine(layout, 'agents', (line) => line.kind === 'blank'))).toBeNull(); // a blank row of the Agents card
     expect(sidebarCardTarget(layout, 5, ROWS - 1)).toBeNull(); // its bottom border
     const noticed = render(model(0, 1, { notice: 'registry error: boom' }));
@@ -696,20 +696,20 @@ describe('drawSidebarCards', () => {
     });
     const { lines } = render(sidebar);
     expect(lines).toEqual([
-      '┌─ [ PROJECTS ] ────────────── 2 ┐',
-      `│ ▸ ${CJK_PROJECT} [RUNNING] │`,
+      '┌─ [ CAMPAIGNS ] ───────────── 2 ┐',
+      `│ ▸ ${CJK_PROJECT}  [ACTIVE] │`,
       '│   o1              [STOPPED] !2 │',
-      '│ [ + ADD PROJECT ]              │',
+      '│ [ + NEW CAMPAIGN ]             │',
       '└────────────────────────────────┘',
       ' '.repeat(COLS),
       `┌─ [ ${CJK_PROJECT} ] ${'─'.repeat(COLS - 9 - stringWidth(CJK_PROJECT))}┐`,
-      '│ coordinator          [RUNNING] │',
+      '│ coordinator           [ACTIVE] │',
       '│ workers 2/4                    │',
       '│ tasks 2 todo · 1 in progress   │',
       '│ [ SETTINGS ]                   │',
       '└────────────────────────────────┘',
       ' '.repeat(COLS),
-      '┌─ [ AGENTS ] ─────────── 2 live ┐',
+      '┌─ [ GRUNTS ] ─────────── 2 live ┐',
       // Two boxes and the button need a row more than the Agents card has: the second agent goes behind `+1 more`.
       '│┌──────────────────────────────┐│',
       '││ [+] agent-🚀-r… [PERMISSION] ││',
@@ -717,7 +717,7 @@ describe('drawSidebarCards', () => {
       '│└──────────────────────────────┘│',
       '│ +1 more                        │',
       '│                                │',
-      '│ [ + NEW AGENT ]                │',
+      '│ [ + SPAWN GRUNT ]              │',
       '└────────────────────────────────┘',
     ]);
     for (const line of lines) expect(stringWidth(line)).toBe(COLS);
@@ -726,22 +726,22 @@ describe('drawSidebarCards', () => {
   it('shows the coordinator state once on the Project card, and says when there is no project', () => {
     const { layout: twoAgents, lines } = render(model(0, 2));
     const projectCard = card(twoAgents, 'project')!;
-    expect(lines.slice(projectCard.y, projectCard.y + projectCard.rows).join('\n').match(/\[RUNNING\]/g)).toHaveLength(1);
+    expect(lines.slice(projectCard.y, projectCard.y + projectCard.rows).join('\n').match(/\[ACTIVE\]/g)).toHaveLength(1);
     expect(lines.join('\n')).not.toMatch(/Status|STATUS|needs? you/);
     // No project: Projects still offers its button; the Project card has no settings and the Agents card no new-agent button.
     const none = render(model(1, 2, { status: { coordinator: null, workers: null, attention: 0 }, projects: [], activeProjectId: null, agents: [], notice: 'no registered projects' })).lines;
     expect(none.slice(0, 13)).toEqual([
-      '┌─ [ PROJECTS ] ─────────────────┐', '│ (none)                         │', '│                                │', '│                                │',
-      '│ [ + ADD PROJECT ]              │', '└────────────────────────────────┘', ' '.repeat(COLS),
-      '┌─ [ PROJECT ] ──────────────────┐', '│ no registered projects         │', '│                                │', '│                                │',
+      '┌─ [ CAMPAIGNS ] ────────────────┐', '│ (none)                         │', '│                                │', '│                                │',
+      '│ [ + NEW CAMPAIGN ]             │', '└────────────────────────────────┘', ' '.repeat(COLS),
+      '┌─ [ CAMPAIGN ] ─────────────────┐', '│ no registered projects         │', '│                                │', '│                                │',
       '│                                │', '└────────────────────────────────┘',
     ]);
-    expect(none.join('\n')).not.toMatch(/SETTINGS|NEW AGENT/);
+    expect(none.join('\n')).not.toMatch(/SETTINGS|SPAWN GRUNT/);
   });
 
   it('keeps the question or reason row only for agents needing attention', () => {
     const { lines } = render(model(0, 4), { rows: 40 });
-    const agentRows = lines.slice(lines.findIndex((line) => line.includes('AGENTS')) + 1);
+    const agentRows = lines.slice(lines.findIndex((line) => line.includes('GRUNTS')) + 1);
     const top = '│┌──────────────────────────────┐│';
     const bottom = '│└──────────────────────────────┘│';
     // Every agent is a box; the question row sits inside it, under the name.
@@ -756,7 +756,7 @@ describe('drawSidebarCards', () => {
   it('says why there are no agents and dims a stale list', () => {
     const stopped = model(0, 0, { projects: [project('p1', { active: true, state: 'stopped', connection: 'stopped' })] });
     expect(render(stopped).lines.join('\n')).toContain('(coordinator not running)');
-    expect(render(model(0, 0)).lines.join('\n')).toContain('(no live agents)');
+    expect(render(model(0, 0)).lines.join('\n')).toContain('(no live grunts)');
     const stale = render(model(0, 2, { agentsStale: true }), { theme: AMBER });
     expect(stale.lines.join('\n')).toContain('2 stale');
     const y = stale.lines.findIndex((line) => line.includes('a2 '));
@@ -798,7 +798,7 @@ describe('drawSidebarCards', () => {
 
     const agents = render(model(1, 3), { focus: 'agents', nav: { ...INITIAL_SIDEBAR_NAV, box: 'agents', projectKey: null, agentKey: 'p1/a2' }, theme: AMBER });
     const a2 = agents.lines.findIndex((line) => line.includes('a2 '));
-    const agentsTop = agents.lines.findIndex((line) => line.includes('AGENTS'));
+    const agentsTop = agents.lines.findIndex((line) => line.includes('GRUNTS'));
     expect(agents.frame.cells[agentsTop * COLS].style).toEqual(styleOf(AMBER, 'chrome.borderFocus'));
     expect(agents.frame.cells[a2 * COLS + 6].style).toMatchObject({ bg: styleOf(AMBER, 'row.cursor').bg, bold: true });
     expect(agents.frame.cells[(a2 - 2) * COLS + 6].style.bg).toEqual({ type: 'default' });
@@ -813,7 +813,7 @@ describe('drawSidebarCards', () => {
       const y = lines.findIndex((line) => line.includes(part));
       return frame.cells[y * COLS + lines[y].indexOf(part)];
     };
-    expect(at('[RUNNING]').style).toEqual(styleOf(AMBER, 'status.active.badge'));
+    expect(at('[ACTIVE]').style).toEqual(styleOf(AMBER, 'status.active.badge'));
     expect(at('[STOPPED]').style).toEqual(styleOf(AMBER, 'status.warn.badge'));
     expect(at('!2').style).toEqual(styleOf(AMBER, 'status.attention.badge'));
     expect(at('[QUESTION]').style).toEqual(styleOf(AMBER, 'status.attention.badge'));
@@ -971,7 +971,7 @@ describe('expanded agents', () => {
       '││ task   cockpit-style/foo     ││',
       '││ ? may I run npm test and     ││',
       '││ then a much longer question… ││',
-      '││ [ OPEN ] [ KILL ]            ││',
+      '││ [ INSPECT ] [ KILL ]         ││',
       '│└──────────────────────────────┘│',
     ]);
     for (const line of lines) expect(stringWidth(line)).toBe(COLS);
@@ -988,7 +988,7 @@ describe('expanded agents', () => {
       '││ model  claude · opus         ││',
       '││ task   cockpit-style/foo     ││',
       '││ doing  working on a2         ││',
-      '││ [ OPEN ] [ KILL ]            ││',
+      '││ [ INSPECT ] [ KILL ]         ││',
     ]);
     expect(lines.some((line) => line.includes('implement ·'))).toBe(false);
   });
@@ -1022,10 +1022,10 @@ describe('expanded agents', () => {
     const top = lines.findIndex((line) => line.includes('[-] s1')) - 1;
     expect(lines.slice(top, top + 6).map((line) => line.trimEnd())).toEqual([
       '│┌──────────────────────────────┐│',
-      '││ [-] s1 scout   12m [RUNNING] ││',
+      '││ [-] s1 scout    12m [ACTIVE] ││',
       '││ model  codex · default       ││',
       '││ brief  find the errors in d… ││',
-      '││ [ OPEN ] [ KILL ]            ││',
+      '││ [ INSPECT ] [ KILL ]         ││',
       '│└──────────────────────────────┘│',
     ]);
     const unknown = details(0);
@@ -1042,11 +1042,11 @@ describe('expanded agents', () => {
   it('draws OPEN in tab.active and KILL in button.danger, filled, one column apart', () => {
     for (const theme of [AMBER, BUILT_IN_THEMES.orc, CLASSIC]) {
       const { frame, lines } = render(details(0), { nav: at('p1/a2', ['p1/a2']), theme });
-      const y = lines.findIndex((line) => line.includes('[ OPEN ]'));
-      expect(lines[y].indexOf('[ OPEN ] [ KILL ]')).toBe(3);
-      for (let x = 3; x < 11; x += 1) expect(frame.cells[y * COLS + x].style).toEqual(styleOf(theme, 'tab.active'));
-      expect(frame.cells[y * COLS + 11].style).not.toEqual(styleOf(theme, 'button.danger'));
-      for (let x = 12; x < 20; x += 1) expect(frame.cells[y * COLS + x].style).toEqual(styleOf(theme, 'button.danger'));
+      const y = lines.findIndex((line) => line.includes('[ INSPECT ]'));
+      expect(lines[y].indexOf('[ INSPECT ] [ KILL ]')).toBe(3);
+      for (let x = 3; x < 14; x += 1) expect(frame.cells[y * COLS + x].style).toEqual(styleOf(theme, 'tab.active'));
+      expect(frame.cells[y * COLS + 14].style).not.toEqual(styleOf(theme, 'button.danger'));
+      for (let x = 15; x < 23; x += 1) expect(frame.cells[y * COLS + x].style).toEqual(styleOf(theme, 'button.danger'));
     }
   });
 
@@ -1055,17 +1055,17 @@ describe('expanded agents', () => {
     sidebar.agents = [...sidebar.agents.slice(0, 2), agent('s1', { role: 'scout', phase: 'running', detail: 'scout', task_ref: null, provider: 'codex', model: null })];
     const nav = at('p1/a1', ['p1/a2', 'p1/s1']);
     const { layout, lines } = render(sidebar, { nav, rows: 30 });
-    const y = lines.findIndex((line) => line.includes('[ OPEN ]'));
-    expect([2, 3, 10, 11, 12, 19, 20].map((x) => sidebarCardTarget(layout, x, y)?.button)).toEqual([undefined, 'open', 'open', undefined, 'kill', 'kill', undefined]);
+    const y = lines.findIndex((line) => line.includes('[ INSPECT ]'));
+    expect([2, 3, 13, 14, 15, 22, 23].map((x) => sidebarCardTarget(layout, x, y)?.button)).toEqual([undefined, 'open', 'open', undefined, 'kill', 'kill', undefined]);
     // The cursor goes to the button pressed.
     expect(sidebarCardClick(layout, nav, 5, y)).toEqual({ nav: { ...nav, agentKey: 'p1/a2', agentButton: 'open' }, command: { type: 'openAgent', projectId: 'p1', agentId: 'a2' } });
-    expect(sidebarCardClick(layout, nav, 14, y)).toEqual({
+    expect(sidebarCardClick(layout, nav, 17, y)).toEqual({
       nav: { ...nav, agentKey: 'p1/a2', agentButton: 'kill' }, command: { type: 'killAgent', projectId: 'p1', agentId: 'a2', kind: 'worker', taskRef: 'cockpit-style/foo' },
     });
     // Off the buttons the row only moves the cursor to the agent, as the rest of the block does.
     expect(sidebarCardClick(layout, nav, 25, y)).toEqual({ nav: { ...nav, agentKey: 'p1/a2' }, command: null });
     const scoutRow = lines.findIndex((line, index) => index > y && line.includes('[ KILL ]'));
-    expect(sidebarCardClick(layout, nav, 14, scoutRow)?.command).toEqual({ type: 'killAgent', projectId: 'p1', agentId: 's1', kind: 'scout', taskRef: null });
+    expect(sidebarCardClick(layout, nav, 17, scoutRow)?.command).toEqual({ type: 'killAgent', projectId: 'p1', agentId: 's1', kind: 'scout', taskRef: null });
   });
 
   it('asks to kill the cursor agent with the kill key, only in the agents box', () => {
@@ -1144,7 +1144,7 @@ describe('expanded agents', () => {
     expect(sidebarCardClick(layout, nav, 10, question)).toEqual({ nav: { ...nav, agentKey: 'p1/a1', expanded: new Set(['p1/a3', 'p1/a1']) }, command: null });
     expect(lines[block - 1]).toMatch(/^│┌─+┐│$/);
     // The expanded box's borders, sides and labelled rows collapse it.
-    const buttons = lines.findIndex((line, y) => y > block && line.includes('[ OPEN ]'));
+    const buttons = lines.findIndex((line, y) => y > block && line.includes('[ INSPECT ]'));
     for (const [x, y] of [[10, block - 1], [10, block + 1], [10, block + 3], [1, block], [COLS - 2, block + 2], [10, buttons + 1]]) {
       expect(sidebarCardClick(layout, nav, x, y), `${x},${y}`).toEqual({ nav: { ...nav, agentKey: 'p1/a3', expanded: new Set() }, command: null });
     }
@@ -1214,7 +1214,7 @@ describe('expanded agents', () => {
       expect(keys(at('p1/a1', ['p1/a2']), 'down')).toEqual(at('p1/a2', ['p1/a2']));
     });
 
-    it('lands on an expanded agent\'s buttons by ↑ from the next agent and from [ + NEW AGENT ]', () => {
+    it('lands on an expanded agent\'s buttons by ↑ from the next agent and from [ + SPAWN GRUNT ]', () => {
       expect(keys(at('p1/a3', ['p1/a2']), 'up')).toMatchObject({ agentKey: 'p1/a2', agentButton: 'open' });
       expect(keys(at('p1/a2', ['p1/a1']), 'up')).toMatchObject({ agentKey: 'p1/a1', agentButton: 'open' });
       expect(keys(at('p1/a3', []), 'up').agentButton).toBeUndefined();
@@ -1255,21 +1255,21 @@ describe('expanded agents', () => {
       for (const theme of [AMBER, MONO]) {
         const open = keys(at('p1/a2', ['p1/a2']), 'down');
         const { frame, lines } = render(details(0), { nav: open, focus: 'agents', theme });
-        const y = lines.findIndex((line) => line.includes('[ OPEN ]'));
-        expect(lines[y].slice(2, 20)).toBe('▸[ OPEN ] [ KILL ]');
+        const y = lines.findIndex((line) => line.includes('[ INSPECT ]'));
+        expect(lines[y].slice(2, 23)).toBe('▸[ INSPECT ] [ KILL ]');
         expect(frame.cells[y * COLS + 2].style).toEqual(styleOf(theme, 'text.accent'));
         expect(frame.cells[y * COLS + 3].style).toEqual({ ...styleOf(theme, 'tab.active'), bold: true });
-        expect(frame.cells[y * COLS + 12].style).toEqual(styleOf(theme, 'button.danger'));
+        expect(frame.cells[y * COLS + 15].style).toEqual(styleOf(theme, 'button.danger'));
         const top = lines.findIndex((line) => line.includes('[-] a2'));
         const unfocused = render(details(0), { nav: open, theme });
         // Inside the card's borders (the focused card's own are in chrome.borderFocus).
         expect(frame.cells.slice(top * COLS + 1, (top + 1) * COLS - 1).map((cell) => cell.style))
           .toEqual(unfocused.frame.cells.slice(top * COLS + 1, (top + 1) * COLS - 1).map((cell) => cell.style));
         const kill = render(details(0), { nav: keys(open, 'expand'), focus: 'agents', theme });
-        expect(kill.lines[y].slice(2, 21)).toBe(' [ OPEN ]▸[ KILL ] ');
-        expect(kill.frame.cells[y * COLS + 12].style).toEqual({ ...styleOf(theme, 'button.danger'), bold: true });
+        expect(kill.lines[y].slice(2, 24)).toBe(' [ INSPECT ]▸[ KILL ] ');
+        expect(kill.frame.cells[y * COLS + 15].style).toEqual({ ...styleOf(theme, 'button.danger'), bold: true });
         // Without the keys no marker, as no cursor bar.
-        expect(unfocused.lines[y].slice(2, 20)).toBe(' [ OPEN ] [ KILL ]');
+        expect(unfocused.lines[y].slice(2, 23)).toBe(' [ INSPECT ] [ KILL ]');
       }
     });
 
@@ -1317,7 +1317,7 @@ describe('agent boxes (every agent, collapsed or expanded)', () => {
     expect(lines.slice(row('[+] w1') - 1, row('[+] w1') + 2)).toEqual([
       '│┌──────────────────────────────┐│', '││ [+] w1 worker    [IMPLEMENT] ││', '│└──────────────────────────────┘│',
     ]);
-    expect(lines[row('[+] s1')]).toBe('││ [+] s1 scout   12m [RUNNING] ││');
+    expect(lines[row('[+] s1')]).toBe('││ [+] s1 scout    12m [ACTIVE] ││');
     expect(lines[row('[+] q1') + 1]).toBe('││     ? may I push             ││'); // the question row inside the box
     // Each border in the agent's status role: the phase's, the attention kind's, status.local.
     const border = (part: string) => frame.cells[(row(part) - 1) * COLS + 1].style;
@@ -1346,7 +1346,7 @@ describe('agent boxes (every agent, collapsed or expanded)', () => {
         expect(after.lines.slice(0, title), where).toEqual(before.lines.slice(0, title));
         // The body rows and the buttons go inside the box, below its title row.
         expect(after.lines[title + 1], where).toMatch(/^││ model /);
-        expect(after.lines.findIndex((line, y) => y > title && line.includes('[ OPEN ] [ KILL ]')), where).toBeGreaterThan(title);
+        expect(after.lines.findIndex((line, y) => y > title && line.includes('[ INSPECT ] [ KILL ]')), where).toBeGreaterThan(title);
       }
     }
   });
@@ -1441,11 +1441,11 @@ describe('local agent sessions (the cockpit\'s own, not the coordinator\'s)', ()
     // A collapsed session is a box too.
     expect(lines[at('◇ claude 1') - 1]).toMatch(/^│┌─+┐│$/);
     expect(lines[at('◇ claude 1') + 1]).toMatch(/^│└─+┘│$/);
-    expect(lines.find((line) => line.includes('[ AGENTS ]'))).toContain('2 live · 2 local');
+    expect(lines.find((line) => line.includes('[ GRUNTS ]'))).toContain('2 live · 2 local');
     // Only sessions: the count names them alone, and no empty-state line.
     const only = render(model(0, 0), { locals: [fresh] });
-    expect(only.lines.find((line) => line.includes('[ AGENTS ]'))).toMatch(/─ 1 local ┐$/);
-    expect(only.lines.some((line) => line.includes('(no live agents)'))).toBe(false);
+    expect(only.lines.find((line) => line.includes('[ GRUNTS ]'))).toMatch(/─ 1 local ┐$/);
+    expect(only.lines.some((line) => line.includes('(no live grunts)'))).toBe(false);
   });
 
   it('draws the marker muted, the label in text.accent, [LOCAL] in status.local.badge and [ENDED] in status.idle.badge', () => {
@@ -1490,7 +1490,7 @@ describe('local agent sessions (the cockpit\'s own, not the coordinator\'s)', ()
       '││ type   fresh session         ││',
       '││ not managed by the           ││',
       '││ coordinator                  ││',
-      '││ [ OPEN ] [ KILL ]            ││',
+      '││ [ INSPECT ] [ KILL ]         ││',
       '│└──────────────────────────────┘│',
     ]);
     expect(LOCAL_NOTE).toBe('not managed by the coordinator');
@@ -1500,7 +1500,7 @@ describe('local agent sessions (the cockpit\'s own, not the coordinator\'s)', ()
     expect(frame.cells[(top + 1) * COLS + 10].style).toEqual(styleOf(AMBER, 'text.primary'));
     expect(frame.cells[(top + 3) * COLS + 3].style).toEqual(styleOf(AMBER, 'text.muted'));
     expect(frame.cells[(top + 5) * COLS + 3].style).toEqual(styleOf(AMBER, 'tab.active'));
-    expect(frame.cells[(top + 5) * COLS + 12].style).toEqual(styleOf(AMBER, 'button.danger'));
+    expect(frame.cells[(top + 5) * COLS + 15].style).toEqual(styleOf(AMBER, 'button.danger'));
     // A wide card keeps the note on one row.
     const wide = sidebarCardsLayout(model(0, 0), 40, nav, 40, LOCALS);
     expect(blockRows(wide, 0).filter((line) => line.kind === 'block' && line.part === 'note')).toHaveLength(1);
@@ -1518,9 +1518,9 @@ describe('local agent sessions (the cockpit\'s own, not the coordinator\'s)', ()
     expect(sidebarCardClick(layout, nav, 12, row)).toEqual({ nav: { ...nav, agentKey: K1, expanded: new Set([K2, K1]) }, command: null });
     const top = lines.findIndex((line) => line.includes('[-] ◇ critic'));
     expect(sidebarCardClick(layout, nav, 3, top)?.nav.expanded).toEqual(new Set());
-    const buttons = lines.findIndex((line, index) => index > top && line.includes('[ OPEN ]'));
+    const buttons = lines.findIndex((line, index) => index > top && line.includes('[ INSPECT ]'));
     expect(sidebarCardClick(layout, nav, 5, buttons)?.command).toEqual({ type: 'openAgent', projectId: 'p1', agentId: 'agent:2' });
-    expect(sidebarCardClick(layout, nav, 14, buttons)?.command).toEqual({ type: 'killAgent', projectId: 'p1', agentId: 'agent:2', kind: 'local', taskRef: null });
+    expect(sidebarCardClick(layout, nav, 17, buttons)?.command).toEqual({ type: 'killAgent', projectId: 'p1', agentId: 'agent:2', kind: 'local', taskRef: null });
   });
 
   it('keeps the cursor session\'s whole block in view in a short sidebar, the other agents behind `+N more`', () => {

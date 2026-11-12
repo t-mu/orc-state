@@ -115,12 +115,12 @@ function clickSidebar(text: string): void {
 
 /**
  * Opens an agent's tab from the sidebar as a user does: a click on its row
- * expands it (unless it already is), a click on its `[ OPEN ]` opens it.
+ * expands it (unless it already is), a click on its `[ INSPECT ]` opens it.
  */
 async function openFromSidebar(agent: string): Promise<void> {
   if (sidebarRow(`[-] ${agent}`) === '') clickSidebar(agent);
-  await waitFor(`${agent}'s [ OPEN ]`, () => sidebarRow(`[-] ${agent}`) !== '' && sidebarRow('[ OPEN ]') !== '');
-  clickSidebar('[ OPEN ]');
+  await waitFor(`${agent}'s [ INSPECT ]`, () => sidebarRow(`[-] ${agent}`) !== '' && sidebarRow('[ INSPECT ]') !== '');
+  clickSidebar('[ INSPECT ]');
 }
 
 /**
@@ -305,7 +305,7 @@ describe.skipIf(!tmuxOk)('orc cockpit end to end, in a host tmux pane', () => {
     asking = spawn(orc[0], ask, { cwd: repoRoot, stdio: 'ignore', env: { ...process.env, ORC_STATE_DIR: dir, ORC_PROJECT_ID: alpha.id, ORC_SESSION_SECRET: 'session-a' } });
     await waitFor('the QUESTION badge on the worker\'s row', () => sidebarRow('worker-a').includes('QUESTION'));
 
-    // A click on the worker's row expands it, one on its [ OPEN ] shows its screen in a view-only tab: nothing typed reaches it, q closes it.
+    // A click on the worker's row expands it, one on its [ INSPECT ] shows its screen in a view-only tab: nothing typed reaches it, q closes it.
     await openFromSidebar('worker-a');
     await waitFor('the worker\'s screen', () => screen().includes('AGENT worker-a READY'));
     await waitFor('the worker\'s header on the pane box', () => screen().includes('[ WORKER-A ]') && screen().includes('[QUESTION]'));
@@ -367,7 +367,7 @@ describe.skipIf(!tmuxOk)('orc cockpit end to end, in a host tmux pane', () => {
     await waitFor('the footer', () => lines()[HOST_ROWS - 1].includes('quit'));
     await waitFor('the card titles', () => {
       const shown = sidebar().join('\n');
-      return shown.includes(`[ ${alpha.name.toUpperCase()} ]`) && shown.includes('[ PROJECTS ]') && shown.includes('[ AGENTS ]');
+      return shown.includes(`[ ${alpha.name.toUpperCase()} ]`) && shown.includes('[ CAMPAIGNS ]') && shown.includes('[ GRUNTS ]');
     });
     await waitFor('the worker in the Agents card', () => sidebarRow('[+] worker') !== '');
 
@@ -375,7 +375,7 @@ describe.skipIf(!tmuxOk)('orc cockpit end to end, in a host tmux pane', () => {
     send(`${ESC}[21~`);
     await waitFor('the sidebar\'s keys in the footer', () => lines()[HOST_ROWS - 1].includes('Enter: open/expand'));
     send(' ');
-    await waitFor('the expanded agent block', () => sidebarRow('[-] worker') !== '' && sidebarRow('orch/task-a') !== '' && sidebarRow('[ OPEN ] [ KILL ]') !== '');
+    await waitFor('the expanded agent block', () => sidebarRow('[-] worker') !== '' && sidebarRow('orch/task-a') !== '' && sidebarRow('[ INSPECT ] [ KILL ]') !== '');
 
     const coloured = chromeCells(styledScreen()).filter(({ cell }) => cell.fg !== null || cell.bg !== null);
     expect(coloured.map(({ where, cell }) => `${where} ${JSON.stringify(cell)}`), screen()).toEqual([]);
@@ -388,7 +388,7 @@ describe.skipIf(!tmuxOk)('orc cockpit end to end, in a host tmux pane', () => {
     const themeFile = join(temp, 'theme.json');
     writeFileSync(themeFile, JSON.stringify({ base: 'mono', roles: { 'chrome.border': { fg: '#12ab34' } } }));
     launchCockpit({ ORC_COCKPIT_THEME: themeFile, COLORTERM: 'truecolor' });
-    await waitFor('the card titles', () => sidebarRow('[ AGENTS ]') !== '');
+    await waitFor('the card titles', () => sidebarRow('[ GRUNTS ]') !== '');
     await settle();
 
     const borders = chromeCells(styledScreen()).filter(({ cell }) => cell.fg === '38;2;18;171;52');

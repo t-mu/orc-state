@@ -12,11 +12,11 @@ describe('helpLines', () => {
     expect(lines.filter((line) => line.startsWith('# '))).toEqual([
       '# Leader: Ctrl-Space, then', '# Direct keys', '# Sidebar', '# Tab strip', '# Pane', '# Dialogs',
     ]);
-    for (const line of ['q: quit the cockpit', '?: this help', 'Ctrl-Space: send Ctrl-Space to the pane', 'F1-F9: tab 1-9', 'F10: sidebar (from the sidebar: the pane)', 'F11: next agent needing attention']) {
+    for (const line of ['q: quit the war room', '?: this help', 'Ctrl-Space: send Ctrl-Space to the pane', 'F1-F9: tab 1-9', 'F10: sidebar (from the sidebar: the pane)', 'F11: next agent needing attention']) {
       expect(lines).toContain(line);
     }
     // No direct quit key by default.
-    expect(lines.filter((line) => line.endsWith('quit the cockpit'))).toEqual(['q: quit the cockpit']);
+    expect(lines.filter((line) => line.endsWith('quit the war room'))).toEqual(['q: quit the war room']);
   });
 
   it('follows ORC_COCKPIT_PREFIX and ORC_COCKPIT_KEYS', () => {
@@ -25,7 +25,7 @@ describe('helpLines', () => {
     expect(lines[0]).toBe('# Leader: Ctrl-a, then');
     expect(lines).toContain('Alt-1: tab 1');
     expect(lines).toContain('F2: tab 2');
-    expect(lines).toContain('Ctrl-q: quit the cockpit');
+    expect(lines).toContain('Ctrl-q: quit the war room');
     expect(lines.some((line) => line.startsWith('F11'))).toBe(false);
   });
 });

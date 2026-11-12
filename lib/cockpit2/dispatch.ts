@@ -136,15 +136,15 @@ export const LEADER_TABLE: Readonly<Record<string, { action: DispatchAction; hel
   p: { action: { type: 'focusPane' }, help: 'pane' },
   w: { action: { type: 'closeTab' }, help: 'close the current tab' },
   t: { action: { type: 'newShell' }, help: 'new shell tab' },
-  a: { action: { type: 'newAgent' }, help: 'new agent' },
-  n: { action: { type: 'cycleProject', delta: 1 }, help: 'next project' },
-  N: { action: { type: 'cycleProject', delta: -1 }, help: 'previous project' },
+  a: { action: { type: 'newAgent' }, help: 'spawn grunt' },
+  n: { action: { type: 'cycleProject', delta: 1 }, help: 'next campaign' },
+  N: { action: { type: 'cycleProject', delta: -1 }, help: 'previous campaign' },
   e: { action: { type: 'explorer' }, help: 'task explorer' },
-  ',': { action: { type: 'settings' }, help: 'project settings' },
+  ',': { action: { type: 'settings' }, help: 'campaign settings' },
   '!': { action: { type: 'attention' }, help: 'next agent needing attention' },
   i: { action: { type: 'toggleTyping' }, help: 'type into the worker or scout tab, or stop' },
   '?': { action: { type: 'help' }, help: 'this help' },
-  q: { action: { type: 'quit' }, help: 'quit the cockpit' },
+  q: { action: { type: 'quit' }, help: 'quit the war room' },
 };
 /** Leader commands after which the leader stays armed: tab and container walking repeats. */
 const LEADER_REPEATS = new Set(['Left', 'h', 'Right', 'l', 'Tab', 'BTab']);

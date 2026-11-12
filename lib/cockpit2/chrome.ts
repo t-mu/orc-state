@@ -3,8 +3,8 @@
  * a bracketed title and right-aligned meta, a bracketed status badge and the
  * plus/minus collapse marker.
  *
- *   box     ┌─ [ AGENTS ] ──────── 3 live ┐   │ … │   └──────┘
- *   badge   [RUNNING]  [INPUT REQ]
+ *   box     ┌─ [ GRUNTS ] ──────── 3 live ┐   │ … │   └──────┘
+ *   badge   [ACTIVE]  [INPUT REQ]
  *   marker  [+] collapsed   [-] expanded
  *
  * Pure drawing on a Frame; widths are display widths (a wide grapheme takes two
@@ -88,13 +88,16 @@ export function drawBox(frame: Frame, region: Region, options: BoxOptions): Regi
   return { x: x + 1, y: y + 1, cols: cols - 2, rows: rows - 2 };
 }
 
+/** `[LABEL]` as a badge shows it: upper-cased, the state `running` shown as ACTIVE (`coordinator running` → `[COORDINATOR ACTIVE]`). */
+export const badgeText = (label: string): string => `[${label.replace(/\brunning\b/gi, 'active').toUpperCase()}]`;
+
 /**
- * Draw `[LABEL]` (upper-cased) at (x, y) in the status role's badge style and
+ * Draw `[LABEL]` (badgeText) at (x, y) in the status role's badge style and
  * return its width; draws nothing and returns 0 when it does not fit in
  * `maxCols` (default: to the frame's right edge) or the frame.
  */
 export function drawBadge(frame: Frame, x: number, y: number, label: string, statusRole: StatusRole, theme: Theme, maxCols?: number): number {
-  const text = `[${label.toUpperCase()}]`;
+  const text = badgeText(label);
   const width = stringWidth(text);
   if (x < 0 || y < 0 || y >= frame.rows || width > Math.min(maxCols ?? Infinity, frame.cols - x)) return 0;
   return drawText(frame, x, y, text, styleOf(theme, badgeRole(statusRole)), width);
@@ -129,7 +132,7 @@ export function drawPaneBox(frame: Frame, region: Region, header: PaneHeader | n
   // Columns left of the badge (or of the corner's `─`) the parts may use.
   let limit = right - 1;
   if (header.badge) {
-    const width = stringWidth(`[${header.badge.label.toUpperCase()}]`);
+    const width = stringWidth(badgeText(header.badge.label));
     const badgeX = right - 2 - width;
     // The badge only when a `─` still separates it from the title.
     if (badgeX - 1 > start + 1) {

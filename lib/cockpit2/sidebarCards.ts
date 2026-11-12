@@ -2,21 +2,21 @@
  * lib/cockpit2/sidebarCards.ts — the cockpit sidebar as three square cards
  * (Plan 7 Step 8), drawn from the sidebar model of lib/tui/sidebar.ts:
  *
- *   ┌─ [ PROJECTS ] ─────────── 2 ─┐   Projects: every registered project, one row
- *   │ ▸ orc-state        [RUNNING] │   each, state badge and `!N` when its agents
+ *   ┌─ [ CAMPAIGNS ] ────────── 2 ─┐   Projects (on screen Campaigns): every registered project, one row
+ *   │ ▸ orc-state         [ACTIVE] │   each, state badge and `!N` when its agents
  *   │                              │   need a human; `▸` marks the active one;
  *   │   arek-on-trail       [IDLE] │   an add-project button on its last row
- *   │ [ + ADD PROJECT ]            │
+ *   │ [ + NEW CAMPAIGN ]           │
  *   └──────────────────────────────┘
  *                                      a blank row between cards (the canvas)
  *   ┌─ [ ORC-STATE ] ──────────────┐   Project: the active project, its coordinator
- *   │ coordinator        [RUNNING] │   state as one badge, its worker capacity, its
+ *   │ coordinator         [ACTIVE] │   state as one badge, its worker capacity, its
  *   │ workers 2/4                  │   open task counts, the notice (only while
  *   │ tasks 3 todo · 1 in progress │   there is one) and a settings button on its
  *   │ [ SETTINGS ]                 │   last row
  *   └──────────────────────────────┘
  *
- *   ┌─ [ AGENTS ] ─────── 2 live ──┐   Agents: every agent is a box in its status
+ *   ┌─ [ GRUNTS ] ─────── 2 live ──┐   Agents (on screen Grunts): every agent is a box in its status
  *   │┌────────────────────────────┐│   role, collapsed or expanded: its title row
  *   ││ [+] grommash [PERMISSION]  ││   and, for an agent needing attention, its
  *   ││     ? may I run npm test   ││   question or reason. Expanding (Space or a
@@ -26,9 +26,9 @@
  *   ││ model  claude · opus       ││   and model (`default` when unknown), its
  *   ││ task   cockpit-style/foo   ││   task (a scout's brief instead), its
  *   ││ doing  editing app.ts      ││   activity when it says more than the row
- *   ││ [ OPEN ] [ KILL ]          ││   (at most two lines) or, unlabelled, its
+ *   ││ [ INSPECT ] [ KILL ]       ││   (at most two lines) or, unlabelled, its
  *   │└────────────────────────────┘│   question or reason; and two buttons. A
- *   │ [ + NEW AGENT ]              │   new-agent button on the card's last row
+ *   │ [ + SPAWN GRUNT ]            │   new-agent button on the card's last row
  *   └──────────────────────────────┘
  *
  * After the coordinator's agents the Agents card lists the cockpit's own agent
@@ -47,7 +47,7 @@
  *   ││ agent  critic                 ││
  *   ││ not managed by the            ││
  *   ││ coordinator                   ││
- *   ││ [ OPEN ] [ KILL ]             ││
+ *   ││ [ INSPECT ] [ KILL ]          ││
  *   │└───────────────────────────────┘│
  *
  * Each card's action button sits on its last body row whatever the card's
@@ -62,7 +62,7 @@
  * and agents (by agent, then its new-agent button; Enter or a click on an
  * agent's box expands or collapses it, `↓` from an expanded agent's row goes
  * to its buttons, `→`/`←` move between them and Enter presses one: only
- * `[ OPEN ]` opens the agent's tab; `x` asks to kill it). The layout
+ * `[ INSPECT ]` opens the agent's tab; `x` asks to kill it). The layout
  * (`sidebarCardsLayout`) is pure: it sizes the cards to the rows, keeps the
  * cursor's row (the cursor agent's whole box, or a button) in view and
  * lists every body row, which drawing (`drawSidebarCards`) and clicks
@@ -71,7 +71,7 @@
 import { stringWidth } from '../cellWidth.ts';
 import { ATTENTION_BADGE, fitRow, fitText, type SidebarAgent, type SidebarModel } from '../tui/sidebar.ts';
 import { windowStart, wrapText } from '../tui/taskList.ts';
-import { collapseMarker, drawBadge, drawBox } from './chrome.ts';
+import { badgeText, collapseMarker, drawBadge, drawBox } from './chrome.ts';
 import type { SidebarKey } from './dispatch.ts';
 import { drawText, fillRect, type Frame, type Region } from './frame.ts';
 import type { CellStyle } from './screen.ts';
@@ -95,7 +95,7 @@ export interface SidebarNav {
   /** The cursor is on the box's action button after its list (projects: add project, agents: new agent); left out on an item. */
   onButton?: true;
   /**
-   * The cursor is on one of the cursor agent's buttons (its expanded block's `[ OPEN ]` or `[ KILL ]`) rather than its
+   * The cursor is on one of the cursor agent's buttons (its expanded block's `[ INSPECT ]` or `[ KILL ]`) rather than its
    * row; left out on the row, and of no effect unless the cursor agent is expanded.
    */
   agentButton?: AgentButton;
@@ -162,9 +162,9 @@ export type SidebarCommand =
   | { type: 'openAgent'; projectId: string; agentId: string }
   /** The Project card's `[ SETTINGS ]` button: the active project's settings. */
   | { type: 'openSettings'; projectId: string }
-  /** The Projects card's `[ + ADD PROJECT ]` button. */
+  /** The Projects card's `[ + NEW CAMPAIGN ]` button. */
   | { type: 'addProject' }
-  /** The Agents card's `[ + NEW AGENT ]` button: a new agent in the active project. */
+  /** The Agents card's `[ + SPAWN GRUNT ]` button: a new agent in the active project. */
   | { type: 'newAgent'; projectId: string }
   /**
    * An expanded agent's `[ KILL ]` button or the kill key: the app asks first, then resets a worker's task, removes a
@@ -226,8 +226,8 @@ function cursorAgentButton(nav: SidebarNav, keys: readonly string[], agentIndex:
  * button under it, toggle expands or collapses the agent under the cursor and
  * kill asks to kill it (both nothing in the other boxes or on a button), back
  * returns to the pane. An expanded agent's buttons are a row of the cursor's
- * own: down from its row lands on `[ OPEN ]`, expand and collapse move between
- * `[ OPEN ]` and `[ KILL ]` there, up returns to its row, down goes on to the
+ * own: down from its row lands on `[ INSPECT ]`, expand and collapse move between
+ * `[ INSPECT ]` and `[ KILL ]` there, up returns to its row, down goes on to the
  * next agent (or the card's button), and up from below lands on it.
  */
 export function navigateSidebar(view: SidebarCursor, nav: SidebarNav, key: SidebarKey): SidebarStep {
@@ -270,7 +270,7 @@ export function navigateSidebar(view: SidebarCursor, nav: SidebarNav, key: Sideb
       if (projects) return openProjectStep(nav, model, current);
       if (agentButton === 'open') return openAgentStep(nav, view, current);
       if (agentButton === 'kill') return killAgentStep(nav, view, current, 'kill');
-      // Enter on an agent's row expands or collapses it; only its `[ OPEN ]` opens its tab.
+      // Enter on an agent's row expands or collapses it; only its `[ INSPECT ]` opens its tab.
       return { nav: toggleAgent(nav, keys[current]), command: null };
     }
     case 'toggle': {
@@ -340,7 +340,7 @@ function onAgent(nav: SidebarNav, key: string, button?: AgentButton): SidebarNav
   return button && nav.expanded.has(key) ? { ...next, agentButton: button } : next;
 }
 
-/** The agent's `[ OPEN ]`: opens the agent at `index`, a coordinator agent's tab or a local session's own (by its tab id); the cursor goes to the button. */
+/** The agent's `[ INSPECT ]`: opens the agent at `index`, a coordinator agent's tab or a local session's own (by its tab id); the cursor goes to the button. */
 function openAgentStep(nav: SidebarNav, view: Pick<SidebarCursor, 'model' | 'locals'>, index: number): SidebarStep {
   const { model } = view;
   const entry = agentEntry(view, index);
@@ -756,9 +756,9 @@ export interface SidebarCardTarget {
 /** The Project card's settings button, as drawn. */
 export const SETTINGS_BUTTON = '[ SETTINGS ]';
 /** The Projects and Agents cards' buttons, as drawn (in the settings button's style). */
-export const CARD_BUTTONS: Readonly<Record<CardButton, string>> = { addProject: '[ + ADD PROJECT ]', newAgent: '[ + NEW AGENT ]' };
+export const CARD_BUTTONS: Readonly<Record<CardButton, string>> = { addProject: '[ + NEW CAMPAIGN ]', newAgent: '[ + SPAWN GRUNT ]' };
 /** An expanded agent's buttons as drawn, one column apart. */
-export const AGENT_BUTTONS: ReadonlyArray<{ button: AgentButton; label: string }> = [{ button: 'open', label: '[ OPEN ]' }, { button: 'kill', label: '[ KILL ]' }];
+export const AGENT_BUTTONS: ReadonlyArray<{ button: AgentButton; label: string }> = [{ button: 'open', label: '[ INSPECT ]' }, { button: 'kill', label: '[ KILL ]' }];
 const AGENT_BUTTON_GAP = 1;
 /** Before the focused agent button, in the column left of it. */
 export const FOCUS_MARK = '▸';
@@ -824,7 +824,7 @@ export function sidebarCardTarget(layout: SidebarCardsLayout, x: number, y: numb
  * A click at (x, y) in the sidebar: the row's box gets the cursor and its
  * project opens, on the settings button the active project's settings open, on
  * the add-project or new-agent button the app is asked for it (the cursor goes
- * to the button), on an expanded agent's `[ OPEN ]` its tab opens and on its
+ * to the button), on an expanded agent's `[ INSPECT ]` its tab opens and on its
  * `[ KILL ]` the app is asked to kill it (the cursor goes to the button),
  * anywhere else in an agent's box (its borders, title row and question row,
  * an expanded box's labelled rows) the agent expands or collapses, and on an
@@ -868,8 +868,6 @@ function cursorRow(runs: readonly Run[], theme: Theme): Run[] {
     : [text, { ...runStyle, ...theme.roles['row.cursor'] }]));
 }
 
-/** `[LABEL]`, as drawBadge draws it. */
-const badgeText = (label: string): string => `[${label.toUpperCase()}]`;
 
 const runsText = (runs: readonly Run[]): string => runs.map(([text]) => text).join('');
 
@@ -946,7 +944,7 @@ export function drawSidebarCards(frame: Frame, region: Region, layout: SidebarCa
     const rows = Math.min(card.rows, bottom - (region.y + card.y));
     if (rows < 2) continue;
     const focused = card.card === focusedCard;
-    const title = card.card === 'project' ? active?.name ?? 'Project' : card.card === 'projects' ? 'Projects' : 'Agents';
+    const title = card.card === 'project' ? active?.name ?? 'Campaign' : card.card === 'projects' ? 'Campaigns' : 'Grunts';
     const count = card.card === 'projects' ? model.projects.length > 0 ? String(model.projects.length) : ''
       : card.card === 'agents' ? agentsMeta() : '';
     const inner = drawBox(frame, { x: region.x, y: region.y + card.y, cols: region.cols, rows: card.rows }, { title, meta: count, focused, theme });
@@ -1026,7 +1024,7 @@ export function drawSidebarCards(frame: Frame, region: Region, layout: SidebarCa
         drawRuns(frame, x, y, [[fitText(`+${line.count} more`, cols), role('text.muted')]], cols);
         return;
       case 'empty': {
-        const text = active?.state === 'stopped' && !model.agentsStale ? '(coordinator not running)' : '(no live agents)';
+        const text = active?.state === 'stopped' && !model.agentsStale ? '(coordinator not running)' : '(no live grunts)';
         drawRuns(frame, x, y, [[fitText(text, cols), role('text.muted')]], cols);
         return;
       }
@@ -1108,7 +1106,7 @@ export function drawSidebarCards(frame: Frame, region: Region, layout: SidebarCa
    * role, under its name), or, expanded, its labelled rows (label in `text.muted`, value in
    * `text.primary`): provider and model (`default` for an unknown model),
    * task or brief, activity; or its question (in the attention kind's role);
-   * and its buttons (`[ OPEN ]` in `tab.active`, `[ KILL ]` in
+   * and its buttons (`[ INSPECT ]` in `tab.active`, `[ KILL ]` in
    * `button.danger`), each cut by display width.
    */
   function drawBlockLine(frame: Frame, x: number, y: number, cols: number, line: Extract<CardLine, { kind: 'block' }>, cursor: boolean, focusButton: AgentButton | null): void {
@@ -1165,7 +1163,7 @@ export function drawSidebarCards(frame: Frame, region: Region, layout: SidebarCa
   }
 
   /**
-   * An expanded block's buttons from `x`, `textCols` columns: `[ OPEN ]` in
+   * An expanded block's buttons from `x`, `textCols` columns: `[ INSPECT ]` in
    * `tab.active`, `[ KILL ]` in `button.danger`, each through `styled` (a stale
    * list's dim); the focused one (`focus`) bold, with a `▸` (`text.accent`) in
    * the column before it, as the confirm dialog marks its focused button.
