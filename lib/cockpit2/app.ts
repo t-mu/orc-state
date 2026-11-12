@@ -838,6 +838,8 @@ export function runApp(options: AppOptions): App {
     },
     tabBar: (event, at) => {
       if (!isClick(event)) return;
+      // Only the tabs' rows: their label row and its caps, not the gap row above the pane.
+      if (Math.abs(at.y - Math.floor((layout.tabBar.rows - 1) / 2)) > 1) return;
       const view = currentTabBar();
       const click = tabBarClickTarget(view.model, view.layout, at.x);
       if (!click) return;
