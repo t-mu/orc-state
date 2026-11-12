@@ -366,10 +366,11 @@ function killAgentStep(nav: SidebarNav, view: Pick<SidebarCursor, 'model' | 'loc
 export type SidebarCard = SidebarBox;
 
 /**
- * The rows of an expanded agent's block, top to bottom (`task` only with a task, `brief` only with a scout's brief,
- * `detail` up to twice; `type` and `note` only for a local session).
+ * The rows of an expanded agent's block, top to bottom: its top border, its title row (the agent's row inside the
+ * box), then (`task` only with a task, `brief` only with a scout's brief, `detail` up to twice; `type` and `note` only
+ * for a local session) its labelled rows, its buttons and its bottom border.
  */
-export type BlockPart = 'top' | 'model' | 'task' | 'brief' | 'type' | 'detail' | 'note' | 'buttons' | 'bottom';
+export type BlockPart = 'top' | 'title' | 'model' | 'task' | 'brief' | 'type' | 'detail' | 'note' | 'buttons' | 'bottom';
 
 /** A card's body row: what is drawn there and what a click on it hits. */
 export type CardLine =
@@ -458,7 +459,7 @@ function agentBlocks(model: SidebarModel, locals: readonly LocalAgent[], expande
     const part = (name: BlockPart): CardLine => ({ kind: 'block', index, part: name });
     // The note wraps rather than cut in a narrow card.
     const note = blockDetail(LOCAL_NOTE, blockTextCols(cols)).map((text): CardLine => ({ kind: 'block', index, part: 'note', text }));
-    return [part('top'), part('model'), part('type'), ...note, part('buttons'), part('bottom')];
+    return [part('top'), part('title'), part('model'), part('type'), ...note, part('buttons'), part('bottom')];
   });
   return [...coordinatorBlocks(model.agents, expanded, cols), ...localBlocks];
 }
@@ -473,7 +474,7 @@ function coordinatorBlocks(agents: SidebarAgent[], expanded: ReadonlySet<string>
       : blockDetail(detail, Math.max(1, blockTextCols(cols) - BLOCK_LABEL_COLS))
         .map((text, line) => ({ kind: 'block', index, part: 'detail', text, label: line === 0 ? BLOCK_LABELS.doing : '' }));
     return [
-      part('top'), part('model'), ...(agent.task_ref ? [part('task')] : []), ...(agent.brief ? [part('brief')] : []),
+      part('top'), part('title'), part('model'), ...(agent.task_ref ? [part('task')] : []), ...(agent.brief ? [part('brief')] : []),
       ...detailLines,
       part('buttons'), part('bottom'),
     ];
@@ -673,7 +674,7 @@ export type CardButton = 'addProject' | 'newAgent';
  */
 export interface SidebarCardTarget {
   card: SidebarCard; index: number; onMarker: boolean; settings?: true; action?: CardButton; button?: AgentButton;
-  /** An expanded block's row below its top row (off its buttons): not the agent's own row. */
+  /** An expanded block's row other than its title row (off its buttons): not the agent's own row. */
   inBlock?: true;
 }
 
@@ -693,7 +694,7 @@ const ACTIVE_MARK = '▸ ';
 const PAD = 1;
 /** Columns of the collapse marker, which starts after the left border and its padding. */
 const MARKER_COLS = stringWidth(collapseMarker(false));
-/** The marker's first column on an expanded block's top row: after the card's border, the block's corner and a space. */
+/** The marker's first column on an expanded block's title row: after the card's border, the block's side and a space. */
 const BLOCK_MARKER_X = 3;
 /** An expanded block's text, its buttons included, starts in the marker's column. */
 const BLOCK_TEXT_X = BLOCK_MARKER_X;
@@ -739,7 +740,7 @@ export function sidebarCardTarget(layout: SidebarCardsLayout, x: number, y: numb
         const hit = agentButtonSpans(BLOCK_TEXT_X, layout.cols - 2 - 4).find((span) => x >= span.x && x < span.x + span.cols);
         if (hit) return { card: 'agents', index: line.index, onMarker: false, button: hit.button };
       }
-      if (line.part !== 'top') return { card: 'agents', index: line.index, onMarker: false, inBlock: true };
+      if (line.part !== 'title') return { card: 'agents', index: line.index, onMarker: false, inBlock: true };
       return { card: 'agents', index: line.index, onMarker: x >= BLOCK_MARKER_X && x < BLOCK_MARKER_X + MARKER_COLS };
     }
     default: return null;
@@ -753,7 +754,7 @@ export function sidebarCardTarget(layout: SidebarCardsLayout, x: number, y: numb
  * to the button), on an expanded agent's `[ OPEN ]` its tab opens and on its
  * `[ KILL ]` the app is asked to kill it (the cursor goes to the button), on an
  * agent's row (a collapsed agent's rows, its marker included, or an expanded
- * block's top row) the agent expands or collapses, and on the rest of an
+ * block's title row) the agent expands or collapses, and on the rest of an
  * expanded block the cursor goes to the agent (neither with a command).
  * Null off the rows.
  */
@@ -999,22 +1000,16 @@ export function drawSidebarCards(frame: Frame, region: Region, layout: SidebarCa
 
   /**
    * One row of a local session's expanded block, `cols` wide: the border in
-   * its status role, its row in the top border, its provider with the CLI's
+   * its status role, its row inside the box below its top border, its provider with the CLI's
    * default model, `type fresh session` or `agent <name>`, the note (muted)
    * and the buttons.
    */
   function drawLocalBlockLine(frame: Frame, x: number, y: number, cols: number, line: Extract<CardLine, { kind: 'block' }>, session: LocalAgent, cursor: boolean, focusButton: AgentButton | null): void {
     const border = role(localStatusRole(session));
-    if (line.part === 'bottom') {
-      drawText(frame, x, y, `└${'─'.repeat(cols - 2)}┘`, border, cols);
-      return;
-    }
-    const top = line.part === 'top';
-    drawText(frame, x, y, top ? '┌' : '│', border, 1);
-    drawText(frame, x + cols - 1, y, top ? '┐' : '│', border, 1);
+    if (drawBlockBorder(frame, x, y, cols, line.part, border)) return;
     const textCols = cols - 4;
     if (textCols <= 0) return;
-    if (top) {
+    if (line.part === 'title') {
       drawCardRow(frame, x + 2, y, textCols, localRow(session, true, cursor), theme);
       return;
     }
@@ -1035,7 +1030,7 @@ export function drawSidebarCards(frame: Frame, region: Region, layout: SidebarCa
 
   /**
    * One row of an expanded agent's block, `cols` wide: the border in the
-   * agent's status role (dim on a stale list), the agent's row in the top
+   * agent's status role (dim on a stale list), the agent's row inside the box below the top
    * border, then its labelled rows (label in `text.muted`, value in
    * `text.primary`): provider and model (`default` for an unknown model),
    * task or brief, activity; or its question (in the attention kind's role);
@@ -1053,16 +1048,10 @@ export function drawSidebarCards(frame: Frame, region: Region, layout: SidebarCa
     const stale = model.agentsStale;
     const styled = (style: CellStyle): CellStyle => (stale ? { ...style, dim: true } : style);
     const border = styled(role(agentStatusRole(agent)));
-    if (line.part === 'bottom') {
-      drawText(frame, x, y, `└${'─'.repeat(cols - 2)}┘`, border, cols);
-      return;
-    }
-    const top = line.part === 'top';
-    drawText(frame, x, y, top ? '┌' : '│', border, 1);
-    drawText(frame, x + cols - 1, y, top ? '┐' : '│', border, 1);
+    if (drawBlockBorder(frame, x, y, cols, line.part, border)) return;
     const textCols = cols - 4;
     if (textCols <= 0) return;
-    if (top) {
+    if (line.part === 'title') {
       drawCardRow(frame, x + 2, y, textCols, agentRow(agent, true, cursor), theme);
       return;
     }
@@ -1080,6 +1069,20 @@ export function drawSidebarCards(frame: Frame, region: Region, layout: SidebarCa
       : line.label !== undefined ? labelled(line.label, [[line.text ?? '', primary]])
       : [[fitText(line.text ?? '', textCols), styled(role(agent.attention ? attentionRole(agent.attention) : 'text.muted'))]];
     drawRuns(frame, x + 2, y, runs, textCols);
+  }
+
+  /**
+   * An expanded block's border on its row: the whole `┌─┐` or `└─┘` line on its top or bottom row (true: nothing else
+   * goes there), else its `│` sides, in `border`.
+   */
+  function drawBlockBorder(frame: Frame, x: number, y: number, cols: number, part: BlockPart, border: CellStyle): boolean {
+    if (part === 'top' || part === 'bottom') {
+      drawText(frame, x, y, part === 'top' ? `┌${'─'.repeat(cols - 2)}┐` : `└${'─'.repeat(cols - 2)}┘`, border, cols);
+      return true;
+    }
+    drawText(frame, x, y, '│', border, 1);
+    drawText(frame, x + cols - 1, y, '│', border, 1);
+    return false;
   }
 
   /**
@@ -1138,7 +1141,7 @@ export function localStatusRole(session: LocalAgent): StatusRole {
 
 /**
  * Whether `line` is the keys' cursor row (the caller checks its card is the focused one); an expanded agent's is its
- * block's top row, none while the cursor is on its buttons (drawn with a marker instead).
+ * block's title row, none while the cursor is on its buttons (drawn with a marker instead).
  */
 function isCursorLine(layout: SidebarCardsLayout, line: CardLine): boolean {
   switch (line.kind) {
@@ -1147,7 +1150,7 @@ function isCursorLine(layout: SidebarCardsLayout, line: CardLine): boolean {
     case 'newAgent': return layout.onButton;
     case 'project': return !layout.onButton && line.index === layout.projectIndex;
     case 'agent': return !layout.onButton && line.index === layout.agentIndex;
-    case 'block': return !layout.onButton && layout.agentButton === null && line.part === 'top' && line.index === layout.agentIndex;
+    case 'block': return !layout.onButton && layout.agentButton === null && line.part === 'title' && line.index === layout.agentIndex;
     default: return false;
   }
 }

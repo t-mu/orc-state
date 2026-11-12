@@ -105,14 +105,16 @@ Canonical: [contracts.md → Local Control API](contracts.md#local-control-api).
 
 ### Cockpit keys
 
-Per user, for every project: the cockpit (`orc start-session`, `orc cockpit`) reads them when it starts and keeps them while it runs; a cockpit that takes over from another reads them anew (see [cli.md](cli.md)). Key names are tmux's (`F1`–`F12`, optional `C-`/`M-`/`S-` modifiers; `C-a` is Ctrl-a, `M-1` Alt-1). An invalid name or entry is reported as a warning and the default is kept.
+Per user, for every project: the cockpit (`orc start-session`, `orc cockpit`) reads them when it starts and keeps them while it runs; a cockpit that takes over from another reads them anew (see [cli.md](cli.md)). Key names are tmux's (`F1`–`F12`, `Space`, optional `C-`/`M-`/`S-` modifiers; `C-a` is Ctrl-a, `C-Space` Ctrl-Space, `M-1` Alt-1). An invalid name or entry is reported as a warning and the default is kept.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ORC_COCKPIT_PREFIX` | The cockpit's prefix: prefix + `d` quit, `o` switch the keys between the pane and the sidebar, `n`/`p` next/previous tab, `1`–`9` select a tab, `&` close the active agent tab (only the view), `N`/`P` next/previous project, `t` the task explorer (all of the active project); pressed twice it reaches the pane | `F12` |
-| `ORC_COCKPIT_KEYS` | Direct keys (no prefix), comma-separated `<action>=<key>`, overriding only the actions named: `tab1`–`tab9` select that tab of the active project, `dashboard` focuses the sidebar, `attention` shows the next agent needing attention, `quit` quits the cockpit. `none` unbinds one. A direct key must be a function key or carry `C-` or `M-`; one that repeats the prefix or another action's key is dropped | `tab1=F1,…,tab9=F9,dashboard=F10,attention=F11,quit=C-q` |
+| `ORC_COCKPIT_PREFIX` | The cockpit's leader. After it the next key is a cockpit command: `←`/`h` previous tab, `→`/`l` next tab (both wrap), `1`–`9` tab N, `Tab`/`Shift-Tab` next/previous container (the focus ring pane → tab strip → sidebar → pane), `s` the sidebar (from the sidebar: the pane), `p` the pane, `w` close the current tab (only the view; the master tab stays), `t` a new shell tab, `a` the new-agent dialog, `n`/`N` next/previous project, `e` the task explorer, `,` the settings dialog (all of the active project), `!` the next agent needing attention, `i` start or stop typing on the shown worker or scout tab, `?` the help dialog, `q` quit. The leader stays armed after `←`/`→`/`h`/`l`, `Tab` and `Shift-Tab`, so they repeat, and disarms after any other command, `Esc`, an unbound key (dropped, never sent to the pane) or about a second without a key; while armed the footer shows `LEADER` and its main keys. Pressed twice it reaches the pane (only a tab that types) | `C-Space` |
+| `ORC_COCKPIT_KEYS` | Direct keys (no leader), comma-separated `<action>=<key>`, overriding only the actions named: `tab1`–`tab9` select that tab of the active project, `dashboard` toggles the sidebar, `attention` shows the next agent needing attention, `quit` quits the cockpit. `none` unbinds one. A direct key must be a function key or carry `C-` or `M-`; one that repeats the leader or another action's key is dropped | `tab1=F1,…,tab9=F9,dashboard=F10,attention=F11` (no quit key: `quit=C-q` binds one) |
 
-Example: `ORC_COCKPIT_PREFIX=C-a ORC_COCKPIT_KEYS='dashboard=F12,attention=none' orc start-session`.
+Example: `ORC_COCKPIT_PREFIX=C-a ORC_COCKPIT_KEYS='dashboard=F12,attention=none,quit=C-q' orc start-session`.
+
+Ctrl-Space reaches the cockpit as a NUL byte. Where the system takes it first (macOS switches input sources with it by default), set another leader, for example `ORC_COCKPIT_PREFIX=F12`.
 
 ### Cockpit theme
 

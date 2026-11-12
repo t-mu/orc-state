@@ -6,9 +6,10 @@ import { CLOSE_MARKER, TAB_GAP, buildTabBarModel, layoutTabBar, tabBarClickTarge
 import { computeLayout } from './app.ts';
 import { DEFAULT_STYLE, createFrame, type Frame } from './frame.ts';
 import { BUILT_IN_THEMES, attentionRole, badgeRole, styleOf } from './theme.ts';
+import { LEADER_NOTICE } from './dispatch.ts';
 import { INITIAL_SIDEBAR_NAV, drawSidebarCards, sidebarCardsLayout, type SidebarNav } from './sidebarCards.ts';
 import {
-  EXPLORER_TAB, PLUS_LABEL, TYPING_MARK, VIEW_MARK, HEADER_MARK, drawFooter, drawHeader, drawTabBar, headerButtonAt, headerView,
+  EXPLORER_TAB, PLUS_LABEL, TAB_HIGHLIGHT_MARK, TYPING_MARK, VIEW_MARK, HEADER_MARK, drawFooter, drawHeader, drawTabBar, headerButtonAt, headerView,
   onPlusTab, tabBarView, withExplorerTab, withModeMarks, type FooterHint, type HeaderButton,
 } from './widgets.ts';
 
@@ -312,6 +313,36 @@ describe('the + tab and shell tabs', () => {
     expect(frame.cells[x].style.fg).toEqual(inactive.bg);
   });
 
+  it('marks the tab strip\'s highlighted tab or + with ▸ in chrome.borderFocus and an underlined label, not by colour alone', () => {
+    const theme = BUILT_IN_THEMES.orc;
+    const bar = tabBarView(buildTabBarModel(TABS), 80, true);
+    const draw = (highlight: number | 'plus' | null) => {
+      const frame = createFrame(80, 4);
+      drawTabBar(frame, { x: 0, y: 0, cols: 80, rows: 4 }, bar, { slotFocused: false, error: null, highlight, theme });
+      return frame;
+    };
+    expect(rowText(draw(null), 1)).not.toContain(TAB_HIGHLIGHT_MARK);
+    // The third tab (an inactive one): the mark in its block's first column.
+    const second = bar.layout.cells.find((cell) => cell.index === 2)!;
+    const frame = draw(2);
+    expect(frame.cells[80 + second.x].text).toBe(TAB_HIGHLIGHT_MARK);
+    expect(rowText(frame, 1).split(TAB_HIGHLIGHT_MARK)).toHaveLength(2);
+    const mark = frame.cells[80 + second.x].style;
+    expect(mark.fg).toEqual(styleOf(theme, 'chrome.borderFocus').fg);
+    expect(mark.bg).toEqual(styleOf(theme, 'tab.inactive').bg);
+    expect(frame.cells[80 + second.x + 2].style.underline).toBe(true);
+    expect(frame.cells[80 + bar.layout.cells[0].x + 2].style.underline).toBe(false);
+    // In mono the mark and the underline still show it.
+    const mono = createFrame(80, 4);
+    drawTabBar(mono, { x: 0, y: 0, cols: 80, rows: 4 }, bar, { slotFocused: false, error: null, highlight: 2, theme: BUILT_IN_THEMES.mono });
+    expect(mono.cells[80 + second.x].text).toBe(TAB_HIGHLIGHT_MARK);
+    expect(mono.cells[80 + second.x + 2].style.underline).toBe(true);
+    // The + tab.
+    const plus = draw('plus');
+    expect(rowText(plus, 1, bar.plus!.x, PLUS_LABEL.length)).toBe(`${TAB_HIGHLIGHT_MARK}+ `);
+    expect(plus.cells[80 + bar.plus!.x + 1].style.underline).toBe(true);
+  });
+
   it('labels shell tabs shell N, with no mode mark', () => {
     const model = withModeMarks(buildTabBarModel({ activeProject: 'p1', projects: [{ projectId: 'p1', tabs: ['w3', 'shell:2'], active: 'shell:2' }] }), () => false);
     expect(model.tabs.map((tab) => tab.label)).toEqual(['master', `${VIEW_MARK} w3`, 'shell 2']);
@@ -410,6 +441,12 @@ describe('drawFooter', () => {
     expect(cellAt(' › ').style).toEqual(styleOf(CLASSIC, 'text.muted'));
     expect(cellAt('Ctrl-q').style).toEqual(styleOf(CLASSIC, 'text.accent'));
     expect(cellAt(': quit').style).toEqual(styleOf(CLASSIC, 'text.muted'));
+  });
+
+  it('shows LEADER and its main keys first while the leader is armed, cut last as any mode', () => {
+    expect(footer(80, LEADER_NOTICE).line).toBe(`${LEADER_NOTICE} · 日本語プロジェクト › … · Ctrl-q: quit`);
+    expect(footer(60, LEADER_NOTICE).line).toBe(`${LEADER_NOTICE} · Ctrl-q: quit`);
+    expect(footer(30, LEADER_NOTICE).line).toMatch(/^LEADER ←→ tab · Tab focus .*…$/);
   });
 
   it('draws nothing into a dropped footer', () => {

@@ -1130,7 +1130,7 @@ describe('cli/start-session.ts', () => {
       await import('./start-session.ts');
 
       expect(tmuxFake.cockpitLaunches).toEqual([expect.objectContaining({ projectId: process.env.ORC_PROJECT_ID })]);
-      expect(tmuxFake.cockpitLaunches[0].keys.prefix).toBe('F12');
+      expect(tmuxFake.cockpitLaunches[0].keys).toMatchObject({ prefix: 'C-Space', quit: null });
       expect(lines.join('\n')).toContain("Opening the cockpit on master 'master'");
       expect(lines.join('\n')).not.toContain('Asked the cockpit running in another terminal');
     });
@@ -1160,7 +1160,7 @@ describe('cli/start-session.ts', () => {
       expect(launch.keys.prefix).toBe('C-a');
       expect(launch.keys.direct).toMatchObject({ dashboard: 'F7', tab7: null, attention: 'F11' });
       expect(warnings.join('\n')).toContain("Warning: ORC_COCKPIT_KEYS: 'ö' cannot be the attention key");
-      expect(lines.join('\n')).toContain('Ctrl-a d: quit');
+      expect(lines.join('\n')).toContain('Ctrl-a q: quit');
     });
 
     /** start-session run with `ORC_COCKPIT_THEME=theme` (and no NO_COLOR): the cockpit launch and the warnings. */

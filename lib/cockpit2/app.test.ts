@@ -19,7 +19,7 @@ import type { PaneClient } from './sessions.ts';
 import type { PaneReport } from './tmuxControl.ts';
 import { DEFAULT_VIEW_STATE, addProject, type TmuxTarget } from './viewState.ts';
 import {
-  ESC, F12, FakeTerminal, FakeWatcher, MASTER_TARGET, MemoryStore, W1_TARGET, apps, projectState, shown, sidebarRows, sleep, slotRows, text,
+  ESC, FakeTerminal, LEADER, FakeWatcher, MASTER_TARGET, MemoryStore, W1_TARGET, apps, projectState, shown, sidebarRows, sleep, slotRows, text,
   waitFor, waitForFooter, waitForSidebar, waitForSlotLine, waitForSlotText, waitForTabBar,
 } from '../../test-fixtures/cockpitAppFakes.ts';
 
@@ -248,19 +248,22 @@ describe('slotMessage', () => {
 describe('footerHints', () => {
   it('names quit, dashboard and attention by the resolved keys', () => {
     expect(footerHints(DEFAULT_COCKPIT_KEYS)).toEqual([
-      { key: 'Ctrl-q', action: 'quit' }, { key: 'F10', action: 'dashboard' }, { key: 'F11', action: 'attention' },
+      { key: 'Ctrl-Space q', action: 'quit' }, { key: 'F10', action: 'dashboard' }, { key: 'F11', action: 'attention' }, { key: 'Ctrl-Space ?', action: 'help' },
     ]);
     const { keys } = resolveCockpitKeys({ ORC_COCKPIT_PREFIX: 'C-a', ORC_COCKPIT_KEYS: 'quit=M-x,dashboard=C-F5,attention=none' });
-    expect(footerHints(keys)).toEqual([{ key: 'Alt-x', action: 'quit' }, { key: 'Ctrl-F5', action: 'dashboard' }]);
-    // Without direct keys: the prefix then d, the prefix then o.
-    expect(footerHints({ ...keys, quit: null, direct: { ...keys.direct, dashboard: null } })).toEqual([{ key: 'Ctrl-a d', action: 'quit' }, { key: 'Ctrl-a o', action: 'dashboard' }]);
+    expect(footerHints(keys)).toEqual([
+      { key: 'Alt-x', action: 'quit' }, { key: 'Ctrl-F5', action: 'dashboard' }, { key: 'Ctrl-a !', action: 'attention' }, { key: 'Ctrl-a ?', action: 'help' },
+    ]);
+    // Without direct keys: the leader then q, the leader then s.
+    expect(footerHints({ ...keys, quit: null, direct: { ...keys.direct, dashboard: null } }).slice(0, 2))
+      .toEqual([{ key: 'Ctrl-a q', action: 'quit' }, { key: 'Ctrl-a s', action: 'dashboard' }]);
   });
 });
 
 describe('quitHint', () => {
-  it('names the quit key and the prefix then d, spelled out', () => {
-    expect(quitHint(DEFAULT_COCKPIT_KEYS)).toBe('Ctrl-q: quit · F12 d: quit');
-    expect(quitHint({ ...DEFAULT_COCKPIT_KEYS, prefix: 'C-a', quit: null })).toBe('Ctrl-a d: quit');
+  it('names the quit key (when bound) and the leader then q, spelled out', () => {
+    expect(quitHint(DEFAULT_COCKPIT_KEYS)).toBe('Ctrl-Space q: quit');
+    expect(quitHint({ ...DEFAULT_COCKPIT_KEYS, prefix: 'C-a', quit: 'C-q' })).toBe('Ctrl-q: quit · Ctrl-a q: quit');
   });
 });
 
@@ -450,7 +453,7 @@ describe('runApp (fake tmux client)', () => {
     // The cursor is where the pane has it, in frame coordinates.
     expect(screen.cursor()).toEqual({ x: 38, y: 6, visible: true });
     // The footer, full width on the last row: the mode, project › tab, the keys; the header: the mark and the project.
-    expect(text(screen, 23)).toBe('[master] keys go to the master · demo-project › master · Ctrl-q: quit');
+    expect(text(screen, 23)).toBe('[master] keys go to the master · demo-project › master · Ctrl-Space q: quit');
     expect(text(screen, 0)).toBe('ORC │ demo-project');
   });
 
@@ -459,7 +462,8 @@ describe('runApp (fake tmux client)', () => {
     await attached(terminal);
     terminal.resizeTo(140, 30);
     await waitFor(async () => text(await shown(terminal), 29).includes('Alt-a: attention'));
-    expect(text(await shown(terminal), 29)).toBe('[master] keys go to the master · demo-project › master · Ctrl-x: quit · Alt-d: dashboard · Alt-a: attention');
+    expect(text(await shown(terminal), 29))
+      .toBe('[master] keys go to the master · demo-project › master · Ctrl-x: quit · Alt-d: dashboard · Alt-a: attention · Ctrl-Space ?: help');
   });
 
   it('writes nothing while idle and coalesces a burst of output into few frames', async () => {
@@ -513,10 +517,10 @@ describe('runApp (fake tmux client)', () => {
     expect(client().pastes).toEqual(['%1 one\ntwo']);
   });
 
-  it('quits on Ctrl-q: the terminal is restored and the control client closed, nothing sent to the master', async () => {
+  it('quits on the leader then q: the terminal is restored and the control client closed, nothing sent to the master', async () => {
     const { terminal, client, app } = start();
     await attached(terminal);
-    terminal.type('\x11');
+    terminal.type(`${LEADER}q`);
     expect(await app.done).toBe('quit');
     expect(terminal.restored).toBe(1);
     expect(client().closed).toBe(1);
@@ -527,15 +531,29 @@ describe('runApp (fake tmux client)', () => {
     expect(terminal.writes.length).toBe(writes);
   });
 
-  it('quits on the prefix then d; the prefix twice reaches the pane', async () => {
+  it('sends Ctrl-q to the master (no quit key by default); the leader twice reaches the pane as NUL; an unbound key after it is dropped', async () => {
     const { terminal, client, app } = start();
     await attached(terminal);
-    terminal.type(`${F12}${F12}`);
-    terminal.type(`${F12}x`); // not in the prefix table: dropped
-    expect(client().sent).toEqual([`%1 ${F12}`]);
-    terminal.type(`${F12}d`);
+    terminal.type('\x11');
+    terminal.type(`${LEADER}${LEADER}`);
+    terminal.type(`${LEADER}x`); // not in the leader table: dropped
+    expect(client().sent).toEqual(['%1 \x11', `%1 ${LEADER}`]);
+    terminal.type(`${LEADER}q`);
     await app.done;
     expect(client().closed).toBe(1);
+  });
+
+  it('shows LEADER and its keys in the footer while the leader is armed, and the mode again once it disarms', async () => {
+    const { terminal } = start();
+    await attached(terminal);
+    terminal.type(LEADER);
+    await waitForFooter(terminal, 'LEADER ←→ tab · Tab focus · 1-9 · ? help');
+    terminal.type(ESC);
+    await waitForFooter(terminal, '[master] keys go to the master');
+    // It disarms by itself after about a second.
+    terminal.type(LEADER);
+    await waitForFooter(terminal, 'LEADER');
+    await waitForFooter(terminal, '[master] keys go to the master');
   });
 
   it('takes the quit key from the keys setting', async () => {
@@ -696,7 +714,7 @@ describe('runApp tabs and projects (fake tmux clients)', () => {
     const worker = clients[1];
     terminal.type(`hello\r${ESC}[A`);
     terminal.type(`${ESC}[200~pasted${ESC}[201~`);
-    terminal.type(`${F12}${F12}`);
+    terminal.type(`${LEADER}${LEADER}`);
     await sleep(40);
     expect(worker.sent).toEqual([]);
     expect(worker.pastes).toEqual([]);
@@ -753,9 +771,9 @@ describe('runApp tabs and projects (fake tmux clients)', () => {
     app.apply((state) => openAgent(state, 'demo', 'w1'));
     await waitForSlotLine(terminal, '$ hello from orc-w1');
     terminal.type('i');
-    terminal.type(`${F12}1`); // the master tab through the prefix table
+    terminal.type(`${LEADER}1`); // the master tab through the leader table
     await waitForSlotLine(terminal, '$ hello from orc-master');
-    terminal.type(`${F12}2`);
+    terminal.type(`${LEADER}2`);
     await waitForSlotLine(terminal, '$ hello from orc-w1');
     terminal.type('a'); // view mode again: dropped
     expect(clients[1].sent).toEqual([]);
@@ -770,25 +788,28 @@ describe('runApp tabs and projects (fake tmux clients)', () => {
     expect(clients.at(-1)!.sent).toEqual([]);
   });
 
-  it('runs the prefix table and direct keys: tabs, closing and projects', async () => {
+  it('runs the leader table and direct keys: tab walking that repeats, closing and projects', async () => {
     const { terminal, app } = start({ projects: [projectState('demo', { workers: [{ agent_id: 'w1', ...W1_TARGET }] }), projectState('other')] });
     await attached(terminal);
     app.apply((state) => openAgent(state, 'demo', 'w1'));
     await waitForSlotLine(terminal, '$ hello from orc-w1');
-    terminal.type(`${F12}n`);
+    terminal.type(`${LEADER}${ESC}[C`); // → wraps to the master
     expect(app.tabs().projects[0].active).toBe(null);
-    terminal.type(`${F12}p`);
+    terminal.type('l'); // still armed: → again
     expect(app.tabs().projects[0].active).toBe('w1');
+    terminal.type(`h${ESC}[D`); // ← twice
+    expect(app.tabs().projects[0].active).toBe('w1');
+    terminal.type('w'); // closes w1 and disarms
+    expect(app.tabs().projects[0].tabs).toEqual([]);
+    app.apply((state) => openAgent(state, 'demo', 'w1'));
     terminal.type(`${ESC}OP`); // F1: the master tab
     expect(app.tabs().projects[0].active).toBe(null);
-    terminal.type(`${F12}&`); // the master tab stays open
+    terminal.type(`${LEADER}w`); // the master tab stays open
     expect(app.tabs().projects[0].tabs).toEqual(['w1']);
-    terminal.type(`${ESC}OQ${F12}&`); // F2, then close it
-    expect(app.tabs().projects[0].tabs).toEqual([]);
     app.apply((state) => showProject(state, 'other'));
-    terminal.type(`${F12}N`);
+    terminal.type(`${LEADER}n`);
     expect(app.tabs().activeProject).toBe('demo');
-    terminal.type(`${F12}P`);
+    terminal.type(`${LEADER}N`);
     expect(app.tabs().activeProject).toBe('other');
   });
 
@@ -1157,7 +1178,7 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     const top = await sidebarRow(terminal, '[-] w1 ');
     terminal.type(click(5, await sidebarRow(terminal, '[ OPEN ]')));
     expect(app.tabs().projects[0]).toEqual({ projectId: 'demo', tabs: ['w1'], active: 'w1' });
-    // A click elsewhere on the block's top row collapses it, as one on its marker (one column further in, after the block's corner) does.
+    // A click elsewhere on the block's title row collapses it, as one on its marker (one column further in, after the block's side) does.
     terminal.type(click(10, top));
     await waitForSidebar(terminal, '[+] w1 ');
     terminal.type(click(2, await sidebarRow(terminal, '[+] w1 ')));
@@ -1167,14 +1188,14 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     expect(app.tabs().projects[0].active).toBe('w1');
   });
 
-  it('toggles the focus with the prefix then o, and a click in the slot gives it the keys', async () => {
+  it('toggles the focus with the leader then s, and a click in the slot gives it the keys', async () => {
     const { terminal, client } = withWorkers();
     await attached(terminal);
-    terminal.type(`${F12}o`);
+    terminal.type(`${LEADER}s`);
     await waitForFooter(terminal, 'Enter: open');
     let screen = await shown(terminal);
     expect(screen.cursor().visible).toBe(false); // the pane's cursor is not shown while the sidebar has the keys
-    terminal.type(`${F12}o`);
+    terminal.type(`${LEADER}s`);
     await waitForFooter(terminal, '[master]');
     terminal.type('a');
     expect(client().sent).toEqual(['%1 a']);
@@ -1186,10 +1207,122 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     expect(screen.cursor().visible).toBe(true);
   });
 
+  it('walks the container ring with the leader then Tab / Shift-Tab, which stay armed: pane, tab strip, sidebar, pane', async () => {
+    const { terminal, client } = withWorkers();
+    await attached(terminal);
+    /** Esc disarms the leader (the footer shows LEADER while it is armed) and leaves the focus as it is. */
+    const disarm = async () => { terminal.type(ESC); await sleep(40); };
+    terminal.type(`${LEADER}\t`);
+    await waitForFooter(terminal, 'LEADER ←→ tab');
+    await disarm();
+    await waitForFooter(terminal, '[tabs]');
+    terminal.type(`${LEADER}\t`);
+    await disarm();
+    await waitForFooter(terminal, 'Enter: open');
+    terminal.type(`${LEADER}\t\t\t`); // round the ring: pane, tab strip, sidebar
+    await disarm();
+    await waitForFooter(terminal, 'Enter: open');
+    terminal.type(`${LEADER}\t`);
+    await disarm();
+    await waitForFooter(terminal, '[master]');
+    terminal.type(`${LEADER}${ESC}[Z`); // Shift-Tab: back to the sidebar, then the tab strip
+    terminal.type(`${ESC}[Z`);
+    await disarm();
+    await waitForFooter(terminal, '[tabs]');
+    terminal.type(`${LEADER}p`); // the pane, disarming
+    await waitForFooter(terminal, '[master]');
+    terminal.type('a');
+    expect(client().sent).toEqual(['%1 a']);
+    // F10 still toggles the sidebar, from the tab strip too.
+    terminal.type(`${LEADER}\t`);
+    await disarm();
+    await waitForFooter(terminal, '[tabs]');
+    terminal.type(F10);
+    await waitForFooter(terminal, 'Enter: open');
+    terminal.type(F10);
+    await waitForFooter(terminal, '[master]');
+  });
+
+  it('moves a highlight over the tab strip with ←/→; Enter shows the tab, w closes it, Esc returns to the pane; no key reaches the pane', async () => {
+    const { terminal, client, app } = withWorkers();
+    await attached(terminal);
+    app.apply((state) => openAgent(state, 'demo', 'w1'));
+    await waitForSlotLine(terminal, '$ hello from orc-w1');
+    terminal.type(`${LEADER}\t`);
+    terminal.type(ESC); // disarms; the tab strip keeps the keys
+    await sleep(40);
+    await waitForFooter(terminal, '[tabs] ←→ · Enter: show · w: close · Esc: pane');
+    // The highlight starts on the shown tab.
+    await waitForTabBar(terminal, 1, '▸');
+    const row = computeLayout(terminal.cols, terminal.rows).tabBar.y + 1;
+    const marker = async () => text(await shown(terminal), row, SIDEBAR_COLS).indexOf('▸');
+    const onW1 = await marker();
+    expect(text(await shown(terminal), row, SIDEBAR_COLS).slice(onW1)).toContain('w1');
+    terminal.type(`${ESC}[D`);
+    await waitFor(async () => (await marker()) < onW1);
+    terminal.type('ab\x03');
+    expect(client().sent).toEqual([]);
+    terminal.type('\r'); // shows the master and gives it the keys
+    await waitForFooter(terminal, '[master]');
+    expect(app.tabs().projects[0].active).toBeNull();
+    await waitFor(async () => (await marker()) < 0);
+    terminal.type(`${LEADER}\t`);
+    terminal.type(ESC);
+    await sleep(40);
+    await waitForFooter(terminal, '[tabs]');
+    terminal.type(`${ESC}[C`);
+    terminal.type('w'); // closes w1, only the view
+    expect(app.tabs().projects[0].tabs).toEqual([]);
+    terminal.type(`${ESC}[B`); // ↓: back to the pane
+    await waitForFooter(terminal, '[master]');
+    expect(client().sent).toEqual([]);
+  });
+
+  it('starts and stops typing on the shown worker tab with the leader then i; nothing on the master', async () => {
+    const { terminal, clients, app } = withWorkers();
+    await attached(terminal);
+    terminal.type(`${LEADER}i`);
+    await sleep(30);
+    await waitForFooter(terminal, '[master]');
+    app.apply((state) => openAgent(state, 'demo', 'w1'));
+    await waitForSlotLine(terminal, '$ hello from orc-w1');
+    terminal.type(`${LEADER}i`);
+    await waitForFooter(terminal, '[typing]');
+    terminal.type('a');
+    expect(clients[1].sent).toEqual(['%2 a']);
+    terminal.type(`${LEADER}i`);
+    await waitForFooter(terminal, '[view]');
+    terminal.type('b');
+    expect(clients[1].sent).toEqual(['%2 a']);
+    expect(clients[0].sent).toEqual([]);
+  });
+
+  it('opens the help dialog with the leader then ?, listing the configured keys; it scrolls, takes every key and closes on Esc', async () => {
+    const { terminal, client } = withWorkers();
+    await attached(terminal);
+    const screenText = async () => {
+      const screen = await shown(terminal);
+      return Array.from({ length: terminal.rows }, (_, y) => text(screen, y)).join('\n');
+    };
+    terminal.type(`${LEADER}?`);
+    await waitFor(async () => (await screenText()).includes('Leader: Ctrl-Space, then'));
+    const before = await screenText();
+    expect(before).toContain('HELP');
+    expect(before).toContain('quit the cockpit');
+    terminal.type('jjjj');
+    await waitFor(async () => !(await screenText()).includes('Leader: Ctrl-Space, then'));
+    terminal.type('a');
+    terminal.type(ESC);
+    await waitFor(async () => !(await screenText()).includes('HELP'));
+    expect(client().sent).toEqual([]);
+    terminal.type('x');
+    expect(client().sent).toEqual(['%1 x']);
+  });
+
   it('shows why a tab transition was refused until the next key', async () => {
     const { terminal, app } = withWorkers();
     await attached(terminal);
-    terminal.type(`${F12}&`);
+    terminal.type(`${LEADER}w`);
     await waitForTabBar(terminal, 1, 'The master tab stays open');
     terminal.type('x');
     for (let until = Date.now() + 2_000; text(await shown(terminal), 2, SIDEBAR_COLS).includes('stays open'); await sleep(25)) {
@@ -1301,7 +1434,7 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     shellClient('shell-demo-2')!.emit('exit', 'session closed');
     await waitFor(() => !app.tabs().projects[0].tabs.includes('shell:2'));
     // × on shell 1 closes the tab and stops its session.
-    terminal.type(`${F12}2`);
+    terminal.type(`${LEADER}2`);
     await attached(terminal, 'shell-demo-1');
     const row = text(await shown(terminal), 2);
     terminal.type(click(row.indexOf('×', row.indexOf('shell 1')), 2));
@@ -1328,13 +1461,13 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     expect(text(await shown(terminal), 2, SIDEBAR_COLS)).not.toContain('+');
   });
 
-  it('opens the explorer as a tab on the prefix then t, forwards its keys, and closes it on q back to the active tab', async () => {
+  it('opens the explorer as a tab on the leader then e, forwards its keys, and closes it on q back to the active tab', async () => {
     const host = new FakeExplorerHost();
     const { terminal, clients, app } = start({ explorer: host });
     await attached(terminal);
     await waitForHeader(terminal, 'tasks');
     const before = app.tabs();
-    terminal.type(`${F12}t`);
+    terminal.type(`${LEADER}e`);
     await attached(terminal, 'explorer-demo');
     expect(host.started).toEqual(['demo 43x16']);
     const fake = explorerClient(clients)!;
@@ -1348,8 +1481,8 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     terminal.type(`j${ESC}[Bi\r`);
     await waitFor(() => fake.sent.length === 4);
     expect(fake.sent).toEqual([`${fake.paneId} j`, `${fake.paneId} ${ESC}[B`, `${fake.paneId} i`, `${fake.paneId} \r`]);
-    // The prefix then t again keeps it.
-    terminal.type(`${F12}t`);
+    // The leader then e again keeps it.
+    terminal.type(`${LEADER}e`);
     expect(host.started).toHaveLength(1);
     // Ctrl-] closes it: its session is killed and the master shown again, the tabs as they were.
     terminal.type('\x1d');
@@ -1379,16 +1512,16 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     expect(host.stopped).toHaveLength(1);
 
     // A tab change while the explorer is shown shows that tab and ends the explorer.
-    terminal.type(`${F12}t`);
+    terminal.type(`${LEADER}e`);
     await attached(terminal, 'explorer-demo');
-    terminal.type(`${F12}1`);
+    terminal.type(`${LEADER}1`);
     await attached(terminal);
     expect(app.tabs().projects[0].active).toBeNull();
     expect(host.stopped).toHaveLength(2);
     // Its own number keeps it shown.
-    terminal.type(`${F12}t`);
+    terminal.type(`${LEADER}e`);
     await attached(terminal, 'explorer-demo');
-    terminal.type(`${F12}3`);
+    terminal.type(`${LEADER}3`);
     expect(host.stopped).toHaveLength(2);
   });
 
@@ -1397,7 +1530,7 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     host.failWith = new Error('no server running on /tmp/tmux-1000/orc-explorer');
     const { terminal, clients, app } = start({ explorer: host });
     await attached(terminal);
-    terminal.type(`${F12}t`);
+    terminal.type(`${LEADER}e`);
     await waitForSlotText(terminal, 'The task explorer did not start.');
     await waitForSlotText(terminal, 'no server running');
     terminal.type('q');
@@ -1405,13 +1538,13 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     expect(host.stopped).toEqual([]); // no session was started
 
     host.failWith = null;
-    terminal.type(`${F12}t`);
+    terminal.type(`${LEADER}e`);
     await attached(terminal, 'explorer-demo');
     explorerClient(clients)!.emit('exit', 'session closed');
     await attached(terminal);
     expect(host.stopped).toHaveLength(1);
 
-    terminal.type(`${F12}t`);
+    terminal.type(`${LEADER}e`);
     await waitFor(() => clients.filter((fake) => fake.target.session === 'explorer-demo').length === 2);
     await attached(terminal, 'explorer-demo');
     app.quit();
@@ -1423,7 +1556,7 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     const { terminal, clients, app } = start({ explorer: host });
     await attached(terminal);
     const before = app.tabs();
-    terminal.type(`${F12}t`);
+    terminal.type(`${LEADER}e`);
     await attached(terminal, 'explorer-demo');
     const fake = explorerClient(clients)!;
     // Enter opens a task's detail; Esc (back to the list) reaches the explorer and the tab stays.
@@ -1449,7 +1582,7 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     const host = new FakeExplorerHost();
     const { terminal, clients } = start({ explorer: host });
     await attached(terminal);
-    terminal.type(`${F12}t`);
+    terminal.type(`${LEADER}e`);
     await attached(terminal, 'explorer-demo');
     const fake = explorerClient(clients)!;
     const release = holdSends(fake);
@@ -1467,7 +1600,7 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     const host = new FakeExplorerHost();
     const { terminal, clients } = start({ explorer: host });
     await attached(terminal);
-    terminal.type(`${F12}t`);
+    terminal.type(`${LEADER}e`);
     await attached(terminal, 'explorer-demo');
     const fake = explorerClient(clients)!;
     const release = holdSends(fake);
@@ -1487,7 +1620,7 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     host.hold = new Promise((resolve) => { started = resolve; });
     const { terminal, app } = start({ explorer: host });
     await attached(terminal);
-    terminal.type(`${F12}t`);
+    terminal.type(`${LEADER}e`);
     await waitFor(() => host.started.length === 1);
     app.quit();
     let done = false;
@@ -1527,7 +1660,7 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     await attached(terminal, 'orc-w1');
     terminal.type('i');
     await waitForFooter(terminal, '[typing]');
-    terminal.type(`${F12}t`);
+    terminal.type(`${LEADER}e`);
     await attached(terminal, 'explorer-demo');
     terminal.type('\x1d');
     await attached(terminal, 'orc-w1');
@@ -1548,7 +1681,7 @@ describe('runApp task explorer and attention jump (fake tmux clients)', () => {
     const { terminal } = start();
     await attached(terminal);
     expect(text(await shown(terminal), 0)).not.toContain('tasks');
-    terminal.type(`${F12}t`);
+    terminal.type(`${LEADER}e`);
     await waitForTabBar(terminal, 1, 'This cockpit has no task explorer.');
   });
 

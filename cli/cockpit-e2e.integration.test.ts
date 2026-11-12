@@ -40,7 +40,8 @@ const HOST = 'orc-e2e-host';
 const HOST_COLS = 140;
 const HOST_ROWS = 40;
 const ESC = '\x1b';
-const F12 = `${ESC}[24~`;
+/** Ctrl-Space, the cockpit's leader: a NUL byte. */
+const LEADER = '\x00';
 const QUESTION = 'Which table holds the sessions?';
 
 /**
@@ -340,11 +341,11 @@ describe.skipIf(!tmuxOk)('orc cockpit end to end, in a host tmux pane', () => {
     expect(received('worker')).toBe(`hello${paste}z`);
     expect(received('master')).toBe('');
 
-    // Beta from the sidebar and back with the prefix: beta is stopped, alpha comes back with the worker's tab active.
+    // Beta from the sidebar and back with the leader (previous project): beta is stopped, alpha comes back with the worker's tab active.
     clickSidebar(beta.name);
     await waitFor('beta in the slot', () => !screen().includes('AGENT worker-a READY') && screen().includes('orc start-session'));
     await waitFor('beta saved as active', () => savedTabs().activeProject === beta.id);
-    send(`${F12}P`);
+    send(`${LEADER}N`);
     await waitFor('the worker\'s tab back in the slot', () => screen().includes('AGENT worker-a READY'));
     expect(savedTabs().projects.find((project) => project.projectId === alpha.id)).toMatchObject({ tabs: ['worker-a'], active: 'worker-a' });
     // The tab left returned to view mode: keys do not reach the worker.
@@ -354,7 +355,7 @@ describe.skipIf(!tmuxOk)('orc cockpit end to end, in a host tmux pane', () => {
     expect(received('worker')).toBe(`hello${paste}z`);
 
     // Quitting ends the cockpit only: both agents keep running.
-    send('\x11');
+    send(`${LEADER}q`);
     await waitFor('the cockpit to exit', () => screen().includes('COCKPIT-EXIT 0'));
     for (const agent of ['master', 'worker-a']) expect(tmux(tmuxSocketName(dir), ['has-session', '-t', `=${tmuxSessionName(agent)}`]).status).toBe(0);
   }, 90_000);
@@ -378,7 +379,7 @@ describe.skipIf(!tmuxOk)('orc cockpit end to end, in a host tmux pane', () => {
     const coloured = chromeCells(styledScreen()).filter(({ cell }) => cell.fg !== null || cell.bg !== null);
     expect(coloured.map(({ where, cell }) => `${where} ${JSON.stringify(cell)}`), screen()).toEqual([]);
 
-    send('\x11');
+    send(`${LEADER}q`);
     await waitFor('the cockpit to exit', () => screen().includes('COCKPIT-EXIT 0'));
   }, 60_000);
 
@@ -393,7 +394,7 @@ describe.skipIf(!tmuxOk)('orc cockpit end to end, in a host tmux pane', () => {
     expect(borders.length, screen()).toBeGreaterThan(0);
     expect(borders.every(({ cell }) => /[─│┌┐└┘├┤ ]/.test(cell.text)), JSON.stringify(borders.filter(({ cell }) => !/[─│┌┐└┘├┤ ]/.test(cell.text)))).toBe(true);
 
-    send('\x11');
+    send(`${LEADER}q`);
     await waitFor('the cockpit to exit', () => screen().includes('COCKPIT-EXIT 0'));
   }, 60_000);
 
@@ -417,7 +418,7 @@ describe.skipIf(!tmuxOk)('orc cockpit end to end, in a host tmux pane', () => {
     expect(received('master')).toBe('');
     expect(received('worker')).not.toContain('echo hi');
 
-    send('\x11');
+    send(`${LEADER}q`);
     await waitFor('the cockpit to exit', () => screen().includes('COCKPIT-EXIT 0'));
   }, 60_000);
 });

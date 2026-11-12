@@ -7,6 +7,8 @@ import { SIDEBAR_COLS, computeLayout, type App } from '../lib/cockpit2/app.ts';
 // Fakes and wait helpers shared by app.test.ts and app.integration.test.ts.
 export const ESC = '\x1b';
 export const F12 = `${ESC}[24~`;
+/** Ctrl-Space, the default leader: a NUL byte. */
+export const LEADER = '\x00';
 export async function waitFor(check: () => boolean | Promise<boolean>, ms = 5_000): Promise<void> {
   const until = Date.now() + ms;
   while (!(await check())) {
