@@ -70,20 +70,40 @@ export function explorerCommand(orc: string[], projectId: string): string {
   return `unset ${PROJECT_ENV.join(' ')}; ${[...orc, 'cockpit', 'explorer', `--project=${projectId}`].map(shellQuote).join(' ')}`;
 }
 
+/** Runs a command and calls back with its outcome, as `execFile` does (injectable in tests). */
+export type RunCommand = (file: string, args: string[], options: { env: NodeJS.ProcessEnv; encoding: 'utf8' },
+  callback: (error: Error | null, stdout: string, stderr: string) => void) => unknown;
+
+/** The command line that restarts `projectId`'s coordinator: `orc --project=<id> coordinator restart --json`. */
+export function coordinatorRestartCommand(orc: string[], projectId: string): { file: string; args: string[] } {
+  return { file: orc[0], args: [...orc.slice(1), `--project=${projectId}`, 'coordinator', 'restart', '--json'] };
+}
+
+/** Why a `--json` command failed: its JSON error's message (printed on stdout), else stderr's last line, else the exit error. */
+export function commandFailure(error: Error, stdout: string, stderr: string): string {
+  try {
+    const message = (JSON.parse(stdout) as { error?: { message?: unknown } }).error?.message;
+    if (typeof message === 'string' && message) return message;
+  } catch { /* not JSON */ }
+  return stderr.trim().split('\n').at(-1) || error.message;
+}
+
 /**
  * The settings dialog's host: a project's effective settings and project-scope
  * writes through the global registry (as `orc project config list|set
- * --project`), and a coordinator restart as `orc --project=<id> coordinator restart`.
+ * --project`), and a coordinator restart as `orc --project=<id> coordinator
+ * restart`, run without this process's project environment.
  */
-export function registrySettingsHost(orc: string[], registry: ProjectRegistry = new ProjectRegistry()): SettingsHost {
+export function registrySettingsHost(orc: string[], registry: ProjectRegistry = new ProjectRegistry(), run: RunCommand = execFile as unknown as RunCommand): SettingsHost {
   return {
     read: (projectId) => registry.effectiveSettings(projectId, {}, process.env),
     write: (projectId, key, value) => registry.setSetting(key, value, projectId),
     restartCoordinator: (projectId) => new Promise((resolve, reject) => {
       const env = { ...process.env };
       for (const key of PROJECT_ENV) delete env[key];
-      execFile(orc[0], [...orc.slice(1), `--project=${projectId}`, 'coordinator', 'restart', '--json'], { env, encoding: 'utf8' }, (error, _stdout, stderr) => {
-        if (error) reject(new Error(stderr.trim().split('\n').at(-1) || error.message));
+      const { file, args } = coordinatorRestartCommand(orc, projectId);
+      run(file, args, { env, encoding: 'utf8' }, (error, stdout, stderr) => {
+        if (error) reject(new Error(commandFailure(error, String(stdout ?? ''), String(stderr ?? ''))));
         else resolve();
       });
     }),

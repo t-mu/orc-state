@@ -82,7 +82,10 @@ export function openSettingsDialog(projectId: string, projectName: string, setti
     const value = asValue(settings[key]) ?? fallback;
     return { key, label, options: withValue(options, value), value, original: value, restart };
   };
-  const provider = asValue(settings['worker_pool.provider']) ?? 'codex';
+  // Unset, the worker pool falls back to the project-wide defaults, then to orc's (lib/providers.ts).
+  const defaultProvider = asValue(settings.default_provider) ?? 'codex';
+  const defaultMode = asValue(settings.default_execution_mode) ?? 'full-access';
+  const provider = asValue(settings['worker_pool.provider']) ?? defaultProvider;
   return {
     projectId, projectName, cursor: 0, error: null, busy: null,
     models: Object.fromEntries(PROVIDERS.map((name) => [name, asValue(settings[modelKey(name)] ?? settings['worker_pool.model'])])),
@@ -90,9 +93,9 @@ export function openSettingsDialog(projectId: string, projectName: string, setti
       field('worker_pool.max_workers', 'Max workers', Array.from({ length: MAX_WORKERS_LIMIT + 1 }, (_, n) => n), false, 0),
       field('coordinator.merge_strategy', 'Merge', ['direct', 'pr'], true, 'direct'),
       field('coordinator.pr_provider', 'PR provider', [null, 'github'], true),
-      field('worker_pool.provider', 'Default worker provider', PROVIDERS, false, 'codex'),
+      field('worker_pool.provider', 'Default worker provider', PROVIDERS, false, defaultProvider),
       modelField(settings, provider),
-      field('worker_pool.execution_mode', 'Execution mode', ['full-access', 'sandbox'], true, 'full-access'),
+      field('worker_pool.execution_mode', 'Execution mode', ['full-access', 'sandbox'], true, defaultMode),
     ],
   };
 }

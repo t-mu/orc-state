@@ -560,7 +560,11 @@ export function runApp(options: AppOptions): App {
       return;
     }
     if (update.type === 'removed' || update.type === 'added') registryError = null;
-    if (update.type === 'removed') watched.delete(update.project_id);
+    if (update.type === 'removed') {
+      watched.delete(update.project_id);
+      // Its settings dialog has nothing left to change.
+      if (dialog?.projectId === update.project_id) closeDialog();
+    }
     else if (update.type === 'added') watched.set(update.project_id, update.state);
     else {
       const state = watched.get(update.project_id);
@@ -920,6 +924,14 @@ export function runApp(options: AppOptions): App {
   // ── settings dialog ──
   /** The open settings dialog: it takes every key and click until it closes. */
   let dialog: SettingsDialogState | null = null;
+  /** Counts dialogs opened and closed, so a save that ends after its dialog closed leaves a newer one alone. */
+  let dialogGeneration = 0;
+
+  function closeDialog(): void {
+    dialog = null;
+    dialogGeneration++;
+    scheduleRender();
+  }
 
   /** Opens the settings dialog of `projectId` with its effective settings. */
   function openSettings(projectId: string): void {
@@ -931,6 +943,7 @@ export function runApp(options: AppOptions): App {
     }
     try {
       dialog = openSettingsDialog(projectId, watched.get(projectId)?.project.name ?? projectId, host.read(projectId));
+      dialogGeneration++;
     } catch (error) {
       refusal = `The settings could not be read: ${error instanceof Error ? error.message : String(error)}`;
     }
@@ -941,9 +954,10 @@ export function runApp(options: AppOptions): App {
   /** What a dialog key or click asked for: close, or save (and restart the coordinator). */
   async function runDialogAction(action: DialogAction): Promise<void> {
     if (!dialog || !action) return;
-    if (action === 'cancel') { dialog = null; scheduleRender(); return; }
+    if (action === 'cancel') { closeDialog(); return; }
     const host = options.settings!;
     const { projectId } = dialog;
+    const generation = dialogGeneration;
     try {
       dialog = { ...dialog, busy: 'Saving…', error: null };
       scheduleRender();
@@ -953,11 +967,13 @@ export function runApp(options: AppOptions): App {
         scheduleRender();
         await host.restartCoordinator(projectId);
       }
-      dialog = null;
+      if (generation === dialogGeneration) closeDialog();
     } catch (error) {
-      if (dialog) dialog = { ...dialog, busy: null, error: error instanceof Error ? error.message.split('\n')[0] : String(error) };
+      if (dialog && generation === dialogGeneration) {
+        dialog = { ...dialog, busy: null, error: error instanceof Error ? error.message.split('\n')[0] : String(error) };
+      }
+      scheduleRender();
     }
-    scheduleRender();
   }
 
   const matchDialog = keyMatcher(['Up', 'Down', 'Left', 'Right', 'Enter', 'Escape', 'Tab', 'BTab', 'Space', 'k', 'j', 'h', 'l', 'q']);

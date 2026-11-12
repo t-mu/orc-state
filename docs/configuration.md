@@ -155,6 +155,8 @@ orc project config unset worker_pool.max_workers
 
 For Claude models prefer the aliases `sonnet`, `opus`, `haiku`.
 
+The cockpit's settings dialog (the Project card's `[ SETTINGS ]`, [cockpit-design.md](cockpit-design.md)) edits a few of these at project scope: `worker_pool.max_workers`, `coordinator.merge_strategy`, `coordinator.pr_provider`, `worker_pool.provider`, `worker_pool.provider_models.<provider>` and `worker_pool.execution_mode`. The merge, PR provider and execution mode settings are read when the coordinator starts, so the dialog offers to restart it.
+
 These are the only supported keys. `set` rejects any other key; a key removed in 1.0 (`coordinator.run_inactive_timeout_ms`, `coordinator.run_inactive_escalate_ms`, `coordinator.session_start_max_attempts`, `coordinator.session_start_retry_delay_ms`) is ignored when stored, left out of `config list`/`get` (still shown by `config list --global` for the global scope), and can still be `unset`.
 
 ### Top level
