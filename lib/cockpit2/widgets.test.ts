@@ -118,8 +118,8 @@ describe('drawTabBar', () => {
     const { line, bar } = renderTabBar(80, 24);
     expect(bar.layout.hiddenLeft + bar.layout.hiddenRight).toBeGreaterThan(0);
     expect(bar.layout.cells.some((cell) => cell.index === 1)).toBe(true);
-    expect(stringWidth(line)).toBe(46);
-    expect(bar.layout).toEqual(layoutTabBar(bar.model, 46)); // nothing reserved for buttons or a hint
+    expect(stringWidth(line)).toBe(45);
+    expect(bar.layout).toEqual(layoutTabBar(bar.model, 45)); // nothing reserved for buttons or a hint
     expect(line).not.toContain('quit');
     expect(line).not.toContain('tasks');
   });
@@ -127,11 +127,11 @@ describe('drawTabBar', () => {
   it('shows an error instead of the tabs, and a notice without tabs', () => {
     const layout = computeLayout(80, 24);
     const frame = createFrame(80, 24);
-    drawTabBar(frame, layout.tabBar, tabBarView(buildTabBarModel(TABS), 46), { slotFocused: true, error: 'The master tab stays open.', theme: CLASSIC });
-    expect(rowText(frame, 2, 34, 46).trimEnd()).toBe('The master tab stays open.'); // the bar's label row
+    drawTabBar(frame, layout.tabBar, tabBarView(buildTabBarModel(TABS), 45), { slotFocused: true, error: 'The master tab stays open.', theme: CLASSIC });
+    expect(rowText(frame, 2, 35, 45).trimEnd()).toBe('The master tab stays open.'); // the bar's label row
     const empty = createFrame(80, 24);
-    drawTabBar(empty, layout.tabBar, tabBarView(buildTabBarModel({ activeProject: null, projects: [] }), 46), { slotFocused: true, error: null, theme: CLASSIC });
-    expect(rowText(empty, 2, 34, 46)).toContain('No project is open');
+    drawTabBar(empty, layout.tabBar, tabBarView(buildTabBarModel({ activeProject: null, projects: [] }), 45), { slotFocused: true, error: null, theme: CLASSIC });
+    expect(rowText(empty, 2, 35, 45)).toContain('No project is open');
   });
 });
 

@@ -30,6 +30,8 @@ export interface ViewState {
   tabs: CockpitTabState;
   /** Each project's master target as last seen from its running coordinator, by project id. */
   masterTargets: Record<string, TmuxTarget>;
+  /** The sidebar's width as the user dragged it; absent for the default. */
+  sidebarCols?: number;
 }
 
 export const DEFAULT_VIEW_STATE: ViewState = { tabs: EMPTY_COCKPIT_STATE, masterTargets: {} };
@@ -37,7 +39,8 @@ export const DEFAULT_VIEW_STATE: ViewState = { tabs: EMPTY_COCKPIT_STATE, master
 const VERSION = 1;
 
 export function serializeViewState(state: ViewState): string {
-  return `${JSON.stringify({ v: VERSION, ...state.tabs, masterTargets: state.masterTargets }, null, 2)}\n`;
+  const sidebar = state.sidebarCols === undefined ? {} : { sidebarCols: state.sidebarCols };
+  return `${JSON.stringify({ v: VERSION, ...state.tabs, masterTargets: state.masterTargets, ...sidebar }, null, 2)}\n`;
 }
 
 const isTarget = (value: unknown): value is TmuxTarget => {
@@ -49,15 +52,22 @@ const isTarget = (value: unknown): value is TmuxTarget => {
 export function parseViewState(raw: string | null | undefined): ViewState {
   const tabs = parseTabs(raw);
   if (!tabs) return DEFAULT_VIEW_STATE;
-  const stored = (JSON.parse(raw as string) as { masterTargets?: unknown }).masterTargets;
+  const parsed = JSON.parse(raw as string) as { masterTargets?: unknown; sidebarCols?: unknown };
+  const stored = parsed.masterTargets;
   const masterTargets: Record<string, TmuxTarget> = {};
   if (stored && typeof stored === 'object' && !Array.isArray(stored)) {
     for (const [projectId, target] of Object.entries(stored)) {
       if (isTarget(target)) masterTargets[projectId] = { socket: target.socket, session: target.session };
     }
   }
-  return { tabs, masterTargets };
+  const width = parsed.sidebarCols;
+  const sidebar = typeof width === 'number' && Number.isInteger(width) && width >= MIN_SIDEBAR_COLS && width <= MAX_SIDEBAR_COLS ? { sidebarCols: width } : {};
+  return { tabs, masterTargets, ...sidebar };
 }
+
+/** The range a dragged sidebar width is kept in. */
+export const MIN_SIDEBAR_COLS = 24;
+export const MAX_SIDEBAR_COLS = 60;
 
 export interface ViewStateStore {
   /** The stored state, or the defaults when the file is missing or corrupt. */

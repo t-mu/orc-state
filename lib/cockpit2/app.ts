@@ -97,7 +97,7 @@ import { highlightSelection, osc52, selectionText, type CellPoint, type Selectio
 import { Sessions, type ConnectPane, type PaneSession } from './sessions.ts';
 import type { TerminalSession } from './terminal.ts';
 import { TmuxControlClient } from './tmuxControl.ts';
-import { mergeProjects, type TmuxTarget, type ViewState, type ViewStateStore } from './viewState.ts';
+import { MAX_SIDEBAR_COLS, MIN_SIDEBAR_COLS, mergeProjects, type TmuxTarget, type ViewState, type ViewStateStore } from './viewState.ts';
 import {
   EXPLORER_LABEL, EXPLORER_TAB, drawFooter, drawHeader, drawTabBar, headerButtonAt, headerView, tabBarView,
   withExplorerTab, withModeMarks, type FooterHint, type HeaderButton,
@@ -110,6 +110,12 @@ import {
 // ── layout ────────────────────────────────────────────────────────────────────
 
 export const SIDEBAR_COLS = 34;
+/** The gutter between the sidebar and the tabs and pane: two columns from WIDE_COLS terminal columns, one from NARROW_COLS, else none. */
+export const GUTTER_COLS = 2;
+const WIDE_COLS = 100;
+const NARROW_COLS = 60;
+/** Two presses on the gutter within this many milliseconds reset the sidebar's width. */
+const DOUBLE_CLICK_MS = 400;
 export const TAB_BAR_ROWS = 4;
 /** The header (top) and footer (bottom) rows, full width; dropped (footer first) before the slot shrinks below its minimum. */
 export const HEADER_ROWS = 1;
@@ -120,7 +126,7 @@ const MIN_SLOT_ROWS = 3;
 /** Lines one wheel notch scrolls a pane's scrollback. */
 export const WHEEL_LINES = 3;
 
-export type RegionName = 'header' | 'sidebar' | 'tabBar' | 'slot' | 'footer';
+export type RegionName = 'header' | 'sidebar' | 'gutter' | 'tabBar' | 'slot' | 'footer';
 
 export interface Layout {
   cols: number;
@@ -129,6 +135,8 @@ export interface Layout {
   header: Region;
   /** Left, between the header and the footer. */
   sidebar: Region;
+  /** Between the sidebar and the tabs and pane: blank, and the handle that drags the sidebar's width. */
+  gutter: Region;
   /** Right, below the header and above the slot. */
   tabBar: Region;
   /** The rest: the active tab's screen (inside the pane frame when there is one). */
@@ -148,8 +156,12 @@ export interface Layout {
  * minimum go to the tabs' label row, then the header, then the tabs' other
  * rows, then the footer.
  */
-export function computeLayout(cols: number, rows: number): Layout {
-  const sidebarCols = Math.min(SIDEBAR_COLS, Math.max(0, cols - MIN_SLOT_COLS));
+export function computeLayout(cols: number, rows: number, sidebarWidth: number = SIDEBAR_COLS): Layout {
+  // The gap between the sidebar and the tabs and pane, narrower on a narrow terminal; it is also the divider's handle.
+  const gutterCols = cols >= WIDE_COLS ? GUTTER_COLS : cols >= NARROW_COLS ? 1 : 0;
+  const sidebarCols = Math.min(sidebarWidth, Math.max(0, cols - MIN_SLOT_COLS - gutterCols));
+  const gutter = sidebarCols > 0 ? gutterCols : 0;
+  const rightX = sidebarCols + gutter;
   let spare = Math.max(0, rows - MIN_SLOT_ROWS);
   // The tabs' label row, then the header, then the rest of the tabs' height, then the footer.
   let tabBarRows = Math.min(1, spare);
@@ -160,9 +172,9 @@ export function computeLayout(cols: number, rows: number): Layout {
   tabBarRows += fatRows;
   spare -= fatRows;
   const footerRows = Math.min(FOOTER_ROWS, spare);
-  const rightCols = Math.max(0, cols - sidebarCols);
+  const rightCols = Math.max(0, cols - rightX);
   const middleRows = Math.max(0, rows - headerRows - footerRows);
-  const slot = { x: sidebarCols, y: headerRows + tabBarRows, cols: rightCols, rows: Math.max(0, middleRows - tabBarRows) };
+  const slot = { x: rightX, y: headerRows + tabBarRows, cols: rightCols, rows: Math.max(0, middleRows - tabBarRows) };
   // The frame is a box around the slot: two columns and two rows.
   const framed = slot.cols - 2 >= MIN_SLOT_COLS && slot.rows - 2 >= MIN_SLOT_ROWS;
   return {
@@ -170,7 +182,8 @@ export function computeLayout(cols: number, rows: number): Layout {
     rows,
     header: { x: 0, y: 0, cols, rows: headerRows },
     sidebar: { x: 0, y: headerRows, cols: sidebarCols, rows: middleRows },
-    tabBar: { x: sidebarCols, y: headerRows, cols: rightCols, rows: tabBarRows },
+    gutter: { x: sidebarCols, y: headerRows, cols: gutter, rows: middleRows },
+    tabBar: { x: rightX, y: headerRows, cols: rightCols, rows: tabBarRows },
     slot: framed ? { x: slot.x + 1, y: slot.y + 1, cols: slot.cols - 2, rows: slot.rows - 2 } : slot,
     paneFrame: framed ? slot : null,
     footer: { x: 0, y: rows - footerRows, cols, rows: footerRows },
@@ -182,7 +195,7 @@ const inside = (region: Region, x: number, y: number) =>
 
 /** The region at frame cell (x, y) and the cell relative to that region; null outside every region. */
 export function hitTest(layout: Layout, x: number, y: number): { region: RegionName; x: number; y: number } | null {
-  for (const name of ['header', 'sidebar', 'tabBar', 'slot', 'footer'] as const) {
+  for (const name of ['header', 'sidebar', 'gutter', 'tabBar', 'slot', 'footer'] as const) {
     const region = layout[name];
     if (inside(region, x, y)) return { region: name, x: x - region.x, y: y - region.y };
   }
@@ -393,7 +406,12 @@ export function runApp(options: AppOptions): App {
   const connect: ConnectPane = options.connect
     ?? ((target, { ignoreSize }) => new TmuxControlClient({ tmuxBinary: options.tmuxBinary, socket: target.socket, session: target.session, ignoreSize }));
 
+  /** The sidebar's width as dragged (from the view state), or the default. */
+  let sidebarWidth = SIDEBAR_COLS;
   let layout = computeLayout(terminal.size().cols, terminal.size().rows);
+  /** The divider while it is dragged: the column the sidebar would end at, and the press that grabbed it. */
+  let dividerDrag: { x: number; pressX: number; startX: number } | null = null;
+  let lastGutterPress = 0;
   let prevFrame: Frame | null = null;
   let prevCursor: Cursor | null = null;
   let renderTimer: ReturnType<typeof setTimeout> | null = null;
@@ -410,6 +428,10 @@ export function runApp(options: AppOptions): App {
 
   // ── view state ──
   const loaded = store.load();
+  if (loaded.sidebarCols !== undefined) {
+    sidebarWidth = loaded.sidebarCols;
+    layout = computeLayout(terminal.size().cols, terminal.size().rows, sidebarWidth);
+  }
   let tabs = showProject(loaded.tabs, options.projectId).state;
   const masterTargets: ViewState['masterTargets'] = { ...loaded.masterTargets };
   let saving: Promise<void> = Promise.resolve();
@@ -431,7 +453,8 @@ export function runApp(options: AppOptions): App {
           const next = mergeProjects(tabs, stored.tabs);
           seen = { tabs: stored.tabs, synced: syncedActive };
           syncedActive = next.activeProject;
-          return { tabs: next, masterTargets: { ...stored.masterTargets, ...masterTargets } };
+          const sidebar = sidebarWidth === SIDEBAR_COLS ? {} : { sidebarCols: sidebarWidth };
+          return { tabs: next, masterTargets: { ...stored.masterTargets, ...masterTargets }, ...sidebar };
         }).then(() => { if (seen) adopt(seen.tabs, seen.synced); });
       })
       .then(() => { if (lastSaveError) { lastSaveError = null; scheduleRender(); } },
@@ -518,7 +541,7 @@ export function runApp(options: AppOptions): App {
       return;
     }
     if (!tab || !target) sessions.hideAll();
-    else sessions.show(tabKey(tab), target, tab.agentId === null, slotSize());
+    else sessions.show(tabKey(tab), target, true, slotSize());
     scheduleRender();
   }
 
@@ -671,6 +694,11 @@ export function runApp(options: AppOptions): App {
       if (selection?.moved && selection.key === shownKey()) highlightSelection(frame, layout.slot, screen, selection);
       cursor = slotCursor(screen, layout.slot, focus === 'slot');
     }
+    // The dragged divider's preview, last so the pane's screen does not cover it.
+    if (dividerDrag) {
+      const line = styleOf(theme, 'chrome.borderFocus');
+      for (let y = layout.gutter.y; y < layout.gutter.y + layout.gutter.rows; y += 1) drawText(frame, dividerDrag.x, y, '┃', line, 1);
+    }
     // Arrow keys reach the pane in the form its program asked for; checked on every render, so on tab switch and mode change.
     mirrorCursorKeys(screen ? screen.modes().applicationCursorKeys : false);
     if (prevFrame && prevCursor && framesEqual(prevFrame, frame) && sameCursor(prevCursor, cursor)) return;
@@ -820,6 +848,7 @@ export function runApp(options: AppOptions): App {
 
   /** Sidebar and tab bar clicks give the slot the keys, and so does a press in it; slot events go to onSlotMouse (mouse.ts routeSlotMouse). */
   const mouseHandlers: MouseHandlers = {
+    gutter: (event) => onDividerMouse(event),
     header: (event, at) => {
       if (!isClick(event)) return;
       const button = headerButtonAt(currentHeader(), at.x);
@@ -963,6 +992,7 @@ export function runApp(options: AppOptions): App {
         const event = parseSgrMouse(action.token);
         if (!event) return;
         const press = !event.motion && !event.release;
+        if (dividerDrag) { onDividerMouse(event); return; }
         // A grab whose release never came ends at the next press, which goes where it is.
         if ((slotGrab || selection?.dragging) && !press) {
           onSlotMouse(event);
@@ -1013,13 +1043,51 @@ export function runApp(options: AppOptions): App {
   // Run times in the sidebar change by the minute; a render with nothing changed writes nothing.
   const ticker = setInterval(scheduleRender, options.tickMs ?? 30_000);
   ticker.unref?.();
-  const stopResize = terminal.onResize(() => {
+  /** Lays the terminal out again (its size or the sidebar's width changed): the shown window follows the slot. */
+  function relayout(): void {
     const { cols, rows } = terminal.size();
-    layout = computeLayout(cols, rows);
+    layout = computeLayout(cols, rows, sidebarWidth);
     clearSelection();
     sessions.resize(slotSize());
     scheduleRender();
-  });
+  }
+  const stopResize = terminal.onResize(relayout);
+
+  /** The sidebar's width for the divider dragged to column `x`: kept in its range and leaving the slot its minimum. */
+  const clampSidebar = (x: number) => Math.max(MIN_SIDEBAR_COLS, Math.min(MAX_SIDEBAR_COLS, x));
+
+  /**
+   * The divider: a press on the gutter grabs it, motion moves a preview line,
+   * the release applies the width (the shown window is resized once, not on
+   * every motion) and saves it; a double press resets the default width.
+   */
+  function onDividerMouse(event: MouseEvent): void {
+    if (event.button !== 'left' && !event.release) return;
+    if (!dividerDrag) {
+      if (event.motion || event.release) return;
+      const now = Date.now();
+      if (now - lastGutterPress < DOUBLE_CLICK_MS) {
+        lastGutterPress = 0;
+        if (sidebarWidth !== SIDEBAR_COLS) { sidebarWidth = SIDEBAR_COLS; relayout(); save(); }
+        return;
+      }
+      lastGutterPress = now;
+      dividerDrag = { x: layout.sidebar.cols, pressX: event.x, startX: layout.sidebar.cols };
+      scheduleRender();
+      return;
+    }
+    // Relative to the press, so a click without motion keeps the width.
+    const moved = event.x - dividerDrag.pressX;
+    dividerDrag = { ...dividerDrag, x: moved === 0 ? dividerDrag.startX : clampSidebar(dividerDrag.startX + moved) };
+    if (event.release) {
+      const width = dividerDrag.x;
+      dividerDrag = null;
+      if (width !== layout.sidebar.cols) { sidebarWidth = width; relayout(); save(); }
+      else scheduleRender();
+      return;
+    }
+    scheduleRender();
+  }
 
   function quit(reason: AppExit = 'quit'): void {
     if (closed) return;

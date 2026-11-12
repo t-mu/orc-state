@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, u
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { DEFAULT_VIEW_STATE, addProject, createViewStateStore, mergeProjects, parseViewState, serializeViewState, type ViewState } from './viewState.ts';
+import { DEFAULT_VIEW_STATE, MAX_SIDEBAR_COLS, MIN_SIDEBAR_COLS, addProject, createViewStateStore, mergeProjects, parseViewState, serializeViewState, type ViewState } from './viewState.ts';
 
 const STATE: ViewState = {
   tabs: { activeProject: 'p2', projects: [{ projectId: 'p1', tabs: ['w1'], active: 'w1' }, { projectId: 'p2', tabs: [], active: null }] },
@@ -23,6 +23,21 @@ describe('mergeProjects', () => {
 describe('parseViewState', () => {
   it('reads back what serializeViewState wrote', () => {
     expect(parseViewState(serializeViewState(STATE))).toEqual(STATE);
+  });
+
+  it('round-trips the sidebar width, written only when set', () => {
+    expect(serializeViewState(STATE)).not.toContain('sidebarCols');
+    expect(parseViewState(serializeViewState({ ...STATE, sidebarCols: 42 }))).toEqual({ ...STATE, sidebarCols: 42 });
+    expect(parseViewState(serializeViewState({ ...STATE, sidebarCols: MIN_SIDEBAR_COLS })).sidebarCols).toBe(24);
+    expect(parseViewState(serializeViewState({ ...STATE, sidebarCols: MAX_SIDEBAR_COLS })).sidebarCols).toBe(60);
+  });
+
+  it('drops a sidebar width that is not an integer within 24..60', () => {
+    for (const width of [23, 61, 30.5, '40', null, -1]) {
+      const raw = serializeViewState(STATE).replace(/\n}\n$/, `,\n  "sidebarCols": ${JSON.stringify(width)}\n}\n`);
+      expect(JSON.parse(raw).sidebarCols, String(width)).toEqual(width);
+      expect(parseViewState(raw), String(width)).toEqual(STATE);
+    }
   });
 
   it('loads a missing, corrupt or foreign file as the defaults', () => {

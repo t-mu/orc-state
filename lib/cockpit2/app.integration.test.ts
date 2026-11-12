@@ -39,7 +39,7 @@ describe.skipIf(!hasTmux)('runApp (private tmux server)', () => {
       'env -i TERM=tmux-256color PS1="$ " LANG=C.UTF-8 sh');
     expect(created.status, created.stderr).toBe(0);
     const { terminal, app } = startReal([projectState('fake', { master: { socket, session } })]);
-    await waitFor(() => windowSize(session) === '44x16');
+    await waitFor(() => windowSize(session) === '43x16');
 
     // Typed bytes arrive and the output appears in the slot.
     await waitForSlotLine(terminal, '$');
@@ -48,12 +48,12 @@ describe.skipIf(!hasTmux)('runApp (private tmux server)', () => {
 
     // A resize re-lays out: the window follows the slot and the shell sees the new size.
     terminal.resizeTo(120, 40);
-    await waitFor(() => windowSize(session) === '84x32');
+    await waitFor(() => windowSize(session) === '82x32');
     // tmux applies the pane's new tty size a moment after the window's: ask again until the shell sees it.
-    await waitFor(() => tmux('display-message', '-p', '-t', `=${session}:`, '#{pane_width}x#{pane_height}').stdout.trim() === '84x32');
+    await waitFor(() => tmux('display-message', '-p', '-t', `=${session}:`, '#{pane_width}x#{pane_height}').stdout.trim() === '82x32');
     for (let attempt = 0; ; attempt++) {
       terminal.type('clear; stty size\r');
-      try { await waitForSlotLine(terminal, '32 84', 1_000); break; } catch (error) { if (attempt === 4) throw error; }
+      try { await waitForSlotLine(terminal, '32 82', 1_000); break; } catch (error) { if (attempt === 4) throw error; }
     }
     expect((await shown(terminal)).row(0).length).toBe(120);
 
@@ -75,27 +75,24 @@ describe.skipIf(!hasTmux)('runApp (private tmux server)', () => {
     expect(tmux('has-session', '-t', `=${session}`).status).toBe(0);
   }, 20_000);
 
-  it('switches between master and worker tabs without resizing the worker, and shows output written while a tab was hidden', async () => {
+  it('switches between master and worker tabs, the shown worker\'s window sized to the slot, and shows output written while a tab was hidden', async () => {
     const master = 'orc-master-tabs';
     const worker = 'orc-w1-tabs';
     for (const [session, size] of [[master, ['100', '30']], [worker, ['70', '15']]] as const) {
       const created = tmux('new-session', '-d', '-s', session, '-x', size[0], '-y', size[1], 'env -i TERM=tmux-256color PS1="$ " LANG=C.UTF-8 sh');
       expect(created.status, created.stderr).toBe(0);
     }
-    const before = windowSize(worker);
-    expect(before).toBe('70x15');
+    expect(windowSize(worker)).toBe('70x15');
     const { terminal, app } = startReal([projectState('fake', { master: { socket, session: master }, workers: [{ agent_id: 'w1', socket, session: worker }] })]);
-    await waitFor(() => windowSize(master) === '44x16');
+    await waitFor(() => windowSize(master) === '43x16');
     await waitForSlotLine(terminal, '$');
 
-    // The worker's tab: its screen keeps the worker's size inside the slot, the window is untouched.
+    // The worker's tab: its window is sized to the slot, so its screen fills it.
     tmux('send-keys', '-t', `=${worker}:`, 'echo worker-$((6*7))', 'Enter');
     app.apply((state) => openAgent(state, 'fake', 'w1'));
     await waitForSlotLine(terminal, 'worker-42');
-    expect(windowSize(worker)).toBe(before);
-    const workerRows = await slotRows(terminal);
-    expect(workerRows[0].length).toBeLessThanOrEqual(44);
-    expect(workerRows[15]).toBe(EDGE_ROW.repeat(44)); // the edge marker row under the 15-row screen
+    await waitFor(() => windowSize(worker) === '43x16');
+    await waitFor(async () => !(await slotRows(terminal)).includes(EDGE_ROW.repeat(43)));
 
     // Output written to the master while its tab is hidden is shown after switching back, as capture-pane has it.
     tmux('send-keys', '-t', `=${master}:`, 'clear; for i in 1 2 3; do echo hidden-$i; done', 'Enter');
@@ -105,14 +102,13 @@ describe.skipIf(!hasTmux)('runApp (private tmux server)', () => {
     const captured = tmux('capture-pane', '-p', '-t', `=${master}:`).stdout.split('\n').slice(0, 16).map((line) => line.trimEnd());
     expect(await slotRows(terminal)).toEqual(captured);
 
-    // Back to the worker and once more: its window still has its own size.
+    // Back to the worker and once more: its window keeps the slot's size; closing the tab leaves it running.
     app.apply((state) => selectTab(state, 'w1'));
     await waitForSlotLine(terminal, 'worker-42');
-    expect(windowSize(worker)).toBe(before);
+    expect(windowSize(worker)).toBe('43x16');
     app.apply((state) => closeTab(state));
     await waitForSlotLine(terminal, 'hidden-3');
     expect(tmux('has-session', '-t', `=${worker}`).status).toBe(0);
-    expect(windowSize(worker)).toBe(before);
   }, 30_000);
 
   it('opens the task explorer as a tab on its private server, sized to the slot, and closes it back to the master', async () => {
@@ -131,7 +127,7 @@ describe.skipIf(!hasTmux)('runApp (private tmux server)', () => {
 
     terminal.type(`${F12}t`);
     await waitForSlotLine(terminal, 'explorer-for-fake');
-    expect(explorerTmux('display-message', '-p', '-t', '=explorer-fake:', '#{window_width}x#{window_height} #{status}').stdout.trim()).toBe('44x16 off');
+    expect(explorerTmux('display-message', '-p', '-t', '=explorer-fake:', '#{window_width}x#{window_height} #{status}').stdout.trim()).toBe('43x16 off');
     await waitForTabBar(terminal, 1, '2 tasks ×');
     // Its keys reach it one read each, also when they arrive in one read (j and k navigate the real explorer); the master gets none.
     terminal.type('jjk');
