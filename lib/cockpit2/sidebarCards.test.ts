@@ -712,7 +712,7 @@ describe('drawSidebarCards', () => {
       '┌─ [ AGENTS ] ─────────── 2 live ┐',
       // Two boxes and the button need a row more than the Agents card has: the second agent goes behind `+1 more`.
       '│┌──────────────────────────────┐│',
-      '││ [+] agent-… 12m [PERMISSION] ││',
+      '││ [+] agent-🚀-r… [PERMISSION] ││',
       '││     ? may I run npm test     ││',
       '│└──────────────────────────────┘│',
       '│ +1 more                        │',
@@ -747,8 +747,8 @@ describe('drawSidebarCards', () => {
     // Every agent is a box; the question row sits inside it, under the name.
     expect(agentRows.slice(0, 14)).toEqual([
       top, '││ [+] a1 worker 12m [QUESTION] ││', '││     ? question 1             ││', bottom,
-      top, '││ [+] a2       12m [IMPLEMENT] ││', bottom,
-      top, '││ [+] a3       12m [IMPLEMENT] ││', bottom,
+      top, '││ [+] a2 worker    [IMPLEMENT] ││', bottom,
+      top, '││ [+] a3 worker    [IMPLEMENT] ││', bottom,
       top, '││ [+] a4 worker 12m [QUESTION] ││', '││     ? question 4             ││', bottom,
     ]);
   });
@@ -831,23 +831,35 @@ describe('drawSidebarCards', () => {
     }
   });
 
-  it('drops an agent row\'s role whole when it does not fit, never cutting it to `…`', () => {
+  it('drops an agent row\'s run time, then its role, before cutting the name', () => {
     const sidebar = model(0, 1, { agents: [agent('thrall', { role: 'reviewer' })] });
     const agentRow = (cols: number) => {
-      const frame = createFrame(cols, 14);
-      drawSidebarCards(frame, { x: 0, y: 0, cols, rows: 14 }, sidebarCardsLayout(sidebar, 14, INITIAL_SIDEBAR_NAV, cols), { focus: null, theme: CLASSIC });
-      return Array.from({ length: 14 }, (_, y) => rowText(frame, y)).find((line) => line.includes('[+]'))!;
+      const frame = createFrame(cols, 24);
+      drawSidebarCards(frame, { x: 0, y: 0, cols, rows: 24 }, sidebarCardsLayout(sidebar, 24, INITIAL_SIDEBAR_NAV, cols), { focus: null, theme: CLASSIC });
+      return Array.from({ length: 24 }, (_, y) => rowText(frame, y)).find((line) => line.includes('[+]'))!;
     };
     // The row is the title row inside the agent's box: its border a column more on each side.
     expect(agentRow(41)).toBe('││ [+] thrall reviewer 12m [IMPLEMENT] ││');
-    expect(agentRow(40)).toBe('││ [+] thrall         12m [IMPLEMENT] ││');
-    expect(agentRow(32)).toBe('││ [+] thrall 12m [IMPLEMENT] ││');
-    for (let cols = 32; cols < 41; cols += 1) {
+    expect(agentRow(40)).toBe('││ [+] thrall reviewer    [IMPLEMENT] ││');
+    expect(agentRow(37)).toBe('││ [+] thrall reviewer [IMPLEMENT] ││');
+    expect(agentRow(36)).toMatch(/^││ \[\+\] thrall +\[IMPLEMENT\] ││$/);
+    expect(agentRow(28)).toBe('││ [+] thrall [IMPLEMENT] ││');
+    expect(agentRow(27)).toBe('││ [+] thra… [IMPLEMENT] ││');
+    // Never the run time once the role is gone, never a lone `…`.
+    for (let cols = 27; cols < 41; cols += 1) {
       const row = agentRow(cols);
-      expect(row, `${cols}`).toMatch(/^││ \[\+\] thrall +12m \[IMPLEMENT\] ││$/);
+      expect(row, `${cols}`).toContain('[IMPLEMENT]');
+      expect(row, `${cols}`).not.toMatch(/12m|\s…(\s|\[)/);
     }
-    // Narrower still, the name itself is cut as before.
-    expect(agentRow(31)).toBe('││ [+] thra… 12m [IMPLEMENT] ││');
+  });
+
+  it('keeps a short agent name whole at 34 columns, cutting it only when marker, name and badge do not fit', () => {
+    const sidebar = model(0, 1, { agents: [agent('worker-a'), agent('a-rather-long-agent-name', { key: 'p1/long' })] });
+    const frame = createFrame(34, 24);
+    drawSidebarCards(frame, { x: 0, y: 0, cols: 34, rows: 24 }, sidebarCardsLayout(sidebar, 24, INITIAL_SIDEBAR_NAV, 34), { focus: null, theme: CLASSIC });
+    const rows = Array.from({ length: 24 }, (_, y) => rowText(frame, y)).filter((line) => line.includes('[+]'));
+    expect(rows[0]).toMatch(/^││ \[\+\] worker-a( worker)? +\[IMPLEMENT\] ││$/);
+    expect(rows[1]).toMatch(/^││ \[\+\] a-rather-lo… \[IMPLEMENT\] ││$/);
   });
 
   it('fits a narrow sidebar: badges and times give way to names, nothing spills', () => {
@@ -1303,7 +1315,7 @@ describe('agent boxes (every agent, collapsed or expanded)', () => {
       expect(frameOf(lines, title - 1, height), part).toEqual(['│┌─┐│', ...Array.from({ length: height - 2 }, () => '││││'), '│└─┘│']);
     }
     expect(lines.slice(row('[+] w1') - 1, row('[+] w1') + 2)).toEqual([
-      '│┌──────────────────────────────┐│', '││ [+] w1       12m [IMPLEMENT] ││', '│└──────────────────────────────┘│',
+      '│┌──────────────────────────────┐│', '││ [+] w1 worker    [IMPLEMENT] ││', '│└──────────────────────────────┘│',
     ]);
     expect(lines[row('[+] s1')]).toBe('││ [+] s1 scout   12m [RUNNING] ││');
     expect(lines[row('[+] q1') + 1]).toBe('││     ? may I push             ││'); // the question row inside the box
@@ -1423,9 +1435,9 @@ describe('local agent sessions (the cockpit\'s own, not the coordinator\'s)', ()
     expect(titles(card(layout, 'agents')!)).toEqual([0, 1, 2, 3]);
     const at = (part: string) => lines.findIndex((line) => line.includes(part));
     expect(at('[+] a2 ')).toBeLessThan(at('[+] ◇ claude 1'));
-    expect(at('[+] ◇ claude 1')).toBeLessThan(at('[+] ◇ critic · clau'));
+    expect(at('[+] ◇ claude 1')).toBeLessThan(at('[+] ◇ critic'));
     expect(lines[at('◇ claude 1')]).toMatch(/││ \[\+\] ◇ claude 1 +2m \[LOCAL\] ││/);
-    expect(lines[at('◇ critic')]).toBe('││ [+] ◇ critic · clau… [LOCAL] ││'); // the box's sides take a column each
+    expect(lines[at('◇ critic')]).toBe('││ [+] ◇ critic         [LOCAL] ││'); // the box's sides take a column each; the provider goes before the name is cut
     // A collapsed session is a box too.
     expect(lines[at('◇ claude 1') - 1]).toMatch(/^│┌─+┐│$/);
     expect(lines[at('◇ claude 1') + 1]).toMatch(/^│└─+┘│$/);
