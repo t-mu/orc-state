@@ -278,9 +278,15 @@ describe('terminal colours', () => {
       '#949494', '#ff5189', '#36c692', '#c6c684', '#74b2ff', '#ae81ff', '#85dc85', '#e4e4e4',
     ];
     expect(terminalColorsEnter(BUILT_IN_THEMES.orc)).toBe(
-      `\x1b]11;#080808${ST}\x1b]10;#bdbdbd${ST}\x1b]12;#9e9e9e${ST}`
+      `\x1b]11;#161616${ST}\x1b]10;#bdbdbd${ST}\x1b]12;#9e9e9e${ST}`
       + palette.map((color, index) => `\x1b]4;${index};${color}${ST}`).join(''),
     );
+  });
+
+  it('gives orc a canvas and a lighter panel, the panel being the terminal background, and no other theme surfaces', () => {
+    expect(BUILT_IN_THEMES.orc.surfaces).toEqual({ canvas: '#080808', panel: '#161616' });
+    expect(BUILT_IN_THEMES.orc.terminal?.background).toBe(BUILT_IN_THEMES.orc.surfaces?.panel);
+    for (const name of ['amber', 'classic', 'mono'] as const) expect(BUILT_IN_THEMES[name].surfaces).toBeUndefined();
   });
 
   it('resets them to the terminal profile on leave', () => {

@@ -104,7 +104,7 @@ import {
 } from './widgets.ts';
 import {
   INITIAL_SIDEBAR_NAV, drawSidebarCards, navigateSidebar, pruneExpanded, sidebarCardClick, sidebarCardsLayout,
-  type SidebarBox, type SidebarCommand, type SidebarNav, type SidebarStep,
+  type SidebarBox, type SidebarCardsLayout, type SidebarCommand, type SidebarNav, type SidebarStep,
 } from './sidebarCards.ts';
 
 // ── layout ────────────────────────────────────────────────────────────────────
@@ -671,21 +671,26 @@ export function runApp(options: AppOptions): App {
   }
 
   /**
-   * The theme's background on every cell outside the slot that is left at
-   * the terminal's default: where the terminal took the theme's colours (OSC
-   * 11) this changes nothing visible; where it did not, the cockpit's own
-   * areas still show the theme. The slot keeps its program's cells.
+   * The theme's surfaces on every cell outside the slot left at the
+   * terminal's default background: `panel` inside the sidebar's cards and
+   * the pane's box (the terminal's own background under `orc`, so an agent's
+   * output matches without painting), `canvas` everywhere else, which sets
+   * the cards and the pane off the floor. The slot keeps its program's cells.
    */
-  const canvas = theme.terminal ? parseThemeColor(theme.terminal.background) : null;
-  function paintCanvas(frame: Frame): void {
-    if (!canvas) return;
+  const surfaces = theme.surfaces
+    ? { canvas: parseThemeColor(theme.surfaces.canvas)!, panel: parseThemeColor(theme.surfaces.panel)! }
+    : null;
+  function paintCanvas(frame: Frame, sidebar: SidebarCardsLayout): void {
+    if (!surfaces) return;
+    const raised: Region[] = sidebar.cards.map((card) => ({ x: layout.sidebar.x, y: layout.sidebar.y + card.y, cols: layout.sidebar.cols, rows: card.rows }));
+    if (layout.paneFrame) raised.push(layout.paneFrame);
     const { slot } = layout;
     for (let y = 0; y < frame.rows; y += 1) {
-      const inSlotRow = y >= slot.y && y < slot.y + slot.rows;
       for (let x = 0; x < frame.cols; x += 1) {
-        if (inSlotRow && x >= slot.x && x < slot.x + slot.cols) continue;
+        if (inside(slot, x, y)) continue;
         const cell = frame.cells[y * frame.cols + x];
-        if (cell.style.bg.type === 'default') cell.style = { ...cell.style, bg: canvas };
+        if (cell.style.bg.type !== 'default') continue;
+        cell.style = { ...cell.style, bg: raised.some((region) => inside(region, x, y)) ? surfaces.panel : surfaces.canvas };
       }
     }
   }
@@ -697,7 +702,8 @@ export function runApp(options: AppOptions): App {
     lastRender = Date.now();
     const frame = createFrame(layout.cols, layout.rows);
     drawHeader(frame, layout.header, currentHeader(), theme);
-    drawSidebarCards(frame, layout.sidebar, currentSidebar(), { focus: focus === 'slot' ? null : focus, theme });
+    const sidebar = currentSidebar();
+    drawSidebarCards(frame, layout.sidebar, sidebar, { focus: focus === 'slot' ? null : focus, theme });
     drawTabBar(frame, layout.tabBar, currentTabBar(), {
       slotFocused: focus === 'slot',
       error: refusal ?? (lastSaveError ? `view state not saved: ${lastSaveError}` : null),
@@ -721,7 +727,7 @@ export function runApp(options: AppOptions): App {
     }
     // Arrow keys reach the pane in the form its program asked for; checked on every render, so on tab switch and mode change.
     mirrorCursorKeys(screen ? screen.modes().applicationCursorKeys : false);
-    paintCanvas(frame);
+    paintCanvas(frame, sidebar);
     if (prevFrame && prevCursor && framesEqual(prevFrame, frame) && sameCursor(prevCursor, cursor)) return;
     terminal.write(renderDiff(prevFrame, frame, cursor, options.colorDepth));
     prevFrame = frame;

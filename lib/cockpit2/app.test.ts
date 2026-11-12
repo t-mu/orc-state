@@ -345,17 +345,21 @@ describe('runApp (fake tmux client)', () => {
   });
 
   it('draws its chrome in orc by default and in the theme it is given', async () => {
-    const SAND_BORDER = '38;2;227;199;138m';
-    const AMBER_BORDER = '38;2;255;176;0m';
+    // orc and amber share the amber chrome; the focused pane's border tells them apart.
+    const AMBER_BORDER = '38;2;255;176;0';
+    const ORC_FOCUS = '38;2;255;201;77';
+    const AMBER_FOCUS = '38;2;255;194;51';
     const VIOLET = '38;2;124;58;237m';
     const orc = start();
     await attached(orc.terminal);
-    expect(orc.terminal.writes.join('')).toContain(SAND_BORDER);
-    expect(orc.terminal.writes.join('')).not.toContain(AMBER_BORDER);
+    expect(orc.terminal.writes.join('')).toContain(AMBER_BORDER);
+    expect(orc.terminal.writes.join('')).toContain(ORC_FOCUS);
+    expect(orc.terminal.writes.join('')).not.toContain(AMBER_FOCUS);
 
     const amber = start({ theme: BUILT_IN_THEMES.amber });
     await attached(amber.terminal);
     expect(amber.terminal.writes.join('')).toContain(AMBER_BORDER);
+    expect(amber.terminal.writes.join('')).toContain(AMBER_FOCUS);
     expect(amber.terminal.writes.join('')).not.toContain(VIOLET);
 
 
@@ -370,22 +374,41 @@ describe('runApp (fake tmux client)', () => {
     expect(mono.terminal.writes.join('')).not.toMatch(/38;2;/);
   });
 
-  it('paints the theme background on chrome cells left at the default with orc, never on the slot, and nothing with amber', async () => {
+  it('paints orc\'s panel inside the cards and the pane box, its canvas elsewhere, never the slot, and nothing with amber', async () => {
     const CANVAS = { type: 'rgb', r: 0x08, g: 0x08, b: 0x08 };
+    const PANEL = { type: 'rgb', r: 0x16, g: 0x16, b: 0x16 };
     const orc = start({ theme: BUILT_IN_THEMES.orc });
     await attached(orc.terminal);
     const screen = await shown(orc.terminal);
-    const { slot, footer } = computeLayout(orc.terminal.cols, orc.terminal.rows);
-    // A blank sidebar cell near the bottom, and the footer's end: chrome the cockpit leaves at the default background.
-    expect(screen.row(footer.y - 1)[1].style.bg).toEqual(CANVAS);
-    expect(screen.row(0)[orc.terminal.cols - 1].style.bg).toEqual(CANVAS);
+    const { header, sidebar, gutter, tabBar, slot, paneFrame, footer } = computeLayout(orc.terminal.cols, orc.terminal.rows);
+    const bg = (x: number, y: number) => screen.row(y)[x].style.bg;
+    // The header, the footer's end, the gutter and the tab bar's gap row above the pane box: the floor.
+    expect(bg(header.cols - 1, header.y)).toEqual(CANVAS);
+    expect(bg(footer.cols - 1, footer.y)).toEqual(CANVAS);
+    for (let y = gutter.y; y < gutter.y + gutter.rows; y += 1) expect(bg(gutter.x, y)).toEqual(CANVAS);
+    expect(text(screen, tabBar.y + tabBar.rows - 1, tabBar.x).trim()).toBe('');
+    expect(bg(tabBar.x + tabBar.cols - 1, tabBar.y + tabBar.rows - 1)).toEqual(CANVAS);
+    // The sidebar: card rows (a border in the first column) on the panel, border and blank body alike; any row outside the cards on the canvas.
+    let cardRows = 0;
+    for (let y = sidebar.y; y < sidebar.y + sidebar.rows; y += 1) {
+      const inCard = ['┌', '│', '└'].includes(screen.row(y)[sidebar.x].text);
+      if (inCard) cardRows += 1;
+      for (const x of [sidebar.x, sidebar.x + 1, sidebar.x + sidebar.cols - 2]) expect(bg(x, y)).toEqual(inCard ? PANEL : CANVAS);
+    }
+    expect(cardRows).toBeGreaterThan(0);
+    // The pane box's border on the panel.
+    expect(paneFrame).not.toBeNull();
+    const frame = paneFrame!;
+    for (const [x, y] of [[frame.x, frame.y], [frame.x + frame.cols - 1, frame.y + frame.rows - 1], [frame.x, slot.y], [frame.x + frame.cols - 1, slot.y]]) {
+      expect(bg(x, y)).toEqual(PANEL);
+    }
     // The slot keeps the pane's own cells: its text and the blank after it stay on the default background.
-    for (const x of [slot.x, slot.x + slot.cols - 1]) expect(screen.row(slot.y)[x].style.bg).toEqual({ type: 'default' });
-    expect(screen.row(slot.y + slot.rows - 1)[slot.x].style.bg).toEqual({ type: 'default' });
+    for (const x of [slot.x, slot.x + slot.cols - 1]) expect(bg(x, slot.y)).toEqual({ type: 'default' });
+    expect(bg(slot.x, slot.y + slot.rows - 1)).toEqual({ type: 'default' });
 
     const amber = start({ theme: BUILT_IN_THEMES.amber });
     await attached(amber.terminal);
-    expect(amber.terminal.writes.join('')).not.toContain('48;2;8;8;8m');
+    expect(amber.terminal.writes.join('')).not.toMatch(/48;2;(8;8;8|22;22;22)m/);
   });
 
   it('shows the master in the slot next to the sidebar and tab bar, its window sized to the slot', async () => {
