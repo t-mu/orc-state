@@ -2112,7 +2112,7 @@ describe('runApp add-project and new-agent dialogs (fake hosts)', () => {
     const { terminal, client, app, watcher } = start({ projectHost });
     await attached(terminal);
     app.openAddProject();
-    await waitForScreen(terminal, 'ADD PROJECT');
+    await waitForScreen(terminal, '[ ADD PROJECT ]');
     // Enter with no path: refused in the dialog.
     terminal.type('\r');
     await waitForScreen(terminal, 'Path is required');
@@ -2129,7 +2129,7 @@ describe('runApp add-project and new-agent dialogs (fake hosts)', () => {
     terminal.type('\r');
     await waitFor(() => projectHost.added.length === 1);
     expect(projectHost.added).toEqual([['/work/app', 'My App', 'codex']]);
-    await waitForGone(terminal, 'ADD PROJECT');
+    await waitForGone(terminal, '[ ADD PROJECT ]');
     expect(client().sent).toEqual([]);
     expect(app.tabs().activeProject).toBe('demo');
     // The watcher reports the project: it is shown.
@@ -2144,12 +2144,12 @@ describe('runApp add-project and new-agent dialogs (fake hosts)', () => {
     await attached(terminal);
     const app = apps.at(-1)!;
     app.openAddProject();
-    await waitForScreen(terminal, 'ADD PROJECT');
+    await waitForScreen(terminal, '[ ADD PROJECT ]');
     terminal.type('/nope\r');
     await waitForScreen(terminal, 'Not a git repository: /nope');
     expect(await screenText(terminal)).not.toContain('more detail');
     terminal.type(ESC);
-    await waitForGone(terminal, 'ADD PROJECT');
+    await waitForGone(terminal, '[ ADD PROJECT ]');
   });
 
   it('refuses the add-project dialog without a project host', async () => {

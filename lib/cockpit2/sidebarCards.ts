@@ -4,14 +4,16 @@
  *
  *   ┌─ [ PROJECTS ] ─────────── 2 ─┐   Projects: every registered project, one row
  *   │ ▸ orc-state        [RUNNING] │   each, state badge and `!N` when its agents
- *   │   arek-on-trail       [IDLE] │   need a human; `▸` marks the active one
+ *   │   arek-on-trail       [IDLE] │   need a human; `▸` marks the active one;
+ *   │                              │   an add-project button on its last row
+ *   │ [ + ADD PROJECT ]            │
  *   └──────────────────────────────┘
  *                                      a blank row between cards (the canvas)
  *   ┌─ [ ORC-STATE ] ──────────────┐   Project: the active project, its coordinator
  *   │ coordinator        [RUNNING] │   state as one badge, its worker capacity, its
  *   │ workers 2/4                  │   open task counts, the notice (only while
- *   │ tasks 3 todo · 1 in progress │   there is one) and a settings button
- *   │ [ SETTINGS ]                 │
+ *   │ tasks 3 todo · 1 in progress │   there is one) and a settings button on its
+ *   │ [ SETTINGS ]                 │   last row
  *   └──────────────────────────────┘
  *
  *   ┌─ [ AGENTS ] ─────── 3 live ──┐   Agents: one collapsed row each; an agent
@@ -23,16 +25,20 @@
  *   ││ doing  editing app.ts      ││   model (`default` when unknown), its task
  *   ││ [ OPEN ] [ KILL ]          ││   (a scout's brief instead), its activity
  *   │└────────────────────────────┘│   when it says more than the row (at most
- *   └──────────────────────────────┘   two lines) or, unlabelled, its question
- *                                      or reason; and two buttons
+ *   │ [ + NEW AGENT ]              │   two lines) or, unlabelled, its question
+ *   └──────────────────────────────┘   or reason; and two buttons. A new-agent
+ *                                      button on the card's last row
  *
+ * Each card's action button sits on its last body row whatever the card's
+ * height; its list scrolls in the rows above it. The cards share the rows
+ * equally (the remainder to Agents) until the Agents content needs more.
  * The keys move in three boxes, one per card, Tab and Shift-Tab cycling them:
- * projects (by project), project (its settings button) and agents (by agent;
- * Enter opens the agent's tab, `x` asks to kill it, as its buttons do).
- * The layout (`sidebarCardsLayout`) is pure: it sizes the cards to the rows
- * (Projects shrinks to a `+N more` window before Agents loses rows), keeps
- * the cursor's row (an expanded agent's whole block) in view and lists every
- * body row, which drawing (`drawSidebarCards`) and clicks
+ * projects (by project, then its add button), project (its settings button)
+ * and agents (by agent, then its new-agent button; Enter opens the agent's
+ * tab, `x` asks to kill it, as its buttons do). The layout
+ * (`sidebarCardsLayout`) is pure: it sizes the cards to the rows, keeps the
+ * cursor's row (an expanded agent's whole block, or a button) in view and
+ * lists every body row, which drawing (`drawSidebarCards`) and clicks
  * (`sidebarCardTarget`) both read.
  */
 import { stringWidth } from '../cellWidth.ts';
@@ -59,6 +65,8 @@ export interface SidebarNav {
   agentKey: string | null;
   /** The keys of the agents drawn expanded; in memory only (not in view-state.json), pruned by `pruneExpanded`. */
   expanded: ReadonlySet<string>;
+  /** The cursor is on the box's action button after its list (projects: add project, agents: new agent); left out on an item. */
+  onButton?: true;
 }
 
 export const INITIAL_SIDEBAR_NAV: SidebarNav = Object.freeze({ box: 'agents', projectKey: null, agentKey: null, expanded: new Set<string>() });
@@ -76,6 +84,10 @@ export type SidebarCommand =
   | { type: 'openAgent'; projectId: string; agentId: string }
   /** The Project card's `[ SETTINGS ]` button: the active project's settings. */
   | { type: 'openSettings'; projectId: string }
+  /** The Projects card's `[ + ADD PROJECT ]` button. */
+  | { type: 'addProject' }
+  /** The Agents card's `[ + NEW AGENT ]` button: a new agent in the active project. */
+  | { type: 'newAgent'; projectId: string }
   /** An expanded agent's `[ KILL ]` button or the kill key: the app asks first, then resets a worker's task or removes a scout. */
   | { type: 'killAgent'; projectId: string; agentId: string; kind: 'worker' | 'scout'; taskRef: string | null }
   | { type: 'focusSlot' };
@@ -97,52 +109,83 @@ export function sidebarCursor(model: SidebarModel, nav: SidebarNav): SidebarCurs
 }
 
 /**
- * A navigation key: up and down move the cursor in the focused box (stopping
- * at either end; the project box holds only its settings button), switchBox
- * and prevBox cycle the projects, project and agents boxes, open opens the
- * project, the settings or the agent under the cursor, toggle expands or
+ * Whether the cursor is on its box's action button: where `nav` put it, or in
+ * an empty list (projects: always; agents: with an active project, which its
+ * button needs). Never in the project box, whose only row is its button.
+ */
+function cursorOnButton(model: SidebarModel, nav: SidebarNav): boolean {
+  if (nav.box === 'projects') return nav.onButton === true || model.projects.length === 0;
+  if (nav.box === 'agents') return model.activeProjectId !== null && (nav.onButton === true || model.agents.length === 0);
+  return false;
+}
+
+/** `nav` with the cursor on an item rather than its box's action button. */
+function onItem(nav: SidebarNav): SidebarNav {
+  const { onButton: _onButton, ...rest } = nav;
+  return rest;
+}
+
+/**
+ * A navigation key: up and down move the cursor in the focused box, down past
+ * the last item onto the box's action button (stopping at either end; the
+ * project box holds only its settings button), switchBox and prevBox cycle the
+ * projects, project and agents boxes, open opens the project, the settings or
+ * the agent under the cursor or presses the button under it, toggle expands or
  * collapses the agent under the cursor and kill asks to kill it (both nothing
- * in the other boxes), back returns to the pane.
+ * in the other boxes or on a button), back returns to the pane.
  */
 export function navigateSidebar(view: SidebarCursor, nav: SidebarNav, key: SidebarKey): SidebarStep {
   const { model } = view;
   const projects = nav.box === 'projects';
   const length = projects ? model.projects.length : model.agents.length;
   const current = projects ? view.projectIndex : view.agentIndex;
+  const onButton = cursorOnButton(model, nav);
+  const at = (index: number): SidebarNav => onItem(projects ? { ...nav, projectKey: model.projects[index].project_id } : { ...nav, agentKey: model.agents[index].key });
   switch (key) {
     case 'back': return { nav, command: { type: 'focusSlot' } };
     case 'switchBox':
     case 'prevBox': {
       const step = key === 'switchBox' ? 1 : BOX_ORDER.length - 1;
-      return { nav: { ...nav, box: BOX_ORDER[(BOX_ORDER.indexOf(nav.box) + step) % BOX_ORDER.length] }, command: null };
+      return { nav: onItem({ ...nav, box: BOX_ORDER[(BOX_ORDER.indexOf(nav.box) + step) % BOX_ORDER.length] }), command: null };
     }
     case 'up':
     case 'down': {
       if (nav.box === 'project' || length === 0) return { nav, command: null };
-      const next = Math.max(0, Math.min(length - 1, current + (key === 'up' ? -1 : 1)));
-      return { nav: projects ? { ...nav, projectKey: model.projects[next].project_id } : { ...nav, agentKey: model.agents[next].key }, command: null };
+      if (key === 'up') return { nav: at(onButton ? length - 1 : Math.max(0, current - 1)), command: null };
+      if (onButton) return { nav, command: null };
+      if (current < length - 1) return { nav: at(current + 1), command: null };
+      // Past the last item the cursor lands on the button (the agents box has one only with an active project).
+      return { nav: projects || model.activeProjectId !== null ? { ...at(current), onButton: true } : nav, command: null };
     }
     case 'open': {
       if (nav.box === 'project') return openSettingsStep(nav, model);
+      if (onButton) return buttonStep(nav, model, nav.box);
       if (length === 0) return { nav, command: null };
       return projects ? openProjectStep(nav, model, current) : openAgentStep(nav, model, current);
     }
     case 'toggle': {
-      if (nav.box !== 'agents' || length === 0) return { nav, command: null };
+      if (nav.box !== 'agents' || length === 0 || onButton) return { nav, command: null };
       return { nav: toggleAgent(nav, model.agents[current].key), command: null };
     }
     case 'kill': {
-      if (nav.box !== 'agents' || length === 0) return { nav, command: null };
+      if (nav.box !== 'agents' || length === 0 || onButton) return { nav, command: null };
       return killAgentStep(nav, model, current);
     }
   }
+}
+
+/** The Projects card's add button, or the Agents card's new-agent button (nothing without an active project); the cursor goes to it. */
+function buttonStep(nav: SidebarNav, model: SidebarModel, box: 'projects' | 'agents'): SidebarStep {
+  const next: SidebarNav = { ...nav, box, onButton: true };
+  if (box === 'projects') return { nav: next, command: { type: 'addProject' } };
+  return { nav: next, command: model.activeProjectId ? { type: 'newAgent', projectId: model.activeProjectId } : null };
 }
 
 /** `nav` with the agent `key` expanded if it was collapsed, else collapsed; the cursor goes to it. */
 function toggleAgent(nav: SidebarNav, key: string): SidebarNav {
   const expanded = new Set(nav.expanded);
   if (!expanded.delete(key)) expanded.add(key);
-  return { ...nav, box: 'agents', agentKey: key, expanded };
+  return onItem({ ...nav, box: 'agents', agentKey: key, expanded });
 }
 
 /**
@@ -161,24 +204,24 @@ function openProjectStep(nav: SidebarNav, model: SidebarModel, index: number): S
   const project = model.projects[index];
   // Another project lists other agents: the agents cursor starts at the top again.
   const agentKey = project.project_id === model.activeProjectId ? nav.agentKey : null;
-  return { nav: { ...nav, box: 'projects', projectKey: project.project_id, agentKey }, command: { type: 'openProject', projectId: project.project_id } };
+  return { nav: onItem({ ...nav, box: 'projects', projectKey: project.project_id, agentKey }), command: { type: 'openProject', projectId: project.project_id } };
 }
 
 /** The settings button: the active project's settings (nothing without an active project). */
 function openSettingsStep(nav: SidebarNav, model: SidebarModel): SidebarStep {
-  return { nav: { ...nav, box: 'project' }, command: model.activeProjectId ? { type: 'openSettings', projectId: model.activeProjectId } : null };
+  return { nav: onItem({ ...nav, box: 'project' }), command: model.activeProjectId ? { type: 'openSettings', projectId: model.activeProjectId } : null };
 }
 
 function openAgentStep(nav: SidebarNav, model: SidebarModel, index: number): SidebarStep {
   const agent = model.agents[index];
-  const next: SidebarNav = { ...nav, box: 'agents', agentKey: agent.key };
+  const next: SidebarNav = onItem({ ...nav, box: 'agents', agentKey: agent.key });
   return { nav: next, command: model.activeProjectId ? { type: 'openAgent', projectId: model.activeProjectId, agentId: agent.agent_id } : null };
 }
 
 /** Asks to kill the agent at `index`: a scout is removed, a worker's task reset (the cursor goes to it). */
 function killAgentStep(nav: SidebarNav, model: SidebarModel, index: number): SidebarStep {
   const agent = model.agents[index];
-  const next: SidebarNav = { ...nav, box: 'agents', agentKey: agent.key };
+  const next: SidebarNav = onItem({ ...nav, box: 'agents', agentKey: agent.key });
   if (!model.activeProjectId) return { nav: next, command: null };
   return {
     nav: next,
@@ -205,7 +248,11 @@ export type CardLine =
   /** A row of an expanded agent's block; a `detail` part carries its wrapped line and, for an activity, its label (`doing`, then blank). */
   | { kind: 'block'; index: number; part: BlockPart; text?: string; label?: string }
   | { kind: 'more'; count: number }
-  | { kind: 'empty' };
+  | { kind: 'empty' }
+  /** The Projects card's add button and the Agents card's new-agent button, each on its card's last body row. */
+  | { kind: 'addProject' } | { kind: 'newAgent' }
+  /** A body row left blank between a card's list and its button. */
+  | { kind: 'blank' };
 
 /** A card as laid out: its first row and rows (borders included) in the sidebar, and its body rows, in order. */
 export interface CardLayout { card: SidebarCard; y: number; rows: number; lines: CardLine[] }
@@ -215,6 +262,8 @@ export interface SidebarCardsLayout extends SidebarCursor {
   rows: number;
   /** The card the keys' cursor is in: the card of the box the keys move in. */
   cursorCard: SidebarCard;
+  /** Whether the cursor is on its card's action button (the Projects or Agents card's; the Project card's cursor is always its button). */
+  onButton: boolean;
   /** Top to bottom; Projects is left out when there is no row for it (and the cursor is not in it). */
   cards: CardLayout[];
 }
@@ -223,8 +272,6 @@ export interface SidebarCardsLayout extends SidebarCursor {
 const BORDERS = 2;
 /** Blank rows between two cards (no card's: the canvas shows through). */
 const CARD_GAP = 1;
-/** The fewest rows a card keeps when space runs short: one body row. */
-const MIN_CARD_ROWS = BORDERS + 1;
 
 /** Columns of an expanded block's text: the card's inner width less the block's borders and a column of padding inside each. */
 const blockTextCols = (cols: number): number => Math.max(1, cols - BORDERS - 4);
@@ -300,25 +347,32 @@ function projectsLines(model: SidebarModel, body: number, anchor: number): CardL
   return lines;
 }
 
-/** The Project card's body rows in drawn order: coordinator, workers, tasks (with the status), the notice (while there is one), the settings button. */
-function projectCardLines(model: SidebarModel): CardLine[] {
+/** The Project card's rows above its button, in drawn order: coordinator, workers, tasks (with the status), the notice (while there is one). */
+function projectInfoLines(model: SidebarModel): CardLine[] {
   const notice: CardLine[] = model.notice ? [{ kind: 'notice' }] : [];
   if (model.activeProjectId === null) return notice;
-  return [{ kind: 'coordinator' }, { kind: 'workers' }, ...(model.tasks ? [{ kind: 'tasks' } as const] : []), ...notice, { kind: 'settings' }];
+  return [{ kind: 'coordinator' }, { kind: 'workers' }, ...(model.tasks ? [{ kind: 'tasks' } as const] : []), ...notice];
+}
+
+/** `lines` cut to `body` rows: the coordinator row and the notice go last, in drawn order. */
+function fitProjectLines(lines: CardLine[], body: number): CardLine[] {
+  if (lines.length <= body) return lines;
+  const order: CardLine['kind'][] = ['coordinator', 'notice', 'workers', 'tasks'];
+  const kept = new Set([...lines].sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind)).slice(0, Math.max(0, body)));
+  return lines.filter((line) => kept.has(line));
 }
 
 /**
- * `lines` cut to `body` rows: the coordinator row, the notice and the
- * settings button go last (the button first while the cursor is on it), in
- * drawn order.
+ * A card's `body` rows: its list (`list`, given the rows it may take) on top
+ * and its button (`button`, null for none) on the last row, blank rows
+ * between; in one row only the button while the cursor is on it, else the list.
  */
-function fitProjectLines(lines: CardLine[], body: number, box: SidebarBox): CardLine[] {
-  if (lines.length <= body) return lines;
-  const order: CardLine['kind'][] = box === 'project'
-    ? ['settings', 'coordinator', 'notice', 'workers', 'tasks']
-    : ['coordinator', 'notice', 'settings', 'workers', 'tasks'];
-  const kept = new Set([...lines].sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind)).slice(0, Math.max(0, body)));
-  return lines.filter((line) => kept.has(line));
+function withButton(list: (rows: number) => CardLine[], button: CardLine | null, body: number, onButton: boolean): CardLine[] {
+  if (body <= 0) return [];
+  if (!button) return list(body);
+  if (body === 1) return onButton ? [button] : list(1);
+  const lines = list(body - 1);
+  return [...lines, ...Array.from({ length: body - 1 - lines.length }, (): CardLine => ({ kind: 'blank' })), button];
 }
 
 /**
@@ -348,91 +402,128 @@ function agentLines(blocks: CardLine[][], body: number, cursor: number): CardLin
 }
 
 /**
- * The cards in `rows` by `cols`. Projects takes a row per project, the
- * Project card a row per line (at most 5), Agents the rest. When rows run out
- * Projects shrinks first (down to a window of the cursor's project, else the
- * active one, and a `+N more` line), then the Agents card down to the cursor agent's row (an
+ * The cards in `rows` by `cols`, each with its button (when it has one) on
+ * its last body row. The cards share the rows equally, the remainder to
+ * Agents; Projects and the Project card never take more than their share.
+ * When the Agents content (its rows, expanded blocks included, and its
+ * button) needs more than its share, it takes the rows the other cards'
+ * content leaves of their shares, then Projects shrinks (down to a window of
+ * the cursor's project, else the active one, a `+N more` line and its button).
+ * When rows run out the Agents card shrinks down to the cursor agent's row (an
  * expanded agent's whole block, and a `+N more` line when there are other
- * agents), then the Project card (down to one row), then Projects goes unless
- * the cursor is in it. Rows the Agents window leaves unused go back to a
- * shrunk Project card, then to a shrunk Projects. Each card's lines keep the
- * cursor's row in view. A blank row (no card's) separates two cards and counts
- * in `rows`; a sidebar too short for the gaps draws the cards border to border.
+ * agents) and its button, then the Project card (down to one row and its
+ * button), then Projects goes unless the cursor is in it. Rows the Agents
+ * window leaves unused go back to a shrunk Project card, then to a shrunk
+ * Projects, up to their shares. Each card's lines keep the cursor's row in
+ * view. A blank row (no card's) separates two cards and counts in `rows`; a
+ * sidebar too short for the gaps draws the cards border to border.
  */
 export function sidebarCardsLayout(model: SidebarModel, rows: number, nav: SidebarNav, cols: number): SidebarCardsLayout {
   const cursor = sidebarCursor(model, nav);
+  const onButton = cursorOnButton(model, nav);
   const activeIndex = model.projects.findIndex((project) => project.active);
   // The Projects window follows the cursor while the keys are in it, else keeps the active project in view.
   const anchor = nav.box === 'projects' || activeIndex < 0 ? cursor.projectIndex : activeIndex;
-  const allProjectLines = projectCardLines(model);
+  const infoLines = projectInfoLines(model);
+  const settings: CardLine | null = model.activeProjectId === null ? null : { kind: 'settings' };
+  const newAgent: CardLine | null = model.activeProjectId === null ? null : { kind: 'newAgent' };
+  const buttonRows = (button: CardLine | null): number => (button ? 1 : 0);
 
-  const projectsFull = BORDERS + Math.max(1, model.projects.length);
-  // Projects keeps a project's row and, with more projects, the `+N more` line.
-  const projectsMin = BORDERS + Math.min(2, Math.max(1, model.projects.length));
-  const projectFull = BORDERS + Math.max(1, allProjectLines.length);
+  const projectsFull = BORDERS + Math.max(1, model.projects.length) + 1;
+  // Projects keeps a project's row and, with more projects, the `+N more` line, and its button.
+  const projectsMin = BORDERS + Math.min(2, Math.max(1, model.projects.length)) + 1;
+  const projectFull = BORDERS + Math.max(1, infoLines.length + buttonRows(settings));
+  // The Project card keeps its coordinator row and its button.
+  const projectMin = BORDERS + Math.max(1, Math.min(infoLines.length, 1) + buttonRows(settings));
   const blocks = agentBlocks(model.agents, nav.expanded, cols);
-  const agentsFull = BORDERS + Math.max(1, blocks.reduce((sum, block) => sum + block.length, 0));
+  const agentsFull = BORDERS + Math.max(1, blocks.reduce((sum, block) => sum + block.length, 0)) + buttonRows(newAgent);
   const cursorAgent = model.agents[cursor.agentIndex];
-  // The Agents card's least: the cursor agent's row, or its expanded block, and a `+N more` line for the other agents.
-  const agentsMin = BORDERS + (cursorAgent && nav.expanded.has(cursorAgent.key) ? blocks[cursor.agentIndex].length : 1) + (model.agents.length > 1 ? 1 : 0);
+  // The Agents card's least: the cursor agent's row, or its expanded block, a `+N more` line for the other agents, and its button.
+  const agentsMin = BORDERS + (cursorAgent && nav.expanded.has(cursorAgent.key) ? blocks[cursor.agentIndex].length : 1)
+    + (model.agents.length > 1 ? 1 : 0) + buttonRows(newAgent);
 
   const body = (cardRows: number) => Math.max(0, cardRows - BORDERS);
+  const agentsLines = (agents: number) => withButton((room) => agentLines(blocks, room, cursor.agentIndex), newAgent, body(agents), onButton && nav.box === 'agents');
   const anyExpanded = model.agents.some((agent) => nav.expanded.has(agent.key));
   /** Each card's rows when the cards share `space` rows. */
-  const size = (space: number): { projects: number; project: number; agents: number } => {
-    let projects = projectsFull;
-    let project = projectFull;
-    if (projects + project + agentsFull > space) projects = Math.max(projectsMin, Math.min(projectsFull, space - project - agentsFull));
-    if (space - projects - project < agentsMin) project = Math.max(MIN_CARD_ROWS, space - projects - agentsMin);
+  const size = (space: number): { projects: number; project: number; agents: number; projectShort: boolean } => {
+    const share = Math.floor(space / 3);
+    let projects = share;
+    let project = share;
+    // Agents needing more than its share first takes what the others' content leaves of theirs.
+    let wanted = agentsFull - (space - 2 * share);
+    const toContent = (cardRows: number, full: number): number => {
+      const given = Math.max(0, Math.min(cardRows - full, wanted));
+      wanted -= given;
+      return cardRows - given;
+    };
+    projects = toContent(projects, projectsFull);
+    project = toContent(project, projectFull);
+    // A share below a card's least (a short sidebar) is raised to it; Projects goes below when Agents needs the rows.
+    project = Math.max(project, projectMin);
+    projects = Math.max(projects, projectsMin);
+    if (projects + project + agentsFull > space) projects = Math.max(projectsMin, Math.min(projects, space - project - agentsFull));
+    if (space - projects - project < agentsMin) project = Math.max(projectMin, space - projects - agentsMin);
     if (space - projects - project < agentsMin && nav.box !== 'projects') projects = 0;
     // A sidebar too short for every card: the top ones keep their rows, the rest are cut.
     projects = Math.max(0, Math.min(projects, space));
     project = Math.max(0, Math.min(project, space - projects));
     let agents = Math.max(0, space - projects - project);
-    const unused = () => body(agents) - agentLines(blocks, body(agents), cursor.agentIndex).length;
+    const unused = () => agentsLines(agents).filter((line) => line.kind === 'blank').length;
     // An expanded block can leave the Agents window well short of its card: a shrunk Project card takes those rows
-    // back first, then a shrunk Projects, the reverse of the order they shrank in.
-    if (anyExpanded && project < projectFull) {
-      const spare = Math.min(projectFull - project, unused());
+    // back first, then a shrunk Projects, the reverse of the order they shrank in, up to their shares.
+    if (anyExpanded && project < share) {
+      const spare = Math.min(share - project, unused());
       if (spare > 0) { project += spare; agents -= spare; }
     }
-    if (anyExpanded && projects > 0 && projects < projectsFull) {
-      const spare = Math.min(projectsFull - projects, unused());
+    if (anyExpanded && projects > 0 && projects < share) {
+      const spare = Math.min(share - projects, unused());
       if (spare > 0) { projects += spare; agents -= spare; }
     }
-    return { projects, project, agents };
+    return { projects, project, agents, projectShort: project < Math.min(projectFull, Math.max(share, projectMin)) };
   };
 
   // A blank row between cards, counted in the rows; a sidebar too short for them drops the gaps before the
-  // Project card loses rows, Projects goes or Agents is down to its least.
+  // Project card goes below its content (or its share), Projects goes or Agents is down to its least.
   const flush = size(rows);
-  let gapped = size(rows - CARD_GAP * 2);
-  if (gapped.projects === 0) gapped = size(rows - CARD_GAP);
-  const keepGaps = (gapped.agents > agentsMin || gapped.agents === flush.agents)
-    && gapped.project === flush.project && (gapped.projects > 0) === (flush.projects > 0);
+  // Two gaps with Projects shown, one without it.
+  const two = size(rows - CARD_GAP * 2);
+  const one = two.projects > 0 ? null : size(rows - CARD_GAP);
+  const gapped = one === null ? two : one.projects === 0 ? one : null;
+  const keepGaps = gapped !== null && (gapped.projects > 0) === (flush.projects > 0) && !gapped.projectShort
+    && (gapped.agents > agentsMin || gapped.agents >= Math.min(agentsFull, flush.agents));
   const { projects, project, agents } = keepGaps ? gapped : flush;
   const gap = keepGaps ? CARD_GAP : 0;
 
   const cards: CardLayout[] = [];
-  if (projects > 0) cards.push({ card: 'projects', y: 0, rows: projects, lines: projectsLines(model, body(projects), anchor) });
+  const addProject: CardLine = { kind: 'addProject' };
+  if (projects > 0) {
+    cards.push({ card: 'projects', y: 0, rows: projects, lines: withButton((room) => projectsLines(model, room, anchor), addProject, body(projects), onButton && nav.box === 'projects') });
+  }
   const projectY = projects > 0 ? projects + gap : 0;
-  cards.push({ card: 'project', y: projectY, rows: project, lines: fitProjectLines(allProjectLines, body(project), nav.box) });
-  cards.push({ card: 'agents', y: projectY + project + gap, rows: agents, lines: agentLines(blocks, body(agents), cursor.agentIndex) });
-  return { ...cursor, cols, rows, cursorCard: nav.box, cards };
+  cards.push({ card: 'project', y: projectY, rows: project, lines: withButton((room) => fitProjectLines(infoLines, room), settings, body(project), nav.box === 'project') });
+  cards.push({ card: 'agents', y: projectY + project + gap, rows: agents, lines: agentsLines(agents) });
+  return { ...cursor, cols, rows, cursorCard: nav.box, onButton, cards };
 }
 
 /** An expanded agent's buttons, left to right. */
 export type AgentButton = 'open' | 'kill';
 
+/** A card's action button, on its last body row. */
+export type CardButton = 'addProject' | 'newAgent';
+
 /**
  * What a click hits: a project's or an agent's row, whether it hit the agent
  * row's collapse marker, and (set only then) the Project card's settings
- * button or an expanded agent's button.
+ * button, the Projects or Agents card's button (`action`; its index -1) or an
+ * expanded agent's button.
  */
-export interface SidebarCardTarget { card: SidebarCard; index: number; onMarker: boolean; settings?: true; button?: AgentButton }
+export interface SidebarCardTarget { card: SidebarCard; index: number; onMarker: boolean; settings?: true; action?: CardButton; button?: AgentButton }
 
 /** The Project card's settings button, as drawn. */
 export const SETTINGS_BUTTON = '[ SETTINGS ]';
+/** The Projects and Agents cards' buttons, as drawn (in the settings button's style). */
+export const CARD_BUTTONS: Readonly<Record<CardButton, string>> = { addProject: '[ + ADD PROJECT ]', newAgent: '[ + NEW AGENT ]' };
 /** An expanded agent's buttons as drawn, one column apart. */
 export const AGENT_BUTTONS: ReadonlyArray<{ button: AgentButton; label: string }> = [{ button: 'open', label: '[ OPEN ]' }, { button: 'kill', label: '[ KILL ]' }];
 const AGENT_BUTTON_GAP = 1;
@@ -470,15 +561,17 @@ export function sidebarCardTarget(layout: SidebarCardsLayout, x: number, y: numb
   if (row < 0 || row >= card.rows - BORDERS) return null;
   const line = card.lines[row];
   const active = layout.model.projects.findIndex((project) => project.active);
+  // A card button is hit on its label's columns only.
+  const onLabel = (label: string): boolean => x >= 1 + PAD && x < 1 + PAD + Math.min(stringWidth(label), layout.cols - 2 - 2 * PAD);
   switch (line?.kind) {
     case 'coordinator':
     case 'workers':
     case 'tasks':
       return active >= 0 ? { card: 'project', index: active, onMarker: false } : null;
-    case 'settings': {
-      const onButton = x >= 1 + PAD && x < 1 + PAD + Math.min(stringWidth(SETTINGS_BUTTON), layout.cols - 2 - 2 * PAD);
-      return active >= 0 && onButton ? { card: 'project', index: active, onMarker: false, settings: true } : null;
-    }
+    case 'settings':
+      return active >= 0 && onLabel(SETTINGS_BUTTON) ? { card: 'project', index: active, onMarker: false, settings: true } : null;
+    case 'addProject': return onLabel(CARD_BUTTONS.addProject) ? { card: 'projects', index: -1, onMarker: false, action: 'addProject' } : null;
+    case 'newAgent': return onLabel(CARD_BUTTONS.newAgent) ? { card: 'agents', index: -1, onMarker: false, action: 'newAgent' } : null;
     case 'project': return { card: 'projects', index: line.index, onMarker: false };
     case 'agent': return { card: 'agents', index: line.index, onMarker: x >= 1 + PAD && x < 1 + PAD + MARKER_COLS };
     case 'detail': return { card: 'agents', index: line.index, onMarker: false };
@@ -496,7 +589,8 @@ export function sidebarCardTarget(layout: SidebarCardsLayout, x: number, y: numb
 /**
  * A click at (x, y) in the sidebar: the row's box gets the cursor and its
  * project or agent opens, on the settings button the active project's settings
- * open, on an expanded agent's `[ KILL ]` the app is asked to kill it, or, on
+ * open, on the add-project or new-agent button the app is asked for it (the
+ * cursor goes to the button), on an expanded agent's `[ KILL ]` the app is asked to kill it, or, on
  * an agent's collapse marker, the agent expands or collapses (no command).
  * Null off the rows.
  */
@@ -504,6 +598,7 @@ export function sidebarCardClick(layout: SidebarCardsLayout, nav: SidebarNav, x:
   const target = sidebarCardTarget(layout, x, y);
   if (!target) return null;
   if (target.settings) return openSettingsStep(nav, layout.model);
+  if (target.action) return buttonStep(nav, layout.model, target.action === 'addProject' ? 'projects' : 'agents');
   if (target.button === 'kill') return killAgentStep(nav, layout.model, target.index);
   if (target.onMarker) return { nav: toggleAgent(nav, layout.model.agents[target.index].key), command: null };
   return target.card === 'agents' ? openAgentStep(nav, layout.model, target.index) : openProjectStep(nav, layout.model, target.index);
@@ -653,7 +748,9 @@ export function drawSidebarCards(frame: Frame, region: Region, layout: SidebarCa
         return;
       }
       case 'settings':
-        drawCardRow(frame, x, y, cols, { left: SETTINGS_BUTTON, leftRuns: (shown) => [[shown, role('button'), true]], cursor }, theme);
+      case 'addProject':
+      case 'newAgent':
+        drawCardRow(frame, x, y, cols, { left: line.kind === 'settings' ? SETTINGS_BUTTON : CARD_BUTTONS[line.kind], leftRuns: (shown) => [[shown, role('button'), true]], cursor }, theme);
         return;
       case 'noProjects':
         drawRuns(frame, x, y, [[fitText('(none)', cols), role('text.muted')]], cols);
@@ -690,6 +787,7 @@ export function drawSidebarCards(frame: Frame, region: Region, layout: SidebarCa
         return;
       }
       case 'block':
+      case 'blank':
         return;
     }
   }
@@ -791,9 +889,11 @@ export function agentStatusRole(agent: SidebarAgent): StatusRole {
 function isCursorLine(layout: SidebarCardsLayout, line: CardLine): boolean {
   switch (line.kind) {
     case 'settings': return true;
-    case 'project': return line.index === layout.projectIndex;
-    case 'agent': return line.index === layout.agentIndex;
-    case 'block': return line.part === 'top' && line.index === layout.agentIndex;
+    case 'addProject':
+    case 'newAgent': return layout.onButton;
+    case 'project': return !layout.onButton && line.index === layout.projectIndex;
+    case 'agent': return !layout.onButton && line.index === layout.agentIndex;
+    case 'block': return !layout.onButton && line.part === 'top' && line.index === layout.agentIndex;
     default: return false;
   }
 }
