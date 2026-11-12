@@ -7,10 +7,10 @@
  * capture with the pane's history up to the screen's scrollback, restore, seed
  * modes) and then applies live `%output`.
  *
- * Sizing: the master tab owns its window (`owned`), which is sized to the
- * slot. Worker and scout views attach with `ignore-size` and never change the
- * agent's window; their screen keeps the pane's size and the app crops or pads
- * it into the slot.
+ * Sizing: every tab owns its window (`owned`): the shown tab's window is
+ * sized to the slot when it is shown and whenever the slot changes, so a
+ * worker's or scout's screen fits the slot instead of being cropped. A
+ * window keeps its last size while its tab is hidden.
  *
  * Hidden tabs: a hidden session pauses its pane's output (`refresh-client -A
  * '%pane:pause'`), so it cannot buffer without limit. tmux does not replay
