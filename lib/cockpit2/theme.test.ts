@@ -9,7 +9,7 @@ import {
 const ROLES: ThemeRole[] = [
   'chrome.border', 'chrome.borderFocus', 'chrome.title', 'chrome.titleFocus', 'chrome.meta',
   'text.primary', 'text.muted', 'text.accent', 'text.edge',
-  'row.cursor', 'button', 'button.attention', 'tab.active', 'tab.inactive', 'tab.close', 'error',
+  'row.cursor', 'button', 'button.attention', 'button.danger', 'tab.active', 'tab.inactive', 'tab.close', 'error',
   'status.active', 'status.active.badge', 'status.attention', 'status.attention.badge',
   'status.warn', 'status.warn.badge', 'status.error', 'status.error.badge', 'status.idle', 'status.idle.badge',
 ];
@@ -112,6 +112,7 @@ describe('built-in themes', () => {
       'row.cursor': cell({ inverse: true }),
       'button': cell({ underline: true, fg: palette(6) }), // EXPLORER_BUTTON
       'button.attention': cell({ bold: true, inverse: true, fg: palette(3) }), // ATTENTION_BUTTON
+      'button.danger': cell({ bold: true, inverse: true }), // the expanded agent's [ KILL ]
       'tab.active': cell({ bold: true, inverse: true }),
       'tab.inactive': PLAIN,
       'tab.close': cell({ fg: palette(1) }),
@@ -300,6 +301,15 @@ describe('terminal colours', () => {
   it.each(['amber', 'classic', 'mono'] as const)('writes nothing for %s', (name) => {
     expect(terminalColorsEnter(BUILT_IN_THEMES[name])).toBe('');
     expect(terminalColorsLeave(BUILT_IN_THEMES[name])).toBe('');
+  });
+});
+
+describe('button.danger', () => {
+  it('is a filled button in every built-in theme: red in orc and amber, inverse in classic and mono', () => {
+    expect(styleOf(BUILT_IN_THEMES.orc, 'button.danger')).toEqual(cell({ fg: parseThemeColor('#080808')!, bg: parseThemeColor('#ff5454')!, bold: true }));
+    expect(styleOf(BUILT_IN_THEMES.amber, 'button.danger')).toEqual(cell({ fg: parseThemeColor('#0a0e14')!, bg: parseThemeColor('#ef4444')!, bold: true }));
+    expect(styleOf(BUILT_IN_THEMES.classic, 'button.danger')).toEqual(cell({ bold: true, inverse: true }));
+    expect(styleOf(BUILT_IN_THEMES.mono, 'button.danger')).toEqual(cell({ bold: true, inverse: true }));
   });
 });
 

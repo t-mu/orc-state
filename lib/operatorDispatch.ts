@@ -1,3 +1,4 @@
+import { controlSocketFromEnv } from './controlClient.ts';
 import { applyOperatorMutation, authorizeOperator, type OperatorRequest } from './operatorMutations.ts';
 import { assertProjectMode, STATE_DIR } from './paths.ts';
 import { clientCredential } from './sessionCredentials.ts';
@@ -22,6 +23,7 @@ export async function submitOperatorMutation(
     warn = (line: string) => console.error(line),
     stateDir = STATE_DIR, requireProject = assertProjectMode,
   }: {
+    /** The environment the credential and the control socket come from. */
     env?: NodeJS.ProcessEnv;
     credential?: string | null;
     warn?: (line: string) => void;
@@ -32,7 +34,7 @@ export async function submitOperatorMutation(
 ): Promise<Record<string, unknown>> {
   requireProject();
   return routeToCoordinator(stateDir, request.op, {
-    credential, warn,
+    credential, warn, socketPath: controlSocketFromEnv(env),
     remote: (client) => client.operator(request),
     // The direct path applies the coordinator's own rule, so a worker session cannot use it either.
     authorize: () => authorizeOperator(stateDir, resolveControlPrincipal(stateDir, credential, credential === null), request).actorId,

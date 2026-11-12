@@ -5,6 +5,7 @@ import { MASTER_TAB, closeTab, openAgent, selectTab, showProject } from '../cock
 import { DEFAULT_COCKPIT_KEYS, resolveCockpitKeys, type CockpitKeys } from '../cockpitKeys.ts';
 import {
   FOOTER_ROWS, GUTTER_COLS, HEADER_ROWS, SIDEBAR_COLS, TAB_BAR_ROWS, agentTarget, computeLayout, dispatchMouse, footerHints, hitTest, masterTarget, quitHint, runApp, slotMessage,
+  type AgentActionHost,
 } from './app.ts';
 import type { ColorDepth } from './color.ts';
 import { BUILT_IN_THEMES, resolveTheme, type Theme } from './theme.ts';
@@ -301,11 +302,12 @@ interface StartOptions {
   setup?: (fake: FakeClient) => void;
   explorer?: ExplorerHost;
   settings?: SettingsHost;
+  agents?: AgentActionHost;
   colorDepth?: ColorDepth;
   theme?: Theme;
 }
 
-function start({ keys = DEFAULT_COCKPIT_KEYS, projects = [projectState('demo')], store = new MemoryStore(), projectId = 'demo', setup, explorer, settings, colorDepth, theme }: StartOptions = {}) {
+function start({ keys = DEFAULT_COCKPIT_KEYS, projects = [projectState('demo')], store = new MemoryStore(), projectId = 'demo', setup, explorer, settings, agents, colorDepth, theme }: StartOptions = {}) {
   const terminal = new FakeTerminal();
   const watcher = new FakeWatcher(projects);
   const clients: FakeClient[] = [];
@@ -321,6 +323,7 @@ function start({ keys = DEFAULT_COCKPIT_KEYS, projects = [projectState('demo')],
     resyncDelayMs: 5,
     explorer,
     settings,
+    agents,
     colorDepth,
     theme,
   });
@@ -1106,7 +1109,7 @@ describe('runApp sidebar and tab bar (fake tmux clients)', () => {
     await waitForFooter(terminal, 'Space: +/-');
     terminal.type(' ');
     await waitForSidebar(terminal, `[-] ${WIDE_AGENT}`);
-    await waitForSidebar(terminal, 'Enter: open tab');
+    await waitForSidebar(terminal, '[ OPEN ] [ KILL ]');
     await waitForSidebar(terminal, 'Which one?');
     expect(app.tabs().projects[0].tabs).toEqual([]);
     terminal.type(' ');
@@ -1927,5 +1930,142 @@ describe('runApp settings dialog (fake tmux client, fake settings host)', () => 
     terminal.type(`${ESC}[Z\r`);
     await waitForTabBar(terminal, 1, 'The settings could not be read');
     expect(await screenHas(terminal, DIALOG_TITLE)).toBe(false);
+  });
+});
+
+// ── killing an agent ─────────────────────────────────────────────────────────
+
+class FakeAgentHost implements AgentActionHost {
+  kills: Array<[string, string, 'worker' | 'scout', string | null]> = [];
+  /** The pending kill, resolved or rejected by the test. */
+  pending: { resolve: () => void; reject: (error: Error) => void } | null = null;
+  kill(projectId: string, agentId: string, kind: 'worker' | 'scout', taskRef: string | null) {
+    this.kills.push([projectId, agentId, kind, taskRef]);
+    return new Promise<void>((resolve, reject) => { this.pending = { resolve, reject }; });
+  }
+}
+
+describe('runApp agent block buttons and kill (fake tmux clients, fake agents host)', () => {
+  const S1_TARGET = { socket: 'orc-sock', session: 'orc-s1' };
+  /** demo with w1 on task feat/one (claude, opus) and a scout s1 (codex, model unknown). */
+  function demo(): ProjectWatchState {
+    const state = projectState('demo', { workers: [{ agent_id: 'w1', ...W1_TARGET }] });
+    const status = state.status as unknown as { worker_capacity: { slots: Array<Record<string, unknown>> }; scouts: unknown[] };
+    Object.assign(status.worker_capacity.slots[0], { active_task_ref: 'feat/one', provider: 'claude', model: 'opus' });
+    status.scouts = [{
+      agent_id: 's1', provider: 'codex', model: null, status: 'running', launched_at: null,
+      session_handle: `tmux:${S1_TARGET.socket}:${S1_TARGET.session}`, tmux_socket: S1_TARGET.socket, tmux_session: S1_TARGET.session,
+    }];
+    return state;
+  }
+  const screenHas = async (terminal: FakeTerminal, part: string) => {
+    const screen = await shown(terminal);
+    return Array.from({ length: screen.rows }, (_, y) => text(screen, y)).some((row) => row.includes(part));
+  };
+  const waitForScreen = (terminal: FakeTerminal, part: string) => waitFor(() => screenHas(terminal, part));
+  const waitForGone = (terminal: FakeTerminal, part: string) => waitFor(async () => !(await screenHas(terminal, part)));
+  /** Expands `agent` with a click on its marker; resolves with its buttons row. */
+  async function expand(terminal: FakeTerminal, agent: string): Promise<number> {
+    terminal.type(click(3, await sidebarRow(terminal, `[+] ${agent} `)));
+    const top = await sidebarRow(terminal, `[-] ${agent} `);
+    await waitFor(async () => (await sidebarRows(terminal)).slice(top - 1).some((row) => row.includes('[ OPEN ] [ KILL ]')));
+    const rows = await sidebarRows(terminal);
+    return computeLayout(terminal.cols, terminal.rows).sidebar.y + rows.findIndex((row, index) => index >= top - 1 && row.includes('[ OPEN ] [ KILL ]'));
+  }
+  const KILL_X = 14;
+  const OPEN_X = 5;
+
+  it('opens the agent\'s tab on a click on OPEN; its pane header shows the task, phase and provider · model', async () => {
+    const host = new FakeAgentHost();
+    const { terminal, app } = start({ projects: [demo()], agents: host });
+    await attached(terminal);
+    terminal.type(click(OPEN_X, await expand(terminal, 'w1')));
+    await waitFor(() => app.tabs().projects[0].active === 'w1');
+    await waitFor(async () => text(await shown(terminal), 5, 35).startsWith('┌─ [ W1 ] feat/one · busy · claude · opus '));
+    expect(host.kills).toEqual([]);
+    // A scout's header: its provider alone (its model is unknown), no role, task or phase part.
+    expect(app.apply((state) => openAgent(state, 'demo', 's1')).ok).toBe(true);
+    await waitFor(async () => /^┌─ \[ S1 \] codex ─/.test(text(await shown(terminal), 5, 35)));
+  });
+
+  it('asks before killing a worker on a click on KILL; KILL in the dialog resets its task through the host and closes it', async () => {
+    const host = new FakeAgentHost();
+    const { terminal, client, app } = start({ projects: [demo()], agents: host });
+    await attached(terminal);
+    terminal.type(click(KILL_X, await expand(terminal, 'w1')));
+    await waitForScreen(terminal, 'KILL · W1');
+    await waitForScreen(terminal, 'Kill w1? Its run is cancelled and feat/one goes');
+    expect(host.kills).toEqual([]);
+    expect(app.tabs().projects[0].tabs).toEqual([]);
+    // Behind the dialog the frame is dimmed; keys reach nothing behind it.
+    expect((await shown(terminal)).row(2)[1].style.dim).toBe(true);
+    terminal.type('x');
+    await sleep(30);
+    expect(client().sent).toEqual([]);
+    terminal.type('\r');
+    await waitFor(() => host.kills.length === 1);
+    expect(host.kills).toEqual([['demo', 'w1', 'worker', 'feat/one']]);
+    await waitForScreen(terminal, 'Killing…');
+    host.pending!.resolve();
+    await waitForGone(terminal, 'KILL · W1');
+  });
+
+  it('asks before killing a scout with the x key in the agents box, and a click on the dialog\'s KILL removes it', async () => {
+    const host = new FakeAgentHost();
+    const { terminal } = start({ projects: [demo()], agents: host });
+    await attached(terminal);
+    terminal.type(F10);
+    await waitForFooter(terminal, 'Tab: card');
+    terminal.type('jx');
+    await waitForScreen(terminal, 'Kill s1? Its session ends and it is removed.');
+    const screen = await shown(terminal);
+    const y = Array.from({ length: screen.rows }, (_, row) => row).find((row) => text(screen, row).includes('[ KILL ]  [ CANCEL ]'))!;
+    terminal.type(click(text(screen, y).indexOf('[ KILL ]') + 2, y));
+    await waitFor(() => host.kills.length === 1);
+    expect(host.kills).toEqual([['demo', 's1', 'scout', null]]);
+    host.pending!.resolve();
+    await waitForGone(terminal, 'KILL · S1');
+  });
+
+  it('cancels on Esc, q or CANCEL without killing', async () => {
+    const host = new FakeAgentHost();
+    const { terminal } = start({ projects: [demo()], agents: host });
+    await attached(terminal);
+    const buttons = await expand(terminal, 'w1');
+    for (const close of [ESC, 'q', 'cancel']) {
+      terminal.type(click(KILL_X, buttons));
+      await waitForScreen(terminal, 'KILL · W1');
+      if (close === 'cancel') {
+        const screen = await shown(terminal);
+        const y = Array.from({ length: screen.rows }, (_, row) => row).find((row) => text(screen, row).includes('[ CANCEL ]'))!;
+        terminal.type(click(text(screen, y).indexOf('[ CANCEL ]') + 2, y));
+      } else {
+        terminal.type(close);
+      }
+      await waitForGone(terminal, 'KILL · W1');
+    }
+    expect(host.kills).toEqual([]);
+  });
+
+  it('keeps the dialog open with the first line of the error when the kill fails', async () => {
+    const host = new FakeAgentHost();
+    const { terminal } = start({ projects: [demo()], agents: host });
+    await attached(terminal);
+    terminal.type(click(KILL_X, await expand(terminal, 'w1')));
+    await waitForScreen(terminal, 'KILL · W1');
+    terminal.type('\r');
+    await waitFor(() => host.pending !== null);
+    host.pending!.reject(new Error('Task not found: feat/one\nmore detail'));
+    await waitForScreen(terminal, 'Task not found: feat/one');
+    expect(await screenHas(terminal, 'more detail')).toBe(false);
+    expect(await screenHas(terminal, 'KILL · W1')).toBe(true);
+  });
+
+  it('refuses without an agents host', async () => {
+    const { terminal } = start({ projects: [demo()] });
+    await attached(terminal);
+    terminal.type(click(KILL_X, await expand(terminal, 'w1')));
+    await waitForTabBar(terminal, 1, 'This cockpit cannot kill agents.');
+    expect(await screenHas(terminal, 'KILL · W1')).toBe(false);
   });
 });

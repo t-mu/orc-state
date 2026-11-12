@@ -23,12 +23,12 @@ export type BadgeRole = `${StatusRole}.badge`;
 export const THEME_ROLES: readonly ThemeRole[] = [
   'chrome.border', 'chrome.borderFocus', 'chrome.title', 'chrome.titleFocus', 'chrome.meta',
   'text.primary', 'text.muted', 'text.accent', 'text.edge',
-  'row.cursor', 'button', 'button.attention', 'tab.active', 'tab.inactive', 'tab.close', 'error',
+  'row.cursor', 'button', 'button.attention', 'button.danger', 'tab.active', 'tab.inactive', 'tab.close', 'error',
   ...STATUS_ROLES.flatMap((role): ThemeRole[] => [role, `${role}.badge`]),
 ];
 export type ThemeRole = 'chrome.border' | 'chrome.borderFocus' | 'chrome.title' | 'chrome.titleFocus' | 'chrome.meta'
   | 'text.primary' | 'text.muted' | 'text.accent' | 'text.edge'
-  | 'row.cursor' | 'button' | 'button.attention' | 'tab.active' | 'tab.inactive' | 'tab.close' | 'error'
+  | 'row.cursor' | 'button' | 'button.attention' | 'button.danger' | 'tab.active' | 'tab.inactive' | 'tab.close' | 'error'
   | StatusRole | BadgeRole;
 
 /** A role's style; unset attributes are off and unset colours `default`. */
@@ -170,6 +170,7 @@ const orc: Theme = {
     'row.cursor': { fg: rgb('#e4e4e4'), bg: rgb('#323437'), bold: true },
     'button': { fg: ORC_AMBER, underline: true },
     'button.attention': { fg: ORC_STATUS_FG['status.attention'], bg: ORC_STATUS_BG['status.attention'], bold: true },
+    'button.danger': { fg: rgb('#080808'), bg: rgb('#ff5454'), bold: true },
     'tab.active': { fg: rgb('#080808'), bg: ORC_AMBER, bold: true },
     'tab.inactive': { fg: rgb('#bdbdbd'), bg: rgb('#323437') },
     'tab.close': { fg: ORC_STATUS_FG['status.error'] },
@@ -194,6 +195,7 @@ const amber: Theme = {
     'row.cursor': { fg: TEXT, bg: STATUS_BG['status.idle'], bold: true },
     'button': { fg: AMBER, underline: true },
     'button.attention': { fg: STATUS_FG['status.attention'], bg: STATUS_BG['status.attention'], bold: true },
+    'button.danger': { fg: rgb('#0a0e14'), bg: rgb('#ef4444'), bold: true },
     'tab.active': { fg: rgb('#0a0e14'), bg: AMBER, bold: true },
     'tab.inactive': { fg: TEXT, bg: rgb('#252830') },
     'tab.close': { fg: STATUS_FG['status.error'] },
@@ -234,6 +236,7 @@ const classic: Theme = {
     'row.cursor': { inverse: true },
     'button': { fg: palette(6), underline: true },
     'button.attention': { fg: palette(3), bold: true, inverse: true },
+    'button.danger': { bold: true, inverse: true },
     'tab.active': { bold: true, inverse: true },
     'tab.inactive': {},
     'tab.close': { fg: palette(1) },
@@ -265,6 +268,7 @@ const mono: Theme = {
     'row.cursor': { inverse: true },
     'button': { underline: true },
     'button.attention': { bold: true, inverse: true },
+    'button.danger': { bold: true, inverse: true },
     'tab.active': { bold: true, inverse: true },
     'tab.inactive': {},
     'tab.close': { bold: true },

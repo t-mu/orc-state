@@ -363,7 +363,7 @@ describe.skipIf(!tmuxOk)('orc cockpit end to end, in a host tmux pane', () => {
     send(`${ESC}[21~`);
     await waitFor('the sidebar\'s keys in the footer', () => lines()[HOST_ROWS - 1].includes('Space: +/-'));
     send(' ');
-    await waitFor('the expanded agent block', () => sidebarRow('[-] worker-a') !== '' && sidebarRow('task  orch/task-a') !== '');
+    await waitFor('the expanded agent block', () => sidebarRow('[-] worker-a') !== '' && sidebarRow('orch/task-a') !== '' && sidebarRow('[ OPEN ] [ KILL ]') !== '');
 
     const coloured = chromeCells(styledScreen()).filter(({ cell }) => cell.fg !== null || cell.bg !== null);
     expect(coloured.map(({ where, cell }) => `${where} ${JSON.stringify(cell)}`), screen()).toEqual([]);

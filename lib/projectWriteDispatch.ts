@@ -22,16 +22,18 @@ export const COORDINATOR_REQUIRED = 'coordinator not running; restart_coordinato
  * whose session only the coordinator supervises) is refused instead.
  */
 export async function routeToCoordinator<A, T>(stateDir: string, operation: string, {
-  credential, remote, authorize, direct, warn,
+  credential, remote, authorize, direct, warn, socketPath = controlSocketFromEnv(),
 }: {
   credential: string | null;
+  /** The coordinator's control socket when the environment names one (`ORC_CONTROL_SOCKET`); null finds it from `stateDir`. */
+  socketPath?: string | null;
   remote: (client: ControlClient) => Promise<T>;
   authorize: () => A;
   direct?: ((authorized: A) => T) | undefined;
   warn: (line: string) => void;
 }): Promise<T> {
   try {
-    return await remote(new ControlClient(stateDir, { credential, timeoutMs: COORDINATOR_REQUEST_TIMEOUT_MS, socketPath: controlSocketFromEnv() }));
+    return await remote(new ControlClient(stateDir, { credential, timeoutMs: COORDINATOR_REQUEST_TIMEOUT_MS, socketPath }));
   } catch (error) {
     if (!(error instanceof ControlError) || error.code !== 'unavailable') throw error;
   }

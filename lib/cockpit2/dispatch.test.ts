@@ -160,8 +160,15 @@ describe('createDispatcher: sidebar focus', () => {
     expect([sidebarKeyName('open'), sidebarKeyName('toggle')]).toEqual(['Enter', 'Space']);
   });
 
+  it('turns x into the kill key while the sidebar has the focus; elsewhere it reaches the pane or is dropped', () => {
+    expect(run('x', SIDEBAR)).toEqual([{ type: 'sidebar', key: 'kill' }]);
+    expect(sidebarKeyName('kill')).toBe('x');
+    expect(forwarded(run('x', TYPING))).toEqual(['x']);
+    expect(run('x', VIEW)).toEqual([{ type: 'drop', reason: 'view' }]);
+  });
+
   it('lets no key, paste or doubled prefix reach the pane, even from a typing tab', () => {
-    const actions = run(`xiq\x1d${ESC}[200~p${ESC}[201~${F12}${F12}`, SIDEBAR);
+    const actions = run(`ziq\x1d${ESC}[200~p${ESC}[201~${F12}${F12}`, SIDEBAR);
     expect(actions.every((action) => action.type === 'drop')).toBe(true);
     expect(actions.at(-1)).toEqual({ type: 'drop', reason: 'sidebar' });
   });

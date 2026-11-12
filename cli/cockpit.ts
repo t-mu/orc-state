@@ -38,7 +38,8 @@ import { ACTIVE_PROJECT } from '../lib/paths.ts';
 import { ProjectRegistry } from '../lib/projectRegistry.ts';
 import type { SettingsHost } from '../lib/cockpit2/settingsDialog.ts';
 import { isSameProcess, readProcessStart } from '../lib/processIdentity.ts';
-import { quitHint, runApp, type AppExit } from '../lib/cockpit2/app.ts';
+import { quitHint, runApp, type AgentActionHost, type AppExit } from '../lib/cockpit2/app.ts';
+import { submitOperatorMutation } from '../lib/operatorDispatch.ts';
 import { colorDepthFromEnv } from '../lib/cockpit2/color.ts';
 import { tmuxExplorerHost } from '../lib/cockpit2/explorer.ts';
 import { DEFAULT_THEME, terminalColorsEnter, terminalColorsLeave, themeFromEnv, type Theme } from '../lib/cockpit2/theme.ts';
@@ -99,14 +100,68 @@ export function registrySettingsHost(orc: string[], registry: ProjectRegistry = 
     read: (projectId) => registry.effectiveSettings(projectId, {}, process.env),
     write: (projectId, key, value) => registry.setSetting(key, value, projectId),
     restartCoordinator: (projectId) => new Promise((resolve, reject) => {
-      const env = { ...process.env };
-      for (const key of PROJECT_ENV) delete env[key];
       const { file, args } = coordinatorRestartCommand(orc, projectId);
-      run(file, args, { env, encoding: 'utf8' }, (error, stdout, stderr) => {
+      run(file, args, { env: commandEnv(), encoding: 'utf8' }, (error, stdout, stderr) => {
         if (error) reject(new Error(commandFailure(error, String(stdout ?? ''), String(stderr ?? ''))));
         else resolve();
       });
     }),
+  };
+}
+
+/** The environment of a command run for `projectId`: this process's, without the project selection it may have inherited. */
+function commandEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  for (const key of PROJECT_ENV) delete env[key];
+  return env;
+}
+
+/** The command line that kills a worker: `orc --project=<id> task-reset <task> --json` (its run is cancelled, the task back to todo). */
+export function taskResetCommand(orc: string[], projectId: string, taskRef: string): { file: string; args: string[] } {
+  return { file: orc[0], args: [...orc.slice(1), `--project=${projectId}`, 'task-reset', taskRef, '--json'] };
+}
+
+/** Removes a scout of the project in `stateDir`, with `env`'s credential and control socket (injectable in tests). */
+export type RemoveScout = (stateDir: string, agentId: string, env: NodeJS.ProcessEnv) => Promise<unknown>;
+
+/**
+ * The master's `remove_scout` as an operator mutation: the project's running
+ * coordinator stops the scout's session and removes it; with no coordinator
+ * running it is applied here, as every operator mutation's direct path is (no
+ * CLI command removes a scout). The cockpit owns the terminal, so the
+ * direct path's notice is not printed.
+ */
+const operatorRemoveScout: RemoveScout = (stateDir, agentId, env) => submitOperatorMutation(
+  { op: 'remove-scout', agent_id: agentId },
+  { env, stateDir, requireProject: () => { /* stateDir is the registered project's */ }, warn: () => { /* see above */ } },
+);
+
+/**
+ * The cockpit's agent actions, each run without this process's project
+ * environment: a worker is killed by resetting its task (`orc
+ * --project=<id> task-reset <task> --json`: the coordinator cancels the run
+ * and a new worker takes the task); a scout by removing it (`removeScout`,
+ * against the project's state directory from the registry).
+ */
+export function agentActionHost(orc: string[], registry: ProjectRegistry = new ProjectRegistry(), run: RunCommand = execFile as unknown as RunCommand,
+  removeScout: RemoveScout = operatorRemoveScout): AgentActionHost {
+  return {
+    kill: async (projectId, agentId, kind, taskRef) => {
+      if (kind === 'scout') {
+        const project = registry.get(projectId);
+        if (!project) throw new Error(`Project is not registered: ${projectId}`);
+        await removeScout(project.stateDir, agentId, commandEnv());
+        return;
+      }
+      if (!taskRef) throw new Error(`${agentId} has no task to reset`);
+      const { file, args } = taskResetCommand(orc, projectId, taskRef);
+      await new Promise<void>((resolve, reject) => {
+        run(file, args, { env: commandEnv(), encoding: 'utf8' }, (error, stdout, stderr) => {
+          if (error) reject(new Error(commandFailure(error, String(stdout ?? ''), String(stderr ?? ''))));
+          else resolve();
+        });
+      });
+    },
   };
 }
 
@@ -248,6 +303,8 @@ export async function runCockpit(options: CockpitOptions): Promise<CockpitResult
       input: process.stdin, output: process.stdout, write: fdWriter(process.stdout.fd),
       enter: terminalColorsEnter(theme), leave: terminalColorsLeave(theme),
     });
+    // The registry the settings dialog and the agent actions read and write.
+    const registry = new ProjectRegistry();
     app = runApp({
       terminal,
       tmuxBinary: tmuxBinary(),
@@ -258,7 +315,8 @@ export async function runCockpit(options: CockpitOptions): Promise<CockpitResult
       colorDepth: colorDepthFromEnv(process.env),
       theme: options.theme,
       explorer: tmuxExplorerHost({ tmuxBinary: tmuxBinary(), command: (projectId) => explorerCommand(thisOrc(), projectId) }),
-      settings: registrySettingsHost(thisOrc()),
+      settings: registrySettingsHost(thisOrc(), registry),
+      agents: agentActionHost(thisOrc(), registry),
     });
     if (wokenEarly) wake();
     const ended = await app.done;

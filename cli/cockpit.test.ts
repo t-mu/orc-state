@@ -7,7 +7,7 @@ import { DEFAULT_COCKPIT_KEYS } from '../lib/cockpitKeys.ts';
 import { readProcessStart } from '../lib/processIdentity.ts';
 import {
   addToCockpit, cockpitLaunch, cockpitTheme, cockpitOpeningHint, cockpitPaths, commandFailure, coordinatorRestartCommand, explorerCommand, insideOrcTmux, launchCockpit,
-  oldCockpitLockPath, readTextOrNull, registrySettingsHost, retireOldCockpit, type RunCommand,
+  oldCockpitLockPath, readTextOrNull, registrySettingsHost, retireOldCockpit, agentActionHost, taskResetCommand, type RemoveScout, type RunCommand,
 } from './cockpit.ts';
 import { ProjectRegistry } from '../lib/projectRegistry.ts';
 import { BUILT_IN_THEMES } from '../lib/cockpit2/theme.ts';
@@ -262,6 +262,65 @@ describe('registrySettingsHost', () => {
     await expect(setup(failing('{"error":{"code":"x","message":"Coordinator did not start"}}\n', '')).restartCoordinator(projectId)).rejects.toThrow('Coordinator did not start');
     registry.close(); rmSync(temp, { recursive: true, force: true });
     await expect(setup(failing('', 'warning\nError: boom\n')).restartCoordinator(projectId)).rejects.toThrow(/^Error: boom$/);
+  });
+});
+
+describe('agentActionHost', () => {
+  let temp: string;
+  let registry: ProjectRegistry;
+  let projectId: string;
+  afterEach(() => {
+    registry?.close();
+    if (temp) rmSync(temp, { recursive: true, force: true });
+  });
+  function setup(run: RunCommand, removeScout: RemoveScout = () => Promise.resolve()) {
+    temp = mkdtempSync(join(tmpdir(), 'orc-cockpit-agents-'));
+    registry = new ProjectRegistry(join(temp, 'data'));
+    const root = join(temp, 'repo');
+    mkdirSync(root);
+    execFileSync('git', ['init', '-q', root]);
+    projectId = registry.add(root).id;
+    return agentActionHost(['/bin/node', '/orc/cli/orc.ts'], registry, run, removeScout);
+  }
+  const withProjectEnv = async (work: () => Promise<void>) => {
+    const saved = process.env.ORC_STATE_DIR;
+    process.env.ORC_STATE_DIR = '/elsewhere';
+    try { await work(); } finally { if (saved === undefined) delete process.env.ORC_STATE_DIR; else process.env.ORC_STATE_DIR = saved; }
+  };
+
+  it('kills a worker as orc --project=<id> task-reset <task> --json without the project environment', async () => {
+    const calls: Array<{ file: string; args: string[]; env: NodeJS.ProcessEnv }> = [];
+    const host = setup((file, args, options, callback) => { calls.push({ file, args, env: options.env }); callback(null, '{}', ''); });
+    await withProjectEnv(() => host.kill(projectId, 'w1', 'worker', 'feat/one'));
+    expect(calls).toHaveLength(1);
+    expect(calls[0].file).toBe('/bin/node');
+    expect(calls[0].args).toEqual(['/orc/cli/orc.ts', `--project=${projectId}`, 'task-reset', 'feat/one', '--json']);
+    expect(calls[0].env.ORC_STATE_DIR).toBeUndefined();
+    expect(taskResetCommand(['orc'], 'p1', 'a/b')).toEqual({ file: 'orc', args: ['--project=p1', 'task-reset', 'a/b', '--json'] });
+  });
+
+  it('rejects a failed reset with its JSON error message, and a worker without a task', async () => {
+    const host = setup((_file, _args, _options, callback) => { callback(new Error('Command failed'), '{"error":{"code":"not_found","message":"Task not found: feat/one"}}\n', ''); });
+    await expect(host.kill(projectId, 'w1', 'worker', 'feat/one')).rejects.toThrow('Task not found: feat/one');
+    await expect(host.kill(projectId, 'w1', 'worker', null)).rejects.toThrow('w1 has no task to reset');
+  });
+
+  it('kills a scout by removing it in the project\'s state directory, without the project environment, and runs no command', async () => {
+    const removed: Array<{ stateDir: string; agentId: string; env: NodeJS.ProcessEnv }> = [];
+    const calls: string[][] = [];
+    const host = setup((_file, args, _options, callback) => { calls.push(args); callback(null, '{}', ''); }, (stateDir, agentId, env) => {
+      removed.push({ stateDir, agentId, env });
+      return Promise.resolve({ agent_id: agentId, removed: true });
+    });
+    await withProjectEnv(() => host.kill(projectId, 's1', 'scout', null));
+    expect(removed).toEqual([{ stateDir: registry.get(projectId)!.stateDir, agentId: 's1', env: expect.not.objectContaining({ ORC_STATE_DIR: expect.anything() }) as unknown }]);
+    expect(calls).toEqual([]);
+    await expect(host.kill('missing', 's1', 'scout', null)).rejects.toThrow('Project is not registered: missing');
+  });
+
+  it('rejects with why a scout could not be removed', async () => {
+    const host = setup((_file, _args, _options, callback) => { callback(null, '{}', ''); }, () => Promise.reject(new Error('Only a master session that is not offline may act as master')));
+    await expect(host.kill(projectId, 's1', 'scout', null)).rejects.toThrow('Only a master session');
   });
 });
 

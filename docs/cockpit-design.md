@@ -20,7 +20,8 @@ A widget asks for a role, never for a colour (`lib/cockpit2/theme.ts`). A role's
 | `row.cursor` | The focused card's cursor row (its attributes and background over the row's own colours) |
 | `button` | Header entries (`tasks`) |
 | `button.attention` | The header's attention badge (`! N`) |
-| `tab.active` | The active tab's block in the tab strip |
+| `button.danger` | A destructive button: an expanded agent's `[ KILL ]`, the kill confirmation's `[ KILL ]` |
+| `tab.active` | The active tab's block in the tab strip, an expanded agent's `[ OPEN ]` |
 | `tab.inactive` | The other tabs' blocks in the tab strip |
 | `tab.close` | A tab's `×` |
 | `error` | Errors in the tab bar (a refused tab change, a failed save) |
@@ -101,17 +102,27 @@ The sidebar is three cards (`lib/cockpit2/sidebarCards.ts`), top to bottom, with
 └───────────────────────────────┘
                                     gap
 ┌─ [ AGENTS ] ──────── 3 live ──┐   one row per agent, a second for one needing
-│ [+] grommash worker [PERMI…]  │   attention
+│ [+] grommash worker [PERMI…]  │   attention; an expanded agent is a box in its
+│┌ [-] boin worker 3m [IMPL…]  ┐│   status role: provider · model, the task (none
+││ claude · opus               ││   for a scout), the question, or the activity
+││ cockpit-style/foo           ││   when it says more than the row, and two
+││ editing app.ts              ││   filled buttons one column apart
+││ [ OPEN ] [ KILL ]           ││
+│└─────────────────────────────┘│
 └───────────────────────────────┘
 ```
 
-Agents: a row too narrow for the agent's role drops the role whole rather than cutting it; Space or a click on an agent's `[+]` expands it into a box with its task, phase, provider, activity or question and the open key. The keys move in three boxes, one per card, `Tab` and `Shift-Tab` cycling them: Projects (by project, `Enter` opens it), Project (only its settings button, `Enter` or a click on it opens the active project's settings dialog) and Agents. When rows run short, Projects shrinks to a `+N more` window around its cursor (the active project while the keys are elsewhere) before Agents loses rows; Agents keeps the cursor agent's row (an expanded agent's whole block) and a `+N more` line before the Project card loses rows; Projects goes last unless the keys are in it. The gaps count in the rows (two at 80x24) and go before the Project card loses a row, Projects goes or Agents is down to its least.
+Agents: a row too narrow for the agent's role drops the role whole rather than cutting it; Space or a click on an agent's `[+]` expands it into a box. Its rows: `provider · model` (`-` for one unknown), the task ref when the agent has one, then the question or reason of an agent needing a human, else its activity only when it says something (never the bare role, the task it falls back to, or the phase the badge shows; at most two lines), and the buttons: `[ OPEN ]` (`tab.active`) opens the agent's tab as `Enter` does, `[ KILL ]` (`button.danger`) kills it as `x` does, after a confirmation (Dialog layer). The keys move in three boxes, one per card, `Tab` and `Shift-Tab` cycling them: Projects (by project, `Enter` opens it), Project (only its settings button, `Enter` or a click on it opens the active project's settings dialog) and Agents. When rows run short, Projects shrinks to a `+N more` window around its cursor (the active project while the keys are elsewhere) before Agents loses rows; Agents keeps the cursor agent's row (an expanded agent's whole block) and a `+N more` line before the Project card loses rows; Projects goes last unless the keys are in it. The gaps count in the rows (two at 80x24) and go before the Project card loses a row, Projects goes or Agents is down to its least.
 
 ## Dialog layer
 
 A dialog is drawn over everything else: the frame behind it is dimmed (`dim` on every cell), the dialog is a box (`drawBox`, focused border) filled with the theme's panel surface (the default background without surfaces), centred, at most 52 columns, and the terminal cursor is hidden. While it is open it takes every key and click; nothing reaches the pane, the sidebar or the tab strip, and pastes and other mouse events are dropped.
 
-The one dialog is the project settings dialog (`lib/cockpit2/settingsDialog.ts`), opened by the Project card's `[ SETTINGS ]` button (`Enter` or a click), titled `[ SETTINGS · <PROJECT> ]`. It edits the project-scope registry settings ([configuration.md](configuration.md), Settings), reading the effective values (`orc project config list`) when it opens:
+There are two dialogs, one open at a time, sharing this routing.
+
+The kill confirmation (`lib/cockpit2/confirmDialog.ts`, a generic confirmation), titled `[ KILL · <AGENT> ]`, says what killing does: for a worker `Kill <agent>? Its run is cancelled and <task> goes back to the backlog (task reset); a new worker picks it up.`, for a scout `Kill <agent>? Its session ends and it is removed.` Its buttons are `[ KILL ]` (`button.danger`) and `[ CANCEL ]` (`tab.inactive`), a `▸` before the one under the cursor, which starts on `[ KILL ]`; arrows, `h`/`l`, `j`/`k`, `Tab` and `Space` move between them, `Enter` or a click presses one, `Esc` or `q` cancel. Confirmed, a worker's task is reset (`orc --project=<id> task-reset <task> --json`) and a scout removed (the `remove-scout` operator mutation, through the project's coordinator, applied directly when none runs); while it runs the dialog shows `Killing…` and ignores keys, a failure keeps it open with the error's first line (`error`), success closes it. A worker without a task, or a cockpit without the agent actions, refuses in the tab bar instead.
+
+The project settings dialog (`lib/cockpit2/settingsDialog.ts`), opened by the Project card's `[ SETTINGS ]` button (`Enter` or a click), titled `[ SETTINGS · <PROJECT> ]`. It edits the project-scope registry settings ([configuration.md](configuration.md), Settings), reading the effective values (`orc project config list`) when it opens:
 
 | Field | Key | Choices | Applies |
 |---|---|---|---|
