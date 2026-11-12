@@ -275,9 +275,10 @@ function mockSpawn(spawnMock = makeSpawnMock(), spawnSyncMock: ReturnType<typeof
       if (command === 'git' && args.includes('--show-toplevel')) {
         return { status: 0, stdout: `${options?.cwd ?? process.cwd()}\n` };
       }
-      if (command === 'ps') {
-        return { status: 0, stdout: `node ${coordinatorScriptPath}` };
-      }
+      // The real ps: without procfs (macOS) process start times and command lines come from it,
+      // and one canned answer for every ps query would make every process look like a coordinator
+      // and no recorded start time match.
+      if (command === 'ps') return spawnSync(command, args, options);
       if (command === 'tmux' && args[0] === 'attach-session') {
         return tmuxFake.onAttach(args, (options as { env?: NodeJS.ProcessEnv } | undefined)?.env);
       }

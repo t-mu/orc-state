@@ -11,6 +11,7 @@ import { startControlServer, type ControlServer } from '../lib/controlServer.ts'
 import { credentialHash } from '../lib/sessionCredentials.ts';
 import { initProjectTaskStore } from '../lib/projectTasks.ts';
 import { importTaskMarkdown } from '../lib/taskMarkdown.ts';
+import { tmuxSessionName, tmuxSocketName } from '../lib/tmuxNames.ts';
 
 // Task 203 acceptance: a structured provider (Codex app-server, played by
 // test-fixtures/fake-codex-app-server.ts) is claimed, ACKs the task envelope
@@ -73,7 +74,10 @@ async function waitFor<T>(probe: () => T | null | undefined | false, label: stri
   }
 }
 
-describe('structured runtime lifecycle e2e (task 203)', () => {
+// The master runs in orc's tmux server, so this needs tmux like the other tmux e2e tests.
+const hasTmux = spawnSync('tmux', ['-V']).status === 0;
+
+describe.skipIf(!hasTmux)('structured runtime lifecycle e2e (task 203)', () => {
   let dir: string;
   let worktree: string;
   let control: ControlServer | null = null;
@@ -116,6 +120,7 @@ describe('structured runtime lifecycle e2e (task 203)', () => {
     coordinator.getCoordinatorCommandDispatcher().stop();
     const adapter = coordinator.getCoordinatorAdapter('codex');
     for (const claim of readClaims(dir)) await adapter.stop(`app:${String(claim.agent_id)}`);
+    spawnSync('tmux', ['-L', tmuxSocketName(dir), 'kill-server']);
     closeAllDatabases();
     vi.doUnmock('../lib/runWorktree.ts');
     for (const key of Object.keys(process.env)) if (!(key in savedEnv)) delete process.env[key];
@@ -139,6 +144,10 @@ describe('structured runtime lifecycle e2e (task 203)', () => {
         registered_at: new Date().toISOString(),
       }],
     }));
+    // The master runs detached in orc's tmux server: the coordinator probes it each
+    // tick and retires a master whose session is gone, revoking its secret.
+    const masterSession = spawnSync('tmux', ['-L', tmuxSocketName(dir), 'new-session', '-d', '-s', tmuxSessionName('master'), 'sleep 600'], { encoding: 'utf8' });
+    expect(masterSession.status, masterSession.stderr).toBe(0);
     recordProviderSession(dir, {
       sessionId: 'master-e2e', runId: null, agentId: 'master', provider: 'claude',
       providerRef: null, startedAt: new Date().toISOString(), credentialHash: credentialHash('master-e2e-secret'),

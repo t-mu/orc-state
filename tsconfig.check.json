@@ -6,6 +6,7 @@
     "**/*.test.tsx",
     "**/*.e2e.test.ts",
     "**/*.e2e.test.tsx",
-    "test-fixtures/**"
+    "test-fixtures/**",
+    "scripts/consumer/**"
   ]
 }

@@ -11,7 +11,8 @@ describe('defaultSocketPath', () => {
   let longStateDir: string;
 
   beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), 'orc-sock-'));
+    // A short root whatever TMPDIR is: these tests measure socket path lengths themselves.
+    root = mkdtempSync(join(process.platform === 'win32' ? tmpdir() : '/tmp', 'orc-sock-'));
     home = join(root, 'h');
     tmp = join(root, 't');
     longStateDir = join(root, 'state', 'x'.repeat(120));
@@ -37,6 +38,19 @@ describe('defaultSocketPath', () => {
     const longHome = join(root, 'y'.repeat(100));
     const path = defaultSocketPath(longStateDir, { platform: 'darwin', homeDir: longHome, tmpDir: tmp });
     expect(path.startsWith(join(tmp, 'orc-control-'))).toBe(true);
+  });
+
+  it('never computes a socket path over 103 bytes, even under a macOS-length tmpdir', () => {
+    // As long as macOS's tmpdir(), `/var/folders/zz/zyxvpxvq6csfxvn_n0000000000000/T` (48 bytes).
+    const macTmp = join(root, 'T'.repeat(Math.max(1, 48 - root.length - 1)));
+    for (const platform of ['darwin', 'linux'] as const) {
+      for (const stateDir of [join(root, 's'), longStateDir, join(macTmp, 'orc-state-xxxxxx', 'x'.repeat(40))]) {
+        for (const tmpDir of [tmp, macTmp]) {
+          const path = defaultSocketPath(stateDir, { platform, homeDir: home, tmpDir });
+          expect(Buffer.byteLength(path), path).toBeLessThanOrEqual(103);
+        }
+      }
+    }
   });
 
   it('keeps the tmpdir fallback on Linux', () => {

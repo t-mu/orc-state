@@ -52,6 +52,17 @@ function seedClaims(claims: unknown[]) {
   writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims }, null, 2));
 }
 
+/**
+ * The status payload's size with the project's repo path at a fixed length: the
+ * test's temp dir varies by machine (macOS's /var/folders/... is long), so the
+ * 2KB budget is measured against a typical path, not the test runner's.
+ */
+function statusBytes(status: Record<string, unknown>): number {
+  const project = status.project as Record<string, unknown> | null | undefined;
+  const fixed = project ? { ...status, project: { ...project, target_repo_root: '/home/user/projects/example-repo' } } : status;
+  return Buffer.byteLength(JSON.stringify(fixed), 'utf8');
+}
+
 function seedEventsLines(lines: string[]) {
   const body = lines.length > 0 ? `${lines.join('\n')}\n` : '';
   writeFileSync(join(dir, 'events.jsonl'), body);
@@ -461,7 +472,7 @@ describe('mcp read handlers', () => {
     ]);
 
     const status = await handleGetStatus(dir);
-    expect(Buffer.byteLength(JSON.stringify(status), 'utf8')).toBeLessThanOrEqual(2048);
+    expect(statusBytes(status)).toBeLessThanOrEqual(2048);
   });
 
   it('handleGetAgentWorkview returns idle view when the agent has no assigned work', () => {
@@ -522,7 +533,7 @@ describe('mcp read handlers', () => {
     const status = await handleGetStatus(dir);
     const withActivity = (status.active_tasks as Array<Record<string, unknown>>).filter((t) => t.current_activity);
     expect(withActivity.length).toBeGreaterThan(0);
-    expect(Buffer.byteLength(JSON.stringify(status), 'utf8')).toBeLessThanOrEqual(2048);
+    expect(statusBytes(status)).toBeLessThanOrEqual(2048);
   });
 
   it('get_agent_workview returns current_activity null when the run has no snapshot', () => {

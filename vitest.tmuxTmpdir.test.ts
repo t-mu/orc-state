@@ -1,10 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readdirSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { setup, TMUX_TMPDIR_PREFIX } from './vitest.tmuxTmpdir.mjs';
+import { setup, SOCKET_PATH_MAX_BYTES, TMUX_TMPDIR_PREFIX, tmuxSocketPathBytes, tmuxTmpBase } from './vitest.tmuxTmpdir.mjs';
 
 const REPO_ROOT = import.meta.dirname;
 const CONFIGS = ['vitest.config.mjs', 'vitest.e2e.config.mjs', 'vitest.integration.config.mjs', 'vitest.real-providers.config.mjs'];
@@ -15,8 +14,14 @@ describe('vitest runs tmux in a private TMUX_TMPDIR (tmux-socket-leak)', () => {
   it('this test process inherited a throwaway TMUX_TMPDIR, not the real /tmp/tmux-<uid>', () => {
     const dir = process.env.TMUX_TMPDIR;
     expect(dir).toBeTruthy();
-    expect(dir!.startsWith(join(tmpdir(), TMUX_TMPDIR_PREFIX))).toBe(true);
+    expect(dir!.startsWith(join(tmuxTmpBase(), TMUX_TMPDIR_PREFIX))).toBe(true);
     expect(existsSync(dir!)).toBe(true);
+  });
+
+  it('measures a socket path as tmux resolves it, under the 104-byte limit', () => {
+    const resolved = join(realpathSync(process.env.TMUX_TMPDIR!), `tmux-${process.getuid?.() ?? 0}`, 'orc-x');
+    expect(tmuxSocketPathBytes('orc-x')).toBe(Buffer.byteLength(resolved));
+    expect(SOCKET_PATH_MAX_BYTES).toBe(103);
   });
 
   it.each(CONFIGS)('%s registers the TMUX_TMPDIR global setup', async (config) => {

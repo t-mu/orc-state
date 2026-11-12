@@ -4,11 +4,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { tmuxExplorerHost } from './explorer.ts';
+import { SOCKET_PATH_MAX_BYTES, tmuxSocketPathBytes } from '../../vitest.tmuxTmpdir.mjs';
 
 const hasTmux = spawnSync('tmux', ['-V'], { encoding: 'utf8' }).status === 0;
 
 describe.skipIf(!hasTmux)('tmuxExplorerHost (private tmux server)', () => {
   const socket = `orc-cockpit-explorer-test-${process.pid}-${Date.now()}`;
+  it('keeps its tmux socket paths under the 104-byte limit', () => {
+    for (const name of [socket]) expect(tmuxSocketPathBytes(name), name).toBeLessThanOrEqual(SOCKET_PATH_MAX_BYTES);
+  });
   const tmux = (...args: string[]) => spawnSync('tmux', ['-L', socket, ...args], { encoding: 'utf8' });
   afterAll(() => { tmux('kill-server'); });
 

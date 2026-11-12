@@ -30,6 +30,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defaultSocketPath } from '../lib/controlProtocol.ts';
+import { startFakeCoordinator } from '../test-fixtures/fakeCoordinator.ts';
 
 const ORC = resolve(import.meta.dirname, '..', 'cli', 'orc.ts');
 const ORC_ENV_KEYS = ['ORC_STATE_DIR', 'ORC_PROJECT_ID', 'ORC_DATA_HOME',
@@ -70,6 +71,11 @@ function orcOk(args: string[], options?: Parameters<typeof orc>[1]): string {
  * the socket it is waiting on.
  */
 function orcAsync(args: string[], cwd: string, env: NodeJS.ProcessEnv): Promise<string> {
+  return orcAsyncOutput(args, cwd, env).then((output) => output.stdout);
+}
+
+/** `orcAsync`, resolving with stderr too. */
+function orcAsyncOutput(args: string[], cwd: string, env: NodeJS.ProcessEnv): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(process.execPath, [ORC, ...args], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
@@ -78,7 +84,7 @@ function orcAsync(args: string[], cwd: string, env: NodeJS.ProcessEnv): Promise<
     child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8'); });
     child.on('error', reject);
     child.on('close', (status) => {
-      if (status === 0) resolvePromise(stdout);
+      if (status === 0) resolvePromise({ stdout, stderr });
       else reject(new Error(`orc ${args.join(' ')} failed (${status}): ${stderr}${stdout}`));
     });
   });
@@ -108,7 +114,7 @@ type Adapter = Record<string, unknown> & {
   start: (agentId: string, config: Record<string, unknown>) => Promise<unknown>;
   send: (handle: string, text: string) => Promise<unknown>;
 };
-interface Pending { agentId: string; kind: 'report' | 'task' | 'rebase' | 'rebased' | 'finish'; runId: string; token?: string; worktree?: string; specPath?: string }
+interface Pending { agentId: string; kind: 'ready' | 'task' | 'rebase' | 'rebased' | 'finish'; runId: string; hook?: string; worktree?: string; specPath?: string }
 
 /**
  * What the providers would do with their input. `wrap` decorates each real
@@ -131,11 +137,13 @@ function makeWorkers(writable: string[]) {
         envs.set(agentId, config.env as NodeJS.ProcessEnv);
         // The sandbox the provider was launched with (removed again when the session stops).
         const { STATE_DIR } = await import('../lib/paths.ts');
-        const launched = json<{ sandbox?: { filesystem: { allowWrite: string[] }; network?: { allowUnixSockets: string[] } } }>(
-          readFileSync(join(STATE_DIR, 'pty-settings', `${agentId}.json`), 'utf8'));
+        const launched = json<{
+          sandbox?: { filesystem: { allowWrite: string[] }; network?: { allowUnixSockets: string[] } };
+          hooks: { SessionStart: Array<{ hooks: Array<{ command: string }> }> };
+        }>(readFileSync(join(STATE_DIR, 'pty-settings', `${agentId}.json`), 'utf8'));
         settings.set(agentId, { allowWrite: launched.sandbox?.filesystem.allowWrite ?? [], unixSockets: launched.sandbox?.network?.allowUnixSockets ?? [] });
-        // The provider reads its bootstrap once running, after the coordinator has recorded the session.
-        pending.push({ agentId, kind: 'report', runId: '', token: /session-id=(\S+)/.exec(String(config.system_prompt))![1] });
+        // Claude runs its SessionStart hook once running, after the coordinator has recorded the session.
+        pending.push({ agentId, kind: 'ready', runId: '', hook: launched.hooks.SessionStart[0].hooks[0].command });
         return result;
       },
       async send(handle: string, text: string) {
@@ -161,15 +169,23 @@ function makeWorkers(writable: string[]) {
     return items;
   }
 
-  async function reportForDuty() {
-    for (const item of take('report')) {
-      await workerOrc(item.agentId, ['report-for-duty', `--agent-id=${item.agentId}`, `--session-id=${item.token}`], tmpdir());
+  /**
+   * Claude's SessionStart hook, run as Claude runs it (outside its sandbox, with the
+   * session's environment): its record is the session's readiness signal (a7704b8).
+   */
+  function sessionStart() {
+    for (const item of take('ready')) {
+      const result = spawnSync('sh', ['-c', item.hook!], {
+        env: { ...cleanEnv(), ...envs.get(item.agentId) }, encoding: 'utf8',
+        input: JSON.stringify({ session_id: `claude-${item.agentId}`, source: 'startup', hook_event_name: 'SessionStart' }),
+      });
+      if (result.status !== 0) throw new Error(`SessionStart hook for ${item.agentId} failed (${result.status}): ${result.stderr}`);
     }
   }
 
   /** Start every delivered task (both workers are in progress before either completes). */
   async function startTasks(): Promise<Array<Required<Pending>>> {
-    await reportForDuty();
+    sessionStart();
     const started = take('task') as Array<Required<Pending>>;
     for (const item of started) {
       await workerOrc(item.agentId, ['run-start', `--run-id=${item.runId}`, `--agent-id=${item.agentId}`], item.worktree);
@@ -196,7 +212,7 @@ function makeWorkers(writable: string[]) {
 
   /** Follow-ups the coordinator asked for: a finalize rebase, or the terminal run-finish. */
   async function handleFollowUps(worktrees: Map<string, string>) {
-    await reportForDuty();
+    sessionStart();
     for (const item of take('rebased')) await workerOrc(item.agentId, ['run-work-complete', `--run-id=${item.runId}`, `--agent-id=${item.agentId}`], worktrees.get(item.runId)!);
     for (const item of take('rebase')) {
       const worktree = worktrees.get(item.runId)!;
@@ -329,14 +345,31 @@ describe('clean-repository project workflow', () => {
       expect(status.project.id).toBe(project.id);
       const active = json<{ runs: Array<{ run_id: string; state: string }> }>(orcOk(['runs', '--json']));
       expect(active.runs.map((run) => run.state).sort()).toEqual(['in_progress', 'in_progress']);
-      const tui = orcOk(['watch', '--once']);
+      // A client connects only to a process that runs a coordinator script (9f818af; `orc watch`
+      // reads through the client since 401f9f0), and this coordinator runs inside the test
+      // process. A stand-in holds the pid lock for the call (no tick runs meanwhile), so the
+      // dashboard connects to the real control socket.
+      const pidFile = join(STATE_DIR, 'coordinator.pid');
+      const ownLock = readFileSync(pidFile, 'utf8');
+      const standIn = await startFakeCoordinator();
+      let tui: string;
+      try {
+        writeFileSync(pidFile, JSON.stringify({ pid: standIn.pid }));
+        tui = await orcAsync(['watch', '--once'], target, cleanEnv());
+      } finally {
+        writeFileSync(pidFile, ownLock);
+        await standIn.stop();
+      }
       expect(tui).toContain(`demo (${project.id})`);
       for (const item of started) expect(tui).toContain(item.agentId);
+      // `orc attach` opens a real tmux client (75fe0cb), so without a terminal it points to the snapshot.
       const attached = orc(['attach', started[0].agentId]);
-      expect(attached.status, attached.stderr).toBe(0);
-      expect(attached.stderr).toContain(`project: demo (${project.id})`);
-      // Attach reads that session's real output: the bootstrap the coordinator typed into it.
-      expect(attached.stdout).toContain(`agent_id: ${started[0].agentId}`);
+      expect(attached.status).toBe(1);
+      expect(attached.stderr).toContain(`orc terminal provider ${started[0].runId} --once`);
+      const snapshot = await orcAsyncOutput(['terminal', 'provider', started[0].runId, '--once'], target, cleanEnv());
+      expect(snapshot.stderr).toContain(`project: demo (${project.id})`);
+      // The snapshot is that session's real output: the bootstrap the coordinator typed into it.
+      expect(snapshot.stdout).toContain(`--agent-id=${started[0].agentId}`);
       expect(orcOk(['run-info', started[0].runId])).toContain(started[0].runId);
 
       // ── Restart the coordinator mid-run: shut down, start again, adopt the live sessions. ──

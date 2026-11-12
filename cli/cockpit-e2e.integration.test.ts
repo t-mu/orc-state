@@ -16,7 +16,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { stringWidth } from '../lib/cellWidth.ts';
 import { checkTmux, shellQuote, tmuxSessionName, tmuxSocketName } from '../adapters/tmux.ts';
@@ -31,6 +30,7 @@ import { reduceLifecycleEvent } from '../lib/workerLifecycleReducer.ts';
 import type { Claim } from '../types/claims.ts';
 import { startFakeCoordinator, type FakeCoordinator } from '../test-fixtures/fakeCoordinator.ts';
 import { readClaims, seedState } from '../test-fixtures/stateHelpers.ts';
+import { SOCKET_PATH_MAX_BYTES, tmuxSocketPathBytes, tmuxTmpBase } from '../vitest.tmuxTmpdir.mjs';
 
 const tmuxOk = checkTmux().ok;
 const repoRoot = join(import.meta.dirname, '..');
@@ -212,8 +212,14 @@ function startCoordinatorTick(): NodeJS.Timeout {
 }
 
 describe.skipIf(!tmuxOk)('orc cockpit end to end, in a host tmux pane', () => {
+  it('keeps its tmux socket paths under the 104-byte limit', () => {
+    for (const name of [HOST, tmuxSocketName(dir), 'orc-explorer']) expect(tmuxSocketPathBytes(name), name).toBeLessThanOrEqual(SOCKET_PATH_MAX_BYTES);
+  });
   beforeAll(async () => {
-    temp = mkdtempSync(join(tmpdir(), 'orc-cockpit-e2e-'));
+    // A short base, not tmpdir(): under macOS's /var/folders/... the socket paths
+    // in `<temp>/tmux/tmux-<uid>/` pass the 104-byte limit, and the stopped
+    // project's `cd <repo> && orc start-session` hint no longer fits the slot.
+    temp = mkdtempSync(join(tmuxTmpBase(), 'orc-cockpit-e2e-'));
     tmuxTmpdir = join(temp, 'tmux');
     mkdirSync(tmuxTmpdir);
     dataHome = join(temp, 'data');

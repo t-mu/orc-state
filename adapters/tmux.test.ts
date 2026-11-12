@@ -3,9 +3,11 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  checkTmux, checkTmuxVersion, createTmuxAdapter, failedInspection, parseDeadPane, parseTmuxVersion, tmuxAttachCommand, tmuxSessionName,
+  checkTmux, checkTmuxVersion, createTmuxAdapter, failedInspection, parseDeadPane, parsePaneSignal, parseTmuxVersion, tmuxAttachCommand, tmuxSessionName,
   tmuxSocketName, tmuxSocketPath,
 } from './tmux.ts';
+import { EXPLORER_SOCKET } from '../lib/cockpit2/explorer.ts';
+import { classifySessionExit } from '../lib/sessionResume.ts';
 
 const originalBin = process.env.ORC_TMUX_BIN;
 
@@ -25,6 +27,28 @@ describe('tmuxSocketPath', () => {
     expect(tmuxSocketPath('orc-abc')).toBe(join('/tmp', `tmux-${uid}`, 'orc-abc'));
     process.env.TMUX_TMPDIR = '';
     expect(tmuxSocketPath('orc-abc')).toBe(join('/tmp', `tmux-${uid}`, 'orc-abc'));
+  });
+});
+
+describe('orc tmux socket paths stay under the Unix socket limit', () => {
+  // sun_path holds 104 bytes on macOS (108 on Linux) including the NUL.
+  const LIMIT = 103;
+  const uid = process.getuid?.() ?? 0;
+
+  it('fits for any state dir, in tmux\'s default directory as macOS resolves it', () => {
+    delete process.env.TMUX_TMPDIR;
+    const longStateDir = `/Users/someone/${'very-long-directory-name/'.repeat(10)}.orc-state`;
+    for (const stateDir of ['/s', longStateDir]) {
+      const name = tmuxSocketName(stateDir);
+      expect(Buffer.byteLength(tmuxSocketPath(name))).toBeLessThanOrEqual(LIMIT);
+      // tmux resolves /tmp to /private/tmp on macOS before connecting.
+      expect(Buffer.byteLength(join('/private/tmp', `tmux-${uid}`, name))).toBeLessThanOrEqual(LIMIT);
+    }
+  });
+
+  it('fits for the cockpit\'s explorer server', () => {
+    delete process.env.TMUX_TMPDIR;
+    expect(Buffer.byteLength(join('/private/tmp', `tmux-${uid}`, EXPLORER_SOCKET))).toBeLessThanOrEqual(LIMIT);
   });
 });
 
@@ -100,7 +124,27 @@ describe('parseDeadPane', () => {
     expect(parseDeadPane('1|||812\n')).toEqual({ dead: true, status: null, serverPid: 812 });
     expect(parseDeadPane('1|0||812\n')).toEqual({ dead: true, status: { code: 0, signal: null }, serverPid: 812 });
     expect(parseDeadPane('1||9|812\n')).toEqual({ dead: true, status: { code: null, signal: 9 }, serverPid: 812 });
-    expect(parseDeadPane('1||KILL|\n')).toEqual({ dead: true, status: { code: null, signal: 'KILL' }, serverPid: null });
+    expect(parseDeadPane('1||KILL|\n')).toEqual({ dead: true, status: { code: null, signal: 9 }, serverPid: null });
+  });
+
+  it('reads tmux 3.6\'s signal names (kill) as the numbers older tmux prints', () => {
+    expect(parseDeadPane('1||kill|812\n')).toEqual({ dead: true, status: { code: null, signal: 9 }, serverPid: 812 });
+    expect(parseDeadPane('1||term|812\n')).toEqual({ dead: true, status: { code: null, signal: 15 }, serverPid: 812 });
+    // Session resume still sees a crash.
+    expect(classifySessionExit(parseDeadPane('1||kill|812\n').status, { workComplete: true })).toBe('crash');
+  });
+});
+
+describe('parsePaneSignal', () => {
+  it('takes a number, or a name with or without SIG in any case, as the signal number', () => {
+    for (const text of ['9', 'kill', 'KILL', 'SIGKILL', 'sigkill']) expect(parsePaneSignal(text)).toBe(9);
+    expect(parsePaneSignal('hup')).toBe(1);
+  });
+
+  it('is null without a signal and keeps a name the platform does not know', () => {
+    expect(parsePaneSignal('')).toBeNull();
+    expect(parsePaneSignal(undefined)).toBeNull();
+    expect(parsePaneSignal('bogus')).toBe('bogus');
   });
 });
 
