@@ -117,6 +117,11 @@ export class TmuxControlClient extends EventEmitter<TmuxControlEvents> {
   /** `-S` for a tmux 3.7+ server's paste-buffer, '' for an older one; null until the version reply. */
   private rawPasteFlag: string | null = null;
   private readonly serverVersion: Promise<void>;
+  /** Parsed events waiting for `dispatch`, which runs them a turn after a reply that settled a command. */
+  private backlog: Array<TmuxControlEvent | TmuxControlReplyEvent> = [];
+  private dispatchScheduled = false;
+  private afterResize = false;
+  private corked = false;
 
   constructor(options: TmuxControlOptions) {
     super();
@@ -135,13 +140,27 @@ export class TmuxControlClient extends EventEmitter<TmuxControlEvents> {
     );
   }
 
-  /** Runs one tmux command; resolves with its reply lines, rejects on `%error` or exit. */
+  /**
+   * Writes to tmux. What is written in one tick goes out as one write, so tmux
+   * reads those commands together and runs them back to back, with no pane
+   * output read in between (a capture and a mode query issued together agree).
+   */
+  private write(text: string): void {
+    if (!this.corked) {
+      this.corked = true;
+      this.proc.stdin.cork();
+      process.nextTick(() => { this.corked = false; this.proc.stdin.uncork(); });
+    }
+    this.proc.stdin.write(text);
+  }
+
+  /** Runs one tmux command; resolves with its reply lines, rejects on `%error` or exit. Commands run in the order issued. */
   command(line: string): Promise<string[]> {
     if (this.exited !== null) return Promise.reject(new Error(`tmux control client exited: ${this.exited}`));
     return new Promise((resolve, reject) => {
       this.pending.push({ resolve, reject });
       if (this.unattached) this.unattached.push(line);
-      else this.proc.stdin.write(`${line}\n`);
+      else this.write(`${line}\n`);
     });
   }
 
@@ -216,14 +235,31 @@ export class TmuxControlClient extends EventEmitter<TmuxControlEvents> {
   }
 
   private onData(chunk: Buffer): void {
-    // The parser follows a decoded %layout-change's `resize` with the line as a `notification`; that line is not re-sent.
-    let afterResize = false;
-    for (const event of this.parser.push(chunk)) {
+    this.backlog.push(...this.parser.push(chunk));
+    if (!this.dispatchScheduled) this.dispatch();
+  }
+
+  /**
+   * Hands parsed events on in order. After a reply that settles a command, the
+   * events behind it wait a turn (setImmediate), so the code awaiting that
+   * command runs before any of them: it sees exactly what tmux sent after its
+   * reply. PaneSession's restore relies on this, dropping output until the
+   * capture's reply and keeping what follows; dispatched at once, output in the
+   * same read as the reply would be dropped yet missing from the capture.
+   */
+  private dispatch(): void {
+    this.dispatchScheduled = false;
+    const events = this.backlog;
+    this.backlog = [];
+    for (let index = 0; index < events.length; index++) {
       if (this.exited !== null) return;
-      const decodedLayout = afterResize;
-      afterResize = event.type === 'resize';
+      const event = events[index];
+      // The parser follows a decoded %layout-change's `resize` with the line as a `notification`; that line is not re-sent.
+      const decodedLayout = this.afterResize;
+      this.afterResize = event.type === 'resize';
+      let settled = false;
       switch (event.type) {
-        case 'reply': this.onReply(event.lines, event.error, event.flags); break;
+        case 'reply': settled = this.onReply(event.lines, event.error, event.flags); break;
         case 'output': this.emit('output', event.pane, event.data); break;
         case 'exit': this.end(event.reason); break;
         case 'resize': this.emit('resize', event.columns, event.rows); break;
@@ -232,28 +268,35 @@ export class TmuxControlClient extends EventEmitter<TmuxControlEvents> {
           if (!(decodedLayout && event.line.startsWith('%layout-change'))) this.emit('notification', event.line);
           break;
       }
+      if (settled && index + 1 < events.length) {
+        this.backlog = events.slice(index + 1);
+        this.dispatchScheduled = true;
+        setImmediate(() => this.dispatch());
+        return;
+      }
     }
   }
 
   /**
    * Only blocks flagged 1 answer commands from stdin (tmux cmd-queue.c: the guard's flags are
    * CMDQ_STATE_CONTROL); a block flagged 0 is the attach, or another command tmux ran for this
-   * client, and never consumes a pending command.
+   * client, and never consumes a pending command. True when the reply settled a command.
    */
-  private onReply(lines: string[], error: boolean, flags: number): void {
+  private onReply(lines: string[], error: boolean, flags: number): boolean {
     if (flags === 1) {
-      if (this.unattached) return; // nothing written yet, so not ours
+      if (this.unattached) return false; // nothing written yet, so not ours
       const waiter = this.pending.shift();
-      if (!waiter) return;
+      if (!waiter) return false;
       if (error) waiter.reject(new Error(lines.join('\n') || 'tmux command failed'));
       else waiter.resolve(lines);
-      return;
+      return true;
     }
     if (this.unattached) {
       // A failed attach ends the client with %exit; its 'exit' rejects the held commands.
-      if (!error) for (const line of this.unattached) this.proc.stdin.write(`${line}\n`);
+      if (!error) for (const line of this.unattached) this.write(`${line}\n`);
       this.unattached = null;
     }
+    return false;
   }
 
   /** Fires `exit` once and rejects every pending command. */

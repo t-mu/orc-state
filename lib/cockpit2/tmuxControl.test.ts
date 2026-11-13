@@ -1,4 +1,4 @@
-import { PassThrough } from 'node:stream';
+import { PassThrough, Writable } from 'node:stream';
 import { EventEmitter } from 'node:events';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import type { PaneModes } from './screen.ts';
@@ -65,6 +65,7 @@ describe('TmuxControlClient (fake process)', () => {
     proc.ok('window ä');
     await expect(first).resolves.toEqual(['pane line 1', 'pane line 2']);
     await expect(second).resolves.toEqual(['window ä']);
+    await tick();
     expect(proc.written).toEqual(['list-panes', 'list-windows']);
   });
 
@@ -92,6 +93,46 @@ describe('TmuxControlClient (fake process)', () => {
     await expect(modes).resolves.toMatchObject({ paneId: '%0', cols: 100, rows: 30, cursorVisible: true });
     await expect(next).resolves.toEqual(['%0']);
     expect(output).toEqual(['\x1b[H1234', '\x1b[H5678']);
+  });
+
+  it('hands on the events after a reply only once the code awaiting that reply has run', async () => {
+    const { proc, client } = fakeClient();
+    proc.attached();
+    const seen: string[] = [];
+    client.on('output', (_pane, bytes) => seen.push(`output ${bytes.toString('utf8')}`));
+    const captured = client.capture('%1').then((lines) => { seen.push(`reply ${lines.join()}`); });
+    await tick();
+    // One read: output tmux sent before the reply, the reply, output sent after it.
+    proc.reply('%output %1 before', '%begin 2 2 1', 'line', '%end 2 2 1', '%output %1 after');
+    await captured;
+    await tick();
+    expect(seen).toEqual(['output before', 'reply line', 'output after']);
+    // Later reads queue behind the held events, in order.
+    const next = client.command('list-panes');
+    await tick();
+    proc.reply('%begin 3 3 1', '%end 3 3 1', '%output %1 one');
+    proc.reply('%output %1 two');
+    await next;
+    await tick();
+    expect(seen.slice(3)).toEqual(['output one', 'output two']);
+  });
+
+  it('writes the commands issued in one tick as one write, so tmux reads them together and runs them back to back', async () => {
+    const proc = new FakeProcess();
+    const writes: string[] = [];
+    const stdin = new Writable({
+      write(chunk: Buffer, _encoding, done) { writes.push(chunk.toString()); done(); },
+      writev(chunks, done) { writes.push(chunks.map(({ chunk }) => String(chunk)).join('')); done(); },
+    });
+    const client = new TmuxControlClient({ tmuxBinary: 'tmux', socket: 's', session: 'm', ignoreSize: true, spawn: () => ({ ...proc, stdin, stdout: proc.stdout, kill: () => true, on: proc.on.bind(proc) }) });
+    proc.attached();
+    await tick();
+    writes.length = 0;
+    void client.capture('%1');
+    void client.paneModes('%1');
+    await tick();
+    expect(writes).toHaveLength(1);
+    expect(writes[0].split('\n')).toEqual(['capture-pane -p -e -t %1', expect.stringMatching(/^display-message -p -t %1 /), '']);
   });
 
   it('rejects a command answered with %error and keeps the next one in order', async () => {

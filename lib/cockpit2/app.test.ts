@@ -663,7 +663,7 @@ describe('runApp tabs and projects (fake tmux clients)', () => {
     app.apply((state) => selectTab(state, MASTER_TAB));
     await waitForSlotLine(terminal, '$ written while hidden');
     expect(master.resumed).toEqual(['%1']);
-    expect(master.modeQueries).toBe(queries + 1);
+    expect(master.modeQueries).toBe(queries + 2); // the restore's query, then the one sent with its capture
     expect(clients[1].paused).toEqual(['%2']);
     expect((await slotRows(terminal)).join('\n')).not.toContain('HIDDEN-STALE');
 
