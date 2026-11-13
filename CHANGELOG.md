@@ -18,7 +18,7 @@ A rewrite of orc's core. No upgrade path from 0.3: register the repository again
 - **The War Room** (`orc start-session`, `orc cockpit`): a terminal UI with its own renderer — campaigns, the active project's settings and its grunts in the sidebar, tabs for the master, workers, shells and ad-hoc agent sessions, themes (`orc` by default), a project settings dialog and a Ctrl-Space leader keymap ([cockpit design](docs/cockpit-design.md)).
 - **Workers use the configured model**: a task without its own `model` runs the pool's default for its provider (`worker_pool.provider_models` / `worker_pool.model`), and every agent records the model it runs.
 - **One MCP tool and one command per read**: events (`query_events` / `orc events`), runs (`list_runs` / `orc runs`), status, doctor and terminal snapshots for the master.
-- **Requirements**: Node 24, tmux 3.2+, macOS or Linux (Windows via WSL). Tested in CI on both, including tmux 3.6–3.8.
+- **Requirements**: Node 24, tmux 3.2+, macOS or Linux (Windows via WSL). Tested in CI on both (tmux 3.4 on Linux, 3.8 on macOS).
 
 ## [0.3.0] - 2026-04-18
 
