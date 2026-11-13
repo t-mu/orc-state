@@ -24,7 +24,8 @@
  *                               thread/resume with excludeTurns fail ("list_turns is not supported yet"),
  *                               and a full thread/resume returns the turns without their user message
  */
-import { appendFileSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
+import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { createServer, type Socket } from 'node:net';
 import { acceptKey, encodeFrame, FrameDecoder, OPCODE } from '../adapters/unixWebSocket.ts';
@@ -221,9 +222,24 @@ if (!listen.startsWith('unix://')) {
 }
 const socketFile = listen.slice('unix://'.length);
 rmSync(socketFile, { force: true });
-createServer(onConnection).listen(socketFile);
+/**
+ * Like Codex, a socket path too long for AF_UNIX (104 bytes on macOS, where a
+ * test state directory under /var/folders/... reaches it) is served from a short
+ * directory, with `socketFile` a symlink to it; clients connect through realpath.
+ */
+const SOCKET_PATH_MAX_BYTES = 103;
+const shortDir = Buffer.byteLength(socketFile) > SOCKET_PATH_MAX_BYTES ? mkdtempSync(join('/tmp', 'fake-codex-')) : null;
+const listenPath = shortDir ? join(shortDir, 'app-server.sock') : socketFile;
+const removeSocket = () => {
+  rmSync(socketFile, { force: true });
+  if (shortDir) rmSync(shortDir, { recursive: true, force: true });
+};
+createServer(onConnection).listen(listenPath, () => {
+  if (shortDir) symlinkSync(listenPath, socketFile);
+});
+if (shortDir) process.on('exit', () => { rmSync(shortDir, { recursive: true, force: true }); });
 process.on('SIGTERM', () => {
   if (env.FAKE_CODEX_IGNORE_SIGTERM === '1') { record({ kind: 'sigterm_ignored' }); return; }
-  rmSync(socketFile, { force: true });
+  removeSocket();
   process.exit(143);
 });
