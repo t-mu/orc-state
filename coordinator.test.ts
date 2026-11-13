@@ -3324,6 +3324,56 @@ describe('processTerminalRunEvents', () => {
     expect(readAgents(dir).find((entry) => entry.agent_id === 'orc-1')).toBeUndefined();
   });
 
+  it.each([
+    ['git exits non-zero', { status: 128, stdout: '', stderr: 'fatal: No configured push destination.\n' }, 'git push failed: fatal: No configured push destination.'],
+    ['git cannot be spawned', { status: null, stdout: '', stderr: '', error: Object.assign(new Error('spawnSync git ETIMEDOUT'), { code: 'ETIMEDOUT' }) }, 'spawnSync git ETIMEDOUT'],
+  ])('warns with the real push error after a merge when %s, and still finishes the run', async (_case, pushResult, message) => {
+    seedState(dir, {
+      agents: [{
+        agent_id: 'orc-1', provider: 'codex', role: 'worker', status: 'running',
+        session_handle: 'tmux:orc-1', provider_ref: null, registered_at: new Date().toISOString(),
+      }],
+      tasks: [{ ...DISPATCHABLE_TASK, ref: 'orch/task-151', status: 'in_progress' }],
+      claims: [{
+        run_id: 'run-finalize-push-fails', task_ref: 'orch/task-151', agent_id: 'orc-1', state: 'in_progress',
+        claimed_at: new Date().toISOString(), started_at: new Date().toISOString(),
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+        finalization_state: 'awaiting_finalize', finalization_retry_count: 0, finalization_blocked_reason: null,
+      }],
+    });
+    const send = vi.fn().mockResolvedValue('');
+    const spawnSync = vi.fn()
+      .mockReturnValueOnce({ status: 0, stdout: '' })
+      .mockReturnValueOnce({ status: 0, stdout: '' })
+      .mockReturnValueOnce(pushResult);
+    vi.doMock('node:child_process', async () => {
+      const actual = await vi.importActual('node:child_process');
+      return { ...actual, spawnSync };
+    });
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ stop: vi.fn().mockResolvedValue(undefined), send }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
+      ensureRunWorktree: vi.fn(),
+      cleanupRunWorktree: vi.fn().mockReturnValue(true),
+      getRunWorktree: vi.fn().mockReturnValue({ branch: 'task/run-finalize-push-fails', worktree_path: '/tmp/orc-worktrees/run-finalize-push-fails' }),
+    }));
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const { processTerminalRunEvents } = await import('./coordinator.ts');
+      await processTerminalRunEvents([{
+        event: 'work_complete', run_id: 'run-finalize-push-fails', task_ref: 'orch/task-151', agent_id: 'orc-1',
+        ts: '2026-03-11T08:00:00.000Z', payload: { status: 'awaiting_finalize', retry_count: 0 },
+      }]);
+      const warnings = log.mock.calls.map((call) => String(call[0])).filter((line) => line.includes('git push failed after merging'));
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain(`warning: git push failed after merging orch/task-151: ${message}`);
+    } finally {
+      log.mockRestore();
+    }
+    expect(spawnSync).toHaveBeenCalledTimes(3);
+    expect(send).toHaveBeenCalledWith('tmux:orc-1', expect.stringContaining('FINALIZE_SUCCESS'));
+    expect(readClaims(dir).find((entry) => entry.run_id === 'run-finalize-push-fails')?.state).toBe('done');
+  });
+
   it('keeps merged runs done when cleanup is deferred after a successful merge', async () => {
     seedState(dir, {
       agents: [{

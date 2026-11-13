@@ -13,6 +13,8 @@ Every config:
 - strips inherited `ORC_*` variables (`vitest.orcEnv.mjs`, guarded by `vitest.orcEnv.test.ts`), so the suite is safe inside a worker session; tests get only `ORC_DATA_HOME` (an empty test home);
 - gives tests a private `TMUX_TMPDIR` (`vitest.tmuxTmpdir.mjs` globalSetup).
 
+With `CI` set, the e2e config adds `vitest.failureReporter.mjs`: each failure is printed with its file:line as soon as its test ends (and, under GitHub Actions, annotated), so a run that dies before vitest's summary still shows it.
+
 Command-line switches therefore use a `RUN_` prefix; an `ORC_*` switch is stripped.
 
 ## Env switches

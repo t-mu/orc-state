@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { cleanupTempStateDir, createTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import type { RuntimeEvent } from './runtime.ts';
@@ -97,6 +97,25 @@ describe('codex app-server runtime: session start', () => {
     expect(events[0].provider_meta).toMatchObject({ plan_type: 'team', resumed: false });
     expect(adapter.inspectSession(result.session_handle)).toMatchObject({ transport: 'app-server', alive: true, writable: true });
     expect(records().find((entry) => entry.kind === 'startup')?.argv).toEqual(expect.arrayContaining(['--listen', `unix://${join(dir, 'app-server', 'worker-1.sock')}`]));
+  });
+
+  it('connects through the symlink a provider leaves for a socket path too long for AF_UNIX (macOS state dirs)', async () => {
+    // macOS's tmpdir() is a long /var/folders/... path, and its sockets take 104 bytes at most.
+    const stateDir = join(dir, 'a'.repeat(Math.max(1, 110 - Buffer.byteLength(join(dir, 'app-server', 'worker-1.sock')))));
+    mkdirSync(stateDir);
+    process.env.ORC_STATE_DIR = stateDir;
+    const socket = join(stateDir, 'app-server', 'worker-1.sock');
+    expect(Buffer.byteLength(socket)).toBeGreaterThan(104);
+    const { adapter } = await loadAdapter();
+    const result = await startSession(adapter);
+    expect(result.provider_ref).toMatchObject({ protocol_ready: true });
+    expect(lstatSync(socket).isSymbolicLink()).toBe(true);
+    expect(Buffer.byteLength(realpathSync(socket))).toBeLessThanOrEqual(103);
+    const served = realpathSync(socket);
+    await adapter.stop(result.session_handle);
+    // lstat, not existsSync: a dangling symlink left at `socket` must fail this too.
+    expect(() => lstatSync(socket)).toThrow();
+    expect(existsSync(served)).toBe(false);
   });
 
   it('strips API-key billing variables from the provider environment', async () => {

@@ -26,8 +26,20 @@ jobs:
       - run: npm ci
       - name: Unit tests (includes typecheck + lint via pretest)
         run: npm test
+      # CI=true adds vitest.failureReporter.mjs (see vitest.e2e.config.mjs): each failure is printed and
+      # annotated as it happens. The exit reason is printed too, so a run killed before vitest's summary says so.
       - name: E2E tests
-        run: npm run test:e2e
+        shell: bash
+        run: |
+          set +e
+          npx vitest run --config vitest.e2e.config.mjs
+          status=$?
+          if [ "$status" -gt 128 ]; then
+            echo "::error title=E2E tests::vitest was killed by signal $((status - 128)) (SIG$(kill -l $((status - 128)))) before it finished"
+          else
+            echo "vitest exited with status $status"
+          fi
+          exit "$status"
       - name: Build
         run: npm run build
       - name: Consumer typecheck (dist/*.d.ts)
