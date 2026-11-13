@@ -16,6 +16,7 @@ export default tseslint.config(
       'vitest.real-providers.config.mjs',
       'vitest.orcEnv.mjs',
       'vitest.tmuxTmpdir.mjs',
+      'vitest.failureReporter.mjs',
       // Imports the built package (dist/), which does not exist before the build;
       // `npm run typecheck:consumer` checks it after `npm run build`.
       'scripts/consumer/**',

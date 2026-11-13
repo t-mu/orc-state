@@ -13,5 +13,8 @@ export default defineConfig({
     // Absolute path so this config works whether vitest is run from the repo root.
     include: [resolve(import.meta.dirname, 'e2e/**/*.test.ts')],
     exclude: ['**/node_modules/**'],
+    // In CI each failure is printed (and annotated) as it happens, so a run whose vitest
+    // process dies before the summary still shows its assertions and their file:line.
+    reporters: process.env.CI ? ['default', resolve(import.meta.dirname, 'vitest.failureReporter.mjs')] : ['default'],
   },
 });
