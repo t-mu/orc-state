@@ -10,12 +10,15 @@ import {
 import { readEvents as readEventsFromDb, appendSequencedEvent } from '../lib/eventLog.ts';
 const createSessionHandle = (agentId: string) => `tmux:${agentId}`;
 
+// vi.unmock is hoisted, so it runs once when the module loads; mocks are set per test with vi.doMock.
+vi.unmock('../adapters/index.ts');
+vi.unmock('../lib/runWorktree.ts');
+
 let dir: string;
 
 beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
-  vi.unmock('../adapters/index.ts');
   dir = createTempStateDir('orch-coordinator-policy-e2e-');
   process.env.ORC_STATE_DIR = dir;
   vi.doMock('../lib/runWorktree.ts', () => ({
@@ -38,8 +41,6 @@ afterEach(() => {
   delete process.env.ORC_STATE_DIR;
   delete process.env.ORC_MAX_WORKERS;
   delete process.env.ORC_WORKER_PROVIDER;
-  vi.unmock('../adapters/index.ts');
-  vi.unmock('../lib/runWorktree.ts');
 });
 
 describe('coordinator policy e2e', () => {

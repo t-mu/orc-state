@@ -9,6 +9,10 @@ import { startRun, finishRun } from '../lib/claimManager.ts';
 import { appendSequencedEvent } from '../lib/eventLog.ts';
 const createSessionHandle = (agentId: string) => `tmux:${agentId}`;
 
+// vi.unmock is hoisted, so it runs once when the module loads; mocks are set per test with vi.doMock.
+vi.unmock('../adapters/index.ts');
+vi.unmock('../lib/runWorktree.ts');
+
 // Minimal task spec simulating a consumer-authored backlog markdown.
 // The mock adapter below implements the same lifecycle behaviour as
 // test-fixtures/fake-provider-cli.ts would produce in a real PTY session:
@@ -56,8 +60,6 @@ describe('consumer lifecycle e2e', () => {
     delete process.env.ORC_STATE_DIR;
     delete process.env.ORC_MAX_WORKERS;
     delete process.env.ORC_WORKER_PROVIDER;
-    vi.unmock('../adapters/index.ts');
-    vi.unmock('../lib/runWorktree.ts');
   });
 
   it('completes a full task lifecycle from init to done', async () => {

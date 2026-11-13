@@ -3,6 +3,13 @@ import { writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { bridgeProjectEnv, createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
 
+// vi.unmock is hoisted, so it runs once when the module loads; mocks are set per test with vi.doMock.
+vi.unmock('../lib/prompts.ts');
+vi.unmock('../lib/binaryCheck.ts');
+vi.unmock('../adapters/tmux.ts');
+vi.unmock('node:child_process');
+vi.unmock('../adapters/index.ts');
+
 function readAgents(stateDir: string) {
   return JSON.parse(readFileSync(join(stateDir, 'agents.json'), 'utf8')).agents;
 }
@@ -63,11 +70,6 @@ describe('worker control flow e2e', () => {
     cleanupTempStateDir(dir);
     delete process.env.ORC_STATE_DIR;
     delete process.env.ORC_PROJECT_ID;
-    vi.unmock('../lib/prompts.ts');
-    vi.unmock('../lib/binaryCheck.ts');
-    vi.unmock('../adapters/tmux.ts');
-    vi.unmock('node:child_process');
-    vi.unmock('../adapters/index.ts');
   });
 
   it('keeps workers headless in start-session', async () => {
