@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { HERMETIC_GIT_CONFIG_ARGS } from '../lib/gitPlumbing.ts';
 import { createTempStateDir, cleanupTempStateDir, readBacklog, seedProjectTasks, recordMergeConfirmation, type SeedTask } from '../test-fixtures/stateHelpers.ts';
 import { startRun, finishRun } from '../lib/claimManager.ts';
 const createSessionHandle = (agentId: string) => `tmux:${agentId}`;
@@ -218,7 +219,9 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     const send = vi.fn().mockResolvedValue('');
     const stop = vi.fn().mockResolvedValue(undefined);
     const cleanupRunWorktree = vi.fn().mockReturnValue(true);
+    // git merge-base, git merge, git push: every git call the merge path makes gets a result.
     const spawnSync = vi.fn()
+      .mockReturnValueOnce({ status: 0, stdout: '' })
       .mockReturnValueOnce({ status: 0, stdout: '' })
       .mockReturnValueOnce({ status: 0, stdout: '' });
     vi.doMock('node:child_process', async () => {
@@ -265,6 +268,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     expect(send).toHaveBeenCalledWith('tmux:worker-01', expect.stringContaining('FINALIZE_WAIT'));
     expect(send).toHaveBeenCalledWith('tmux:worker-01', expect.stringContaining('FINALIZE_SUCCESS'));
     expect(cleanupRunWorktree).toHaveBeenCalledWith(dir, 'run-finalize-e2e');
+    expect(spawnSync.mock.calls.map((call) => (call[1] as string[])[HERMETIC_GIT_CONFIG_ARGS.length])).toEqual(['merge-base', 'merge', 'push']);
     expect(readClaims(dir).claims.find((entry) => entry.run_id === 'run-finalize-e2e')?.state).toBe('done');
     expect(readBacklog(dir).features[0].tasks.find((entry) => entry.ref === 'docs/task-1')?.status).toBe('done');
   });
