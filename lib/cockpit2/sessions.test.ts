@@ -19,12 +19,16 @@ class FakeClient extends EventEmitter {
   /** The gate of the next client created. */
   static nextGate: Promise<void> | null = null;
   gate: Promise<void> | null = FakeClient.nextGate;
+  /** The cursors the mode queries of the next client created report, in turn (then 0,0). */
+  static nextCursors: Array<{ cursorX: number; cursorY: number }> = [];
+  cursors = FakeClient.nextCursors.splice(0);
   constructor(readonly target: TmuxTarget, readonly ignoreSize: boolean) { super(); }
   resize(cols: number, rows: number) { this.calls.push(`resize ${cols}x${rows}`); return Promise.resolve(); }
   async paneModes() {
     this.calls.push('modes');
+    const cursor = this.cursors.shift() ?? { cursorX: 0, cursorY: 0 };
     if (this.gate) await this.gate;
-    return { paneId: '%7', cols: 10, rows: 3, cursorX: 0, cursorY: 0, alternateOn: this.alternateOn, mouseAny: false, mouseButton: false,
+    return { paneId: '%7', cols: 10, rows: 3, ...cursor, alternateOn: this.alternateOn, mouseAny: false, mouseButton: false,
       mouseStandard: false, mouseSgr: false, mouseUtf8: false, keypadCursor: false, cursorVisible: true };
   }
   /** What the next capture returns; the options of each capture. */
@@ -83,7 +87,7 @@ describe('Sessions', () => {
     expect(master.screen).toBeNull();
     manager.show('master', A, true, SIZE);
     await waitFor(() => master.state.kind === 'live');
-    expect(clients[0].calls.slice(3)).toEqual(['resume %7', 'resize 40x10', 'modes', 'capture']);
+    expect(clients[0].calls.slice(3)).toEqual(['resume %7', 'resize 40x10', 'modes', 'capture', 'modes']);
     expect(master.state.kind).toBe('live');
   });
 
@@ -91,15 +95,27 @@ describe('Sessions', () => {
     const { manager, clients } = sessions();
     let release!: () => void;
     const master = manager.show('master', A, true, SIZE);
-    clients[0].gate = new Promise((resolve) => { release = resolve; });
-    // The first sync is already past its mode query; hide during a resync's query.
+    // The first sync restores; hide during a resync's mode query.
     await waitFor(() => master.state.kind === 'live');
+    clients[0].gate = new Promise((resolve) => { release = resolve; });
     clients[0].emit('resize', 40, 10);
-    await waitFor(() => clients[0].calls.filter((call) => call === 'modes').length === 2);
+    await waitFor(() => clients[0].calls.filter((call) => call === 'modes').length === 3);
     manager.show('w1', B, false, SIZE);
     release();
     await sleep(20);
-    expect(clients[0].calls).toEqual(['resize 40x10', 'modes', 'capture', 'modes', 'pause %7']);
+    expect(clients[0].calls).toEqual(['resize 40x10', 'modes', 'capture', 'modes', 'modes', 'pause %7']);
+  });
+
+  it('restores the cursor reported with the capture, not the one from the query a round trip before it', async () => {
+    const { manager, clients } = sessions();
+    // The pane printed [j] before the first query and [j] again before the capture.
+    FakeClient.nextCursors = [{ cursorX: 3, cursorY: 0 }, { cursorX: 6, cursorY: 0 }];
+    const master = manager.show('master', A, true, SIZE);
+    clients[0].lines = ['[j][j]'];
+    await waitFor(() => master.state.kind === 'live');
+    clients[0].emit('output', '%7', Buffer.from('[k]'));
+    const row = () => master.screen?.row(0).map((cell) => cell.text).join('').trimEnd();
+    await waitFor(() => row() === '[j][j][k]');
   });
 
   it('retries an ended session when its tab is shown again, and keeps it while it stays shown', async () => {

@@ -224,23 +224,28 @@ export class PaneSession {
           return;
         }
         const scrollback = this.options.scrollback ?? 1000;
-        const main = modes.alternateOn ? await this.client.capture(modes.paneId, { saved: true }) : undefined;
+        // Issued together, so tmux runs them back to back: the captures and the cursor and
+        // size reported with them come from the same moment. (The query above came a round
+        // trip earlier; output in between would leave its cursor behind the captured text.)
         // The pane's history too, so the wheel reaches output from before the attach. An
         // alternate screen has no scrollback, and tmux keeps none under it.
-        const lines = modes.alternateOn || scrollback <= 0
-          ? await this.client.capture(modes.paneId)
-          : await this.client.capture(modes.paneId, { history: scrollback });
-        // Output emitted before this point is in the capture. (Output that came in the same read
-        // as the capture's reply is emitted before this continuation runs, so it is dropped too;
-        // the program's next redraw covers that narrow window.)
+        const [main, lines, now] = await Promise.all([
+          modes.alternateOn ? this.client.capture(modes.paneId, { saved: true }) : undefined,
+          modes.alternateOn || scrollback <= 0
+            ? this.client.capture(modes.paneId)
+            : this.client.capture(modes.paneId, { history: scrollback }),
+          this.client.paneModes(modes.paneId),
+        ]);
+        // Output emitted before this point is in the capture; the client hands on what came after
+        // these replies only once this continuation has run, so all of that is held.
         if (this.closed || !this.visible) return;
         this.outputMode = 'hold';
         await this.enqueue(async () => {
           if (this.closed) return;
-          if (!this.screenModel) this.screenModel = createScreen({ cols: modes.cols, rows: modes.rows, scrollback });
-          else if (this.screenModel.cols !== modes.cols || this.screenModel.rows !== modes.rows) this.screenModel.resize(modes.cols, modes.rows);
-          await this.screenModel.restore(main ? { lines, main } : { lines }, { x: modes.cursorX, y: modes.cursorY });
-          await this.screenModel.seedModes(modes);
+          if (!this.screenModel) this.screenModel = createScreen({ cols: now.cols, rows: now.rows, scrollback });
+          else if (this.screenModel.cols !== now.cols || this.screenModel.rows !== now.rows) this.screenModel.resize(now.cols, now.rows);
+          await this.screenModel.restore(main ? { lines, main } : { lines }, { x: now.cursorX, y: now.cursorY });
+          await this.screenModel.seedModes(now);
         });
         if (this.closed || !this.visible) return;
         for (const bytes of this.held.splice(0)) this.writeLive(bytes);

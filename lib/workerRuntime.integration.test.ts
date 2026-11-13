@@ -26,13 +26,24 @@ function git(cwd: string, ...args: string[]) {
   return result.stdout;
 }
 
+/** The files under `dir` with their mtimes; a file or directory removed while the walk runs counts as absent. */
 function snapshot(dir: string): Map<string, number> {
   const files = new Map<string, number>();
   const walk = (current: string) => {
-    for (const entry of readdirSync(current, { withFileTypes: true })) {
+    let entries;
+    try {
+      entries = readdirSync(current, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw error;
+    }
+    for (const entry of entries) {
       const path = join(current, entry.name);
       if (entry.isDirectory()) walk(path);
-      else files.set(relative(dir, path), statSync(path).mtimeMs);
+      else {
+        const stat = statSync(path, { throwIfNoEntry: false });
+        if (stat) files.set(relative(dir, path), stat.mtimeMs);
+      }
     }
   };
   walk(dir);
@@ -66,6 +77,10 @@ function setupProject() {
   bridgeProjectEnv(stateDir, repo);
 
   git(repo, 'init', '-q', '-b', 'main');
+  // No auto maintenance: since git 2.47 `commit` starts it detached, so it would write
+  // (e.g. objects/maintenance.lock) while the snapshots are taken, not as part of the commit.
+  git(repo, 'config', 'maintenance.auto', 'false');
+  git(repo, 'config', 'gc.auto', '0');
   writeFileSync(join(repo, 'README.md'), 'repo\n');
   git(repo, 'add', '.');
   git(repo, 'commit', '-q', '-m', 'init');

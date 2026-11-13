@@ -3,10 +3,24 @@ import { stripVTControlCharacters } from 'node:util';
 import React, { act } from 'react';
 import { render as inkRender, type Instance } from 'ink';
 import { cleanup, render } from 'ink-testing-library';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectConnectionState, ProjectWatchState, ProjectWatchUpdate, StatusView } from '../../client.ts';
 import { App, KEYS_HINT, NO_COCKPIT_HINT } from './App.tsx';
 import type { TuiAttention, TuiStatus, TuiWatchSource } from './status.ts';
+
+// Ink reads is-in-ci once at import; with CI set (GitHub Actions sets CI=true) it
+// renders nothing until unmount, so the terminal tests below would capture no
+// frames. vi.hoisted runs before the imports above; each test file gets its own
+// module graph, so this reaches only this file's Ink.
+const inheritedCi = vi.hoisted(() => {
+  const value = process.env.CI;
+  process.env.CI = 'false';
+  return value;
+});
+afterAll(() => {
+  if (inheritedCi === undefined) delete process.env.CI;
+  else process.env.CI = inheritedCi;
+});
 
 type Kind = TuiAttention['kind'];
 

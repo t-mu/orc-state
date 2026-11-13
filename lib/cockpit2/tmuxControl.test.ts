@@ -1,26 +1,31 @@
-import { PassThrough } from 'node:stream';
+import { PassThrough, Writable } from 'node:stream';
 import { EventEmitter } from 'node:events';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import type { PaneModes } from './screen.ts';
-import { SEND_CHUNK_BYTES, TmuxControlClient, quoteTmuxArgument, type ControlProcess, type PaneReport } from './tmuxControl.ts';
+import {
+  SEND_CHUNK_BYTES, SERVER_VERSION_COMMAND, TmuxControlClient, pasteNeedsRawFlag, quoteTmuxArgument, type ControlProcess, type PaneReport,
+} from './tmuxControl.ts';
 
 class FakeProcess extends EventEmitter implements ControlProcess {
   stdin = new PassThrough();
   stdout = new PassThrough();
   killed = false;
-  written: string[] = [];
+  /** Every line the client wrote, the server-version query included. */
+  lines: string[] = [];
+  /** The lines after the server-version query every client sends first. */
+  get written(): string[] { return this.lines[0] === SERVER_VERSION_COMMAND ? this.lines.slice(1) : this.lines; }
   constructor() {
     super();
     this.stdin.setEncoding('utf8');
-    this.stdin.on('data', (chunk: string) => { this.written.push(...chunk.split('\n').filter(Boolean)); });
+    this.stdin.on('data', (chunk: string) => { this.lines.push(...chunk.split('\n').filter(Boolean)); });
   }
   kill(): boolean { this.killed = true; return true; }
   /** tmux writes `lines` to the client's stdout. */
   reply(...lines: string[]): void { this.stdout.write(Buffer.from(lines.map((line) => `${line}\n`).join(''))); }
   /** A reply to a command from stdin (`%begin` flags 1). */
   ok(...body: string[]): void { this.reply('%begin 1 1 1', ...body, '%end 1 1 1'); }
-  /** The attach-session's own reply (`%begin` flags 0). */
-  attached(): void { this.reply('%begin 1 0 0', '%end 1 0 0'); }
+  /** The attach-session's own reply (`%begin` flags 0), then the reply to the server-version query. */
+  attached(version = '3.6a'): void { this.reply('%begin 1 0 0', '%end 1 0 0'); this.ok(version); }
 }
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
@@ -60,6 +65,7 @@ describe('TmuxControlClient (fake process)', () => {
     proc.ok('window ä');
     await expect(first).resolves.toEqual(['pane line 1', 'pane line 2']);
     await expect(second).resolves.toEqual(['window ä']);
+    await tick();
     expect(proc.written).toEqual(['list-panes', 'list-windows']);
   });
 
@@ -79,6 +85,7 @@ describe('TmuxControlClient (fake process)', () => {
     proc.stdout.write('d 7 3 0\n%output %0 \\033[H5678\n');
     await tick();
     expect(proc.written).toHaveLength(2);
+    proc.ok('3.6a');
     // Another flags-0 block tmux runs for this client must not take the first command's place.
     proc.reply('%begin 8 4 0', 'hook output', '%end 8 4 0', '%layout-change @0 aafd,100x30,0,0,0 aafd,100x30,0,0,0 *');
     proc.reply('%begin 9 5 1', '%0 100 30 0 0 0 0 0 0 0 0 0 1', '%end 9 5 1');
@@ -86,6 +93,46 @@ describe('TmuxControlClient (fake process)', () => {
     await expect(modes).resolves.toMatchObject({ paneId: '%0', cols: 100, rows: 30, cursorVisible: true });
     await expect(next).resolves.toEqual(['%0']);
     expect(output).toEqual(['\x1b[H1234', '\x1b[H5678']);
+  });
+
+  it('hands on the events after a reply only once the code awaiting that reply has run', async () => {
+    const { proc, client } = fakeClient();
+    proc.attached();
+    const seen: string[] = [];
+    client.on('output', (_pane, bytes) => seen.push(`output ${bytes.toString('utf8')}`));
+    const captured = client.capture('%1').then((lines) => { seen.push(`reply ${lines.join()}`); });
+    await tick();
+    // One read: output tmux sent before the reply, the reply, output sent after it.
+    proc.reply('%output %1 before', '%begin 2 2 1', 'line', '%end 2 2 1', '%output %1 after');
+    await captured;
+    await tick();
+    expect(seen).toEqual(['output before', 'reply line', 'output after']);
+    // Later reads queue behind the held events, in order.
+    const next = client.command('list-panes');
+    await tick();
+    proc.reply('%begin 3 3 1', '%end 3 3 1', '%output %1 one');
+    proc.reply('%output %1 two');
+    await next;
+    await tick();
+    expect(seen.slice(3)).toEqual(['output one', 'output two']);
+  });
+
+  it('writes the commands issued in one tick as one write, so tmux reads them together and runs them back to back', async () => {
+    const proc = new FakeProcess();
+    const writes: string[] = [];
+    const stdin = new Writable({
+      write(chunk: Buffer, _encoding, done) { writes.push(chunk.toString()); done(); },
+      writev(chunks, done) { writes.push(chunks.map(({ chunk }) => String(chunk)).join('')); done(); },
+    });
+    const client = new TmuxControlClient({ tmuxBinary: 'tmux', socket: 's', session: 'm', ignoreSize: true, spawn: () => ({ ...proc, stdin, stdout: proc.stdout, kill: () => true, on: proc.on.bind(proc) }) });
+    proc.attached();
+    await tick();
+    writes.length = 0;
+    void client.capture('%1');
+    void client.paneModes('%1');
+    await tick();
+    expect(writes).toHaveLength(1);
+    expect(writes[0].split('\n')).toEqual(['capture-pane -p -e -t %1', expect.stringMatching(/^display-message -p -t %1 /), '']);
   });
 
   it('rejects a command answered with %error and keeps the next one in order', async () => {
@@ -172,6 +219,28 @@ describe('TmuxControlClient (fake process)', () => {
     expect(/^set-buffer -b (\S+) /.exec(set2)![1]).not.toBe(name);
     proc.ok(); proc.ok();
     await expect(pasted).resolves.toBeUndefined();
+  });
+
+  it('asks the server version first and pastes with -S on tmux 3.7+, whose paste-buffer escapes control bytes', async () => {
+    const { proc, client } = fakeClient();
+    const early = client.paste('%2', '\x1b');
+    proc.attached('3.7');
+    await tick();
+    expect(proc.lines[0]).toBe(SERVER_VERSION_COMMAND);
+    const [, paste] = proc.written;
+    expect(paste).toMatch(/^paste-buffer -p -d -S -b \S+ -t %2$/);
+    proc.ok(); proc.ok();
+    await expect(early).resolves.toBeUndefined();
+    // Once the version is known a paste is written at once, ahead of keys sent after it.
+    void client.paste('%2', 'x');
+    void client.sendBytes('%2', Buffer.from('y'));
+    await tick();
+    expect(proc.written.slice(2)).toEqual([expect.stringMatching(/^set-buffer /), expect.stringMatching(/^paste-buffer -p -d -S /), 'send-keys -t %2 -H 79']);
+  });
+
+  it('reads tmux versions: -S from 3.7 on, next- builds and master included', () => {
+    for (const version of ['3.7', '3.7a', '3.8', '4.0', 'next-3.7', 'master']) expect(pasteNeedsRawFlag(version), version).toBe(true);
+    for (const version of ['3.2', '3.3a', '3.4', '3.6a', 'next-3.6', '', 'openbsd-7.6']) expect(pasteNeedsRawFlag(version), version).toBe(false);
   });
 
   it('resolves an empty paste without sending a tmux command', async () => {
