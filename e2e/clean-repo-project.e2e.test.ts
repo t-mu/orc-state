@@ -232,9 +232,11 @@ beforeEach(() => {
   savedEnv = { ...process.env };
   temp = realpathSync(mkdtempSync(join(tmpdir(), 'orc-clean-repo-')));
   dataHome = join(temp, 'data');
-  // The stand-in provider: alive until stopped, ignoring whatever is typed into it.
+  // The stand-in provider: alive until stopped (at most 600 s), reading and discarding whatever is typed
+  // into it, as a real CLI reads its input. A pane nobody reads holds only the kernel's tty input queue
+  // (1 KiB on macOS, 4 KiB on Linux) and the tty echoes only that much, so a longer bootstrap looks cut off.
   mkdirSync(join(temp, 'bin'));
-  writeFileSync(join(temp, 'bin', 'claude'), '#!/bin/sh\nexec sleep 600\n');
+  writeFileSync(join(temp, 'bin', 'claude'), '#!/bin/sh\n(sleep 600; kill $$) &\nexec cat >/dev/null\n');
   chmodSync(join(temp, 'bin', 'claude'), 0o755);
   target = join(temp, 'product');
   mkdirSync(target);
@@ -370,6 +372,8 @@ describe('clean-repository project workflow', () => {
       expect(snapshot.stderr).toContain(`project: demo (${project.id})`);
       // The snapshot is that session's real output: the bootstrap the coordinator typed into it.
       expect(snapshot.stdout).toContain(`--agent-id=${started[0].agentId}`);
+      // All of it, not just the first tty input queue's worth: the bootstrap is ~9 KB.
+      expect(snapshot.stdout).toContain('WORKER_BOOTSTRAP_END');
       expect(orcOk(['run-info', started[0].runId])).toContain(started[0].runId);
 
       // ── Restart the coordinator mid-run: shut down, start again, adopt the live sessions. ──
