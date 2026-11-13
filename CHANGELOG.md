@@ -7,85 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Breaking
+## [1.0.0] - 2026-11-13
 
-- The task status `released` and the `post_merge_release` transition are removed; nothing ever set them. `done` is the single terminal success status. `runtime.db` migrates to schema version 5, which rewrites any `released` task to `done`. `list_tasks` and `orc project task list --status` no longer accept `released`.
-- `phase_started` and `phase_finished` events need a top-level `phase` of `explore`, `implement`, `review`, `complete` or `finalize`; `orc progress` rejects any other `--phase`. Events already stored without one stay readable.
-- `setRunFinalizationState` rejects a move outside the documented finalization graph ([contracts.md → Invariants](docs/contracts.md#invariants)); `finalization_state` is not strictly forward-only (`ready_to_merge → finalize_rebase_requested` after a failed merge).
-- Event reads are one MCP tool and one command. MCP `get_recent_events` and `get_notifications` are removed: use `query_events` (`notifications_only: true` for the notification class), which now returns `{ events, last_seq, has_more }` pages (default 25, max 100; with `after_seq` the oldest events after it, without it the newest) with compact events unless `verbose: true`. `orc events-tail` and `orc events-filter` are removed, with no aliases: use `orc events`, which takes the same filters as `query_events` and prints the same JSON with `--json`. Differences from the removed commands: `--event` takes one type (no repeats or comma lists); `--last`/`--n` become `--limit` (max 100, page on with `--after`), so no single call returns the whole log; an `agent_id` filter matches only the event's `agent_id`, not its `actor_id` as `get_recent_events` did. A master starts its notification cursor at `get_status.last_notification_seq` instead of replaying history.
-- Run listings are one MCP tool and one command. MCP `list_active_runs`, `list_stalled_runs` and `list_waiting_input` are removed: use `list_runs(state?: "active" | "stalled" | "waiting_input", stale_after_ms?)`, which returns `{ runs }` with rows `run_id`, `task_ref`, `agent_id`, `state`, `phase`, `age_seconds`, `idle_seconds`, `stalled`, plus `question`, `request_id`, `waiting_seconds` on a run waiting for input. `orc runs-active` and `orc waiting-input` are removed, with no aliases: use `orc runs [--state=active|stalled|waiting-input] [--stale-after-ms=N] [--json] [--via-control]`, which prints the same JSON. The old `runs-active` JSON fields `project`, `total`, `event_read_error`, `awaiting_run_started`, `last_activity_*`, `lease_expires_at`, `task_status` and `spec_revision` are gone (`orc run-info` and `orc control snapshot` still carry the per-run ones). A claimed run whose TASK_START has not been delivered has no idle time and is no longer counted as stalled.
-- MCP `memory_recall` is removed: `memory_search` without `query` browses a `wing` (and `room`) and returns full drawers. `memory_search` now always returns `{ results }`.
-- MCP resources `orchestrator://state/backlog` and `orchestrator://state/agents` are removed, and the MCP server no longer advertises the resources capability. The agents resource bypassed the session overlay that `get_status` and `list_agents` apply; the backlog resource duplicated `list_tasks`. Use `list_tasks`, `list_agents` and `get_status`.
-- `orc start-session` adopts live worker sessions instead of resetting runtime state. `--reset` is the explicit fresh start and is refused while a master runs.
+A rewrite of orc's core. No upgrade path from 0.3: register the repository again ([Upgrading from 0.3](docs/getting-started.md#upgrading-from-03)).
 
-### Added
+### Highlights
 
-- `ProjectWatcher` on `orc-state/client`: one object that watches every registered project (connection state `connecting`/`running`/`stopped`/`unreachable`/`incompatible`, the latest `/v1/status` view, new events), reconnects after a coordinator restart from the last event cursor, and follows projects registered or removed while it runs ([Embedding orc → Watching every project](docs/embedding.md#watching-every-project)).
-- MCP `doctor` (the `orc doctor` checks, one `{ name, ok, detail }` line each, same verdict) and `terminal_snapshot(run_id, lines?)` (a read-only, ANSI-stripped look at the last lines of a run's tmux provider terminal, as `orc terminal provider --once`). Neither needs the master secret.
-- Agent terminals by agent id: `POST /v1/terminals/provider` takes `{ agent_id }` instead of `{ run_id }`, `ControlClient.openAgentTerminal(agentId)` and `orc terminal <agent_id>` (e.g. `orc terminal master --write`) open the provider terminal of any agent's running session, the master and scouts included; `/v1/sessions` now gives run-less master and scout sessions a `terminal_id`.
-- Control API `GET /v1/runs?state=&stale_after_ms=` and `ControlClient.runs()` (with the `RunListRow`/`RunListState` types on `orc-state/client`): the `orc runs --json` / MCP `list_runs` view.
-- MCP `get_status` reports `coordinator` (`{ running, pid, version, started_at, stale }`, as `orc coordinator status`) and a `waiting_input` count; `orc status --json` adds the same `coordinator` and counts waiting runs in `claims.waiting_input`.
-- **`orc-state/client` entry**: a side-effect-free import for apps and TUIs with `ControlClient`, `ControlError`, `listProjects`, `RegistrySchemaError` and the protocol types ([Embedding orc](docs/embedding.md)).
-- **`listProjects()`**: every registered project as `ProjectListEntry` (`id`, `name`, `target_repo_root`, `state_dir`, `repo_present`, `control_socket`, `coordinator_running`), read from `registry.db` without creating anything. `control_socket` is set only while the coordinator runs. `orc project list --json` returns the same shape.
-- **Control API**: typed `status` and `health` routes (`version`, `build_id`); event filters by run, agent and event type; run detail; a task summary list; task revisions; plan import and scout request/report over the API; stream frames that show an open stream is alive, closed or resized.
-- **Operator**: answer a worker's input request with `respond-input`; waiting-input rows carry `request_id`.
-- **Events**: one for every run and finalization state change (`finalization_changed` and the run lifecycle events), `session_opened` and `session_state_changed` for every session-row write, `session_reconciled`, `session_resumed`, `session_resume_failed`, `scout_launched`, `scout_launch_failed`.
-- **Stale coordinator detection**: `orc doctor`, `orc start-session` and `/v1/health` compare the running coordinator's `version` and `build_id` with the code on disk; `orc start-session --restart-stale` restarts it and keeps state.
-- **Terminals**: input is sent in one async tmux call, a writer lease honours `ttl_ms`, and `orc terminal --takeover` (operator only) takes the write lease.
-- **Docs and CI**: [Embedding orc](docs/embedding.md); a test that `docs/cli.md` and `cli/usage.ts` list the same flags; CI runs `pack:smoke`, `install:smoke` and a consumer `tsc --noEmit` against `dist/*.d.ts` on Linux and macOS.
-
-### Changed
-
-- The master bootstrap (`MASTER_BOOTSTRAP v3`) is rewritten as workflow guidance only (under 5 KB, was 15 KB): tools are named, not restated; successful runs are reported together instead of one prompt each; it covers provider permission prompts, workers waiting in `orc run-input-request`, and rebuilding plus `restart_coordinator` after orc changes.
-- **CLI output**: operator commands and `orc coordinator start|stop|status` return JSON with `--json` (one compact line when piped); commands that read project state parse arguments strictly (unknown flag → exit 1) and fail loudly when no project resolves.
-- Cancelled runs are kept as failed rows, and run ids cannot collide.
-- A worker is torn down only after consecutive dead probes, not one.
-- `orc status` reads the event cursor before the state it describes.
-- `orc watch` keeps its frame below the terminal height, so it stops flickering.
-- `GET /v1/sessions` lists every session that is not offline, with `state` and `state_reason` (`SessionTerminalView` gains both), so `recoverable` and `unknown` sessions show up.
-- Agent reads report a `running` agent whose latest session is offline as `offline`, without a `session_token`; the coordinator resumes or requeues its run on the next tick.
-- A worker launch whose run was cancelled meanwhile stops the session it started and fails, instead of leaving a running agent without a session record.
-- The stop hook allows a stop before `TASK_START`.
-
-## [1.0.0] - 2026-11-08
-
-### Breaking
-
-- No upgrade path from 0.3: register the repository again and re-create tasks ([Upgrading from 0.3](docs/getting-started.md#upgrading-from-03)).
-- State has moved out of the repository: `.orc-state/`, `backlog/` and `plans/` are no longer read.
-- tmux 3.2+ is required. Platforms: macOS and Linux. Windows needs WSL.
-- Package exports are now only the root and `./schemas/*`; the `./adapters` and `./coordinator` subpaths are gone.
-- The root API now exports `ControlClient` and the control protocol types; `validateBacklog`, `validateClaims` and `validateStateDir` are removed.
-
-### Added
-
-- **Project registry**: `orc project add|list|select|show` registers repositories; `orc project config` holds settings globally or per project.
-- **Repo-external SQLite state**: tasks, runs, sessions and events live in SQLite under the data home, so nothing is written into the repository.
-- **Task store**: `orc project task create|edit|import|export` and `orc project plan import|export`. Each run pins the revision of its task spec.
-- **Local control API**: a versioned daemon API (protocol v1) on a local socket. Every session authenticates with its own secret, and worker, master and operator writes all go through the coordinator.
-- **Session resume**: a worker that crashes is resumed in place, up to twice per run, instead of the run being requeued (`sessions.resume`).
-- **Master detach/reattach**: the master runs in orc's tmux server. `Ctrl-b d` detaches, `orc start-session` reattaches, and a dead Claude master resumes its conversation.
-- **Terminal streams**: `orc terminal provider|shell <run_id>` streams a run's terminal live, with an exclusive `--write` input lease. A shell in the worktree persists across detaches.
-- `orc attach` opens a real tmux client, read-only by default; pass `--write` to type.
-- Recovery and inspection: `orc run-close` (for manually merged runs), `orc task-cancel`, `orc sessions`, `orc worker-gc`.
-- Run health: the coordinator infers run phases, escalates runs that are alive but not progressing, and blocks a worker from stopping while its run is unfinished.
-- Codex structured worker runtime: `codex app-server`, which runs as `app:` sessions.
-- CI runs on Ubuntu and macOS.
-
-### Changed
-
-- `orc init` records provider settings in the registry and writes nothing into the repository.
-- MCP write tools require the master session.
-- `orc status` lists scouts by id and state instead of reporting a scout capacity pool.
-- Every command prints its usage from one source.
-
-### Removed
-
-- The node-pty session transport: workers and the master run only in tmux, or as structured `app:` sessions.
-- Markdown backlog and plan verbs (`/plan`, `/spec`) and the backlog commands: `backlog-sync`, `backlog-sync-check`, `backlog-ready`, `backlog-blocked`, `backlog-orient`.
-- `task-create` and `feature-create`: use `orc project task create`.
-- Persistent workers and capability routing: `register-worker`, `start-worker-session`, `control-worker`, `deregister` and `worker-clearall` are gone. Use `worker-remove` and `worker-gc`.
-- The sibling layout, the legacy JSON layout and the 0.x migration.
+- **State outside the repository**: SQLite stores (tasks, runs, events, registry) under orc's data home; projects are registered once and selected by directory or `--project`.
+- **Coordinator and control API**: one coordinator per project dispatches task-scoped workers (Claude, Codex, Gemini) into their own worktrees, drives their run lifecycle (explore → implement → review → complete → finalize), resumes or requeues crashed sessions, and serves a local control API (`orc-state/client`: `ControlClient`, `ProjectWatcher`, `listProjects`).
+- **The War Room** (`orc start-session`, `orc cockpit`): a terminal UI with its own renderer — campaigns, the active project's settings and its grunts in the sidebar, tabs for the master, workers, shells and ad-hoc agent sessions, themes (`orc` by default), a project settings dialog and a Ctrl-Space leader keymap ([cockpit design](docs/cockpit-design.md)).
+- **Workers use the configured model**: a task without its own `model` runs the pool's default for its provider (`worker_pool.provider_models` / `worker_pool.model`), and every agent records the model it runs.
+- **One MCP tool and one command per read**: events (`query_events` / `orc events`), runs (`list_runs` / `orc runs`), status, doctor and terminal snapshots for the master.
+- **Requirements**: Node 24, tmux 3.2+, macOS or Linux (Windows via WSL). Tested in CI on both, including tmux 3.6–3.8.
 
 ## [0.3.0] - 2026-04-18
 
