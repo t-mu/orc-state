@@ -418,12 +418,15 @@ describe.skipIf(!tmuxOk)('orc cockpit end to end, in a host tmux pane', () => {
     });
     send(`${ESC}[<0;${plus + 1};${row + 1}M${ESC}[<0;${plus + 1};${row + 1}m`);
     await waitFor('the shell tab', () => screen().includes('[ SHELL 1 ]'));
-    send('echo hi\r');
-    await waitFor('the shell\'s output', () => lines().some((line) => /│hi\s*│/.test(line)));
+    // Typed as soon as the tab shows, possibly before the login shell's first
+    // prompt: the terminal echoes the line itself and the output lands after
+    // that prompt, on the same row. 42 appears only if the shell evaluated it.
+    send('echo $((6*7))\r');
+    await waitFor('the shell\'s output', () => lines().some((line) => /│(?:.*\s)?42\s*│/.test(line)));
     send('exit\r');
     await waitFor('the shell tab gone', () => !screen().includes('shell 1') && !screen().includes('[ SHELL 1 ]'));
     expect(received('master')).toBe('');
-    expect(received('worker')).not.toContain('echo hi');
+    expect(received('worker')).not.toContain('echo $((6*7))');
 
     send(`${LEADER}q`);
     await waitFor('the cockpit to exit', () => screen().includes('COCKPIT-EXIT 0'));
