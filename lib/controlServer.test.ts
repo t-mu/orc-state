@@ -609,9 +609,16 @@ describe('local daemon control API', () => {
     await expect(master.status({ events: 201 })).rejects.toMatchObject({ code: 'bad_request', status: 400 });
     await expect(master.status({ events: -1 })).rejects.toMatchObject({ code: 'bad_request', status: 400 });
     // `orc status --json` prints buildStatus(): the API returns an equal object apart from the cursor.
-    const { cursor: _a, ...apiRest } = (await master.status()) as unknown as Record<string, unknown>;
-    const { cursor: _c, ...localRest } = JSON.parse(JSON.stringify(buildStatus(dir))) as Record<string, unknown>;
-    expect(apiRest).toEqual(localRest);
+    // Both are built at one frozen instant (the server runs in this process): ages computed from the clock
+    // must not differ because the two builds fell on either side of a second boundary.
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() });
+    try {
+      const { cursor: _a, ...apiRest } = (await master.status()) as unknown as Record<string, unknown>;
+      const { cursor: _c, ...localRest } = JSON.parse(JSON.stringify(buildStatus(dir))) as Record<string, unknown>;
+      expect(apiRest).toEqual(localRest);
+    } finally {
+      vi.useRealTimers();
+    }
     const refused = await cli('cli/status.ts', '--json', '--events=201');
     expect(refused.code).toBe(1);
     expect(refused.stderr).toContain('--events must be an integer from 0 to 200');
