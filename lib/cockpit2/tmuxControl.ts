@@ -82,6 +82,24 @@ export function quoteTmuxArgument(text: string): string {
   return `${quoted}"`;
 }
 
+/**
+ * Whether a tmux server reporting `version` (`#{version}`: `3.6a`, `next-3.8`,
+ * `master`) passes paste-buffer data through vis(3), so a raw paste needs
+ * `paste-buffer -S`. tmux 3.7 started escaping control bytes there (an ESC
+ * arrives as `^[`) and added -S; older servers paste raw and reject -S.
+ */
+export function pasteNeedsRawFlag(version: string): boolean {
+  const text = version.trim();
+  if (text === 'master') return true;
+  const match = /^(?:next-)?(\d+)\.(\d+)/.exec(text);
+  if (!match) return false;
+  const [major, minor] = [Number(match[1]), Number(match[2])];
+  return major > 3 || (major === 3 && minor >= 7);
+}
+
+/** The first command a client sends: the server's version, which decides `paste-buffer -S`. */
+export const SERVER_VERSION_COMMAND = "display-message -p '#{version}'";
+
 interface Pending { resolve: (lines: string[]) => void; reject: (error: Error) => void }
 
 let pasteCounter = 0;
@@ -96,6 +114,9 @@ export class TmuxControlClient extends EventEmitter<TmuxControlEvents> {
    */
   private unattached: string[] | null = [];
   private exited: string | null = null;
+  /** `-S` for a tmux 3.7+ server's paste-buffer, '' for an older one; null until the version reply. */
+  private rawPasteFlag: string | null = null;
+  private readonly serverVersion: Promise<void>;
 
   constructor(options: TmuxControlOptions) {
     super();
@@ -106,6 +127,12 @@ export class TmuxControlClient extends EventEmitter<TmuxControlEvents> {
     this.proc.stdin.on('error', () => { /* the client already exited; 'close' reports it */ });
     this.proc.on('error', (error) => this.end(`control client failed: ${error.message}`));
     this.proc.on('close', () => this.end('control client closed'));
+    // Asked first, so the reply is in before any paste the user can make; a client that
+    // exits first rejects its paste anyway, so the failure itself is dropped here.
+    this.serverVersion = this.command(SERVER_VERSION_COMMAND).then(
+      ([version = '']) => { this.rawPasteFlag = pasteNeedsRawFlag(version) ? ' -S' : ''; },
+      () => {},
+    );
   }
 
   /** Runs one tmux command; resolves with its reply lines, rejects on `%error` or exit. */
@@ -131,15 +158,18 @@ export class TmuxControlClient extends EventEmitter<TmuxControlEvents> {
   /**
    * Pastes text through a uniquely named buffer that `paste-buffer -d` deletes.
    * tmux replaces LF with CR and adds bracketed-paste markers only when the
-   * app enabled mode 2004. Empty text sends nothing: tmux creates no buffer
+   * app enabled mode 2004; on tmux 3.7+ `-S` keeps control bytes raw (see
+   * pasteNeedsRawFlag). Empty text sends nothing: tmux creates no buffer
    * for it, so `paste-buffer` would fail.
    */
   async paste(paneId: string, text: string): Promise<void> {
     if (text === '') return;
+    // Only a paste made before the version reply waits (and so may follow keys sent meanwhile).
+    if (this.rawPasteFlag === null) await this.serverVersion;
     const buffer = `cockpit2-paste-${process.pid}-${++pasteCounter}`;
     await Promise.all([
       this.command(`set-buffer -b ${buffer} ${quoteTmuxArgument(text)}`),
-      this.command(`paste-buffer -p -d -b ${buffer} -t ${paneId}`),
+      this.command(`paste-buffer -p -d${this.rawPasteFlag ?? ''} -b ${buffer} -t ${paneId}`),
     ]);
   }
 
