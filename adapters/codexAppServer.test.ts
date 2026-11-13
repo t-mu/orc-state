@@ -113,7 +113,9 @@ describe('codex app-server runtime: session start', () => {
     expect(Buffer.byteLength(realpathSync(socket))).toBeLessThanOrEqual(103);
     const served = realpathSync(socket);
     await adapter.stop(result.session_handle);
-    expect(existsSync(socket) || existsSync(served)).toBe(false);
+    // lstat, not existsSync: a dangling symlink left at `socket` must fail this too.
+    expect(() => lstatSync(socket)).toThrow();
+    expect(existsSync(served)).toBe(false);
   });
 
   it('strips API-key billing variables from the provider environment', async () => {
